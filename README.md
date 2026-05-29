@@ -82,13 +82,16 @@ Expected: `output/blackhole.gif` — 8 frames generated on Blackhole hardware.
 ```
 animatediff_ttnn/
   pipeline.py          Phase 1: thin wrapper around diffusers AnimateDiffPipeline
-  ttnn_pipeline.py     Phase 2: TTNN UNet frame generation on Blackhole
+  ttnn_pipeline.py     Phase 2/2.5: TTNN UNet frame generation on Blackhole
+  temporal_attention.py Phase 2.5: cross-frame self-attention at each denoising step
   temporal_module.py   Reference only — temporal attention math (kept for study)
   __init__.py          Exports Phase 1 public API
 
 examples/
-  generate_baseline.py   Phase 1 end-to-end (CPU, any machine)
-  generate_blackhole.py  Phase 2 end-to-end (Blackhole hardware)
+  generate_baseline.py     Phase 1 end-to-end (CPU, any machine)
+  generate_blackhole.py    Phase 2 end-to-end (Blackhole hardware)
+  generate_blackhole_v2.py Phase 2.5 end-to-end (Blackhole hardware, canonical)
+  generate_sim.py          Phase 2.5 on ttsim simulator (no hardware required)
 
 tests/
   test_pipeline.py       Phase 1 unit tests
@@ -96,9 +99,30 @@ tests/
 
 docs/
   IMPLEMENTATION_STATUS.md  Current Phase 1/2 status
+  INTEGRATION_GUIDE.md      How downstream projects should consume this repo
+  SIMULATOR.md              Running on ttsim without Blackhole hardware
 ```
 
 ---
+
+## No hardware? Use the simulator
+
+[ttsim](https://github.com/tenstorrent/ttsim) is a bit-exact Blackhole simulator
+that runs on any Linux/x86_64 machine. See [docs/SIMULATOR.md](docs/SIMULATOR.md)
+for setup and usage. Quick start:
+
+```bash
+TT_METAL_SIMULATOR=~/sim/libttsim_bh.so \
+TT_METAL_SLOW_DISPATCH_MODE=1 \
+TT_METAL_DISABLE_SFPLOADMACRO=1 \
+    python examples/generate_sim.py --frames 2 --steps 4
+```
+
+## Integration
+
+For guidance on how to consume this project from other repos — as a toolkit
+lesson, an application plugin, or a Python library — see
+[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md).
 
 ## Testing
 
