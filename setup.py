@@ -16,10 +16,10 @@ setup(
     version="0.1.0",
     author="Tenstorrent Community",
     author_email="",
-    description="AnimateDiff temporal attention for TT-Metal Stable Diffusion 3.5",
+    description="AnimateDiff video generation on Tenstorrent Blackhole via TTNN UNet (SD 1.4)",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/your-org/tt-animatediff",
+    url="https://github.com/tenstorrent/tt-animatediff",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -41,7 +41,7 @@ setup(
     ],
     extras_require={
         "video": [
-            "diffusers>=0.21.0",  # For export_to_video function
+            "diffusers>=0.32.1",
         ],
         "dev": [
             "pytest>=7.0.0",
@@ -50,9 +50,5 @@ setup(
             "mypy>=1.0.0",
         ],
     },
-    entry_points={
-        "console_scripts": [
-            "animatediff-demo=examples.generate_2frame_video:generate_2frame_demo",
-        ],
-    },
+    entry_points={},
 )

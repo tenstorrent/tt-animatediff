@@ -160,7 +160,7 @@ def main():
         print()
     finally:
         import ttnn
-        ttnn.close_device(device)
+        ttnn.close_mesh_device(device)
         print("Device closed.")
         print()
 
