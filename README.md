@@ -129,3 +129,26 @@ SD 1.4 UNet WITH MotionAdapter (Phase 1):
 
 For full AnimateDiff on Blackhole, the TTNN UNet transformer blocks would need
 TemporalTransformer layers inserted — a deeper integration than Phase 2 attempts.
+
+---
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
+
+- Reporting bugs via GitHub Issues
+- Suggesting enhancements
+- Submitting pull requests
+- Development guidelines and code style
+
+Pull requests are typically reviewed on a weekly basis.
+
+---
+
+## License
+
+**Overall license for this project, except where specified:**
+- [Apache License 2.0](LICENSE)
+- See [LICENSE_understanding.txt](LICENSE_understanding.txt) for clarification on how Apache 2.0 applies to this project
+
+**Third-party dependencies** are listed in the [NOTICE](NOTICE) file with their respective licenses.

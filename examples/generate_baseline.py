@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+
 """Phase 1 AnimateDiff baseline — correct temporal attention on CPU.
 
 Uses diffusers AnimateDiffPipeline with MotionAdapter. The MotionAdapter

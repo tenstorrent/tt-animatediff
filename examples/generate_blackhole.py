@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+
 """Phase 2: Blackhole-accelerated video frame generation using TTNN UNet.
 
 Loads SD 1.4 TTNN UNet and VAE onto a Blackhole device, encodes a text

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+
 """Cross-frame temporal attention for AnimateDiff Phase 2.5 on Blackhole.
 
 Applies self-attention across N frames at each denoising step, giving genuine
