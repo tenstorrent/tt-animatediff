@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+# SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 
 """Phase 2.5: Blackhole TTNN UNet with cross-frame temporal attention.
 

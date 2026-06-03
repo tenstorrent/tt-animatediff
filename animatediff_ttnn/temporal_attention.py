@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+# SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 
 """Cross-frame temporal attention for AnimateDiff Phase 2.5 on Blackhole.
 
