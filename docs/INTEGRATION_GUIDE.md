@@ -158,8 +158,7 @@ Or clone and install in editable mode for development:
 ```bash
 git clone https://github.com/tenstorrent/tt-animatediff.git
 cd tt-animatediff
-pip install -e ".[dev]"          # CPU/Phase 1 only
-pip install -e ".[dev,video]"    # adds diffusers for GIF export
+pip install -e ".[dev]"          # installs diffusers + dev tools (pytest, black, etc.)
 ```
 
 ### What requires Blackhole hardware vs. what runs on any machine
