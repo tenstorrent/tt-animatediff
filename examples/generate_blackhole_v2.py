@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+
 """Phase 2.5: Blackhole TTNN UNet with cross-frame temporal attention.
 
 Generates video frames using the SD 1.4 TTNN UNet on Blackhole hardware.

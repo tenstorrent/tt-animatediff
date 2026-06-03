@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+
 """AnimateDiff for Tenstorrent hardware.
 
 Phase 1 (CPU baseline):

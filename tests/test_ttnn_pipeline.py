@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+
 """Unit tests for ttnn_pipeline.py — run without Blackhole hardware.
 
 ttnn_pipeline.py uses lazy imports (ttnn imported inside functions), so the
