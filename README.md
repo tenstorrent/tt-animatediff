@@ -69,8 +69,9 @@ frames, not full AnimateDiff temporal attention. Full integration would require 
 
 ```bash
 source ~/tt-metal/python_env/bin/activate
-python examples/generate_blackhole.py
-python examples/generate_blackhole.py --prompt "1939 World's Fair imagined from the year 2099, art deco spires at golden dusk, cinematic 4K" --frames 8
+# Phase 2.5 (canonical, temporal attention — default)
+python examples/generate.py
+python examples/generate.py --prompt "1939 World's Fair imagined from the year 2099, art deco spires at golden dusk, cinematic 4K" --frames 8
 ```
 
 Expected: `output/blackhole.gif` — 8 frames generated on Blackhole hardware.
@@ -81,17 +82,18 @@ Expected: `output/blackhole.gif` — 8 frames generated on Blackhole hardware.
 
 ```
 animatediff_ttnn/
-  pipeline.py          Phase 1: thin wrapper around diffusers AnimateDiffPipeline
-  ttnn_pipeline.py     Phase 2/2.5: TTNN UNet frame generation on Blackhole
+  pipeline.py           Phase 1: thin wrapper around diffusers AnimateDiffPipeline
+  ttnn_pipeline.py      Phase 2/2.5: TTNN UNet frame generation on Blackhole
   temporal_attention.py Phase 2.5: cross-frame self-attention at each denoising step
-  temporal_module.py   Reference only — temporal attention math (kept for study)
-  __init__.py          Exports Phase 1 public API
+  temporal_module.py    Reference — temporal attention math (kept for study)
+  __init__.py           Exports Phase 1 public API
 
 examples/
-  generate_baseline.py     Phase 1 end-to-end (CPU, any machine)
-  generate_blackhole.py    Phase 2 end-to-end (Blackhole hardware)
-  generate_blackhole_v2.py Phase 2.5 end-to-end (Blackhole hardware, canonical)
-  generate_sim.py          Phase 2.5 on ttsim simulator (no hardware required)
+  generate.py              Unified entry point (--mode cpu|blackhole|sim; default blackhole)
+  generate_baseline.py     Phase 1 CPU (diffusers AnimateDiffPipeline, any machine)
+  generate_blackhole.py    → shim to generate.py --mode blackhole
+  generate_blackhole_v2.py → shim to generate.py --mode blackhole
+  generate_sim.py          → shim to generate.py --mode sim
 
 tests/
   test_pipeline.py       Phase 1 unit tests
@@ -112,10 +114,9 @@ that runs on any Linux/x86_64 machine. See [docs/SIMULATOR.md](docs/SIMULATOR.md
 for setup and usage. Quick start:
 
 ```bash
-TT_METAL_SIMULATOR=~/sim/libttsim_bh.so \
-TT_METAL_SLOW_DISPATCH_MODE=1 \
-TT_METAL_DISABLE_SFPLOADMACRO=1 \
-    python examples/generate_sim.py --frames 2 --steps 4
+python examples/generate.py --mode sim --frames 2 --steps 4
+# or with explicit sim path:
+python examples/generate.py --mode sim --sim ~/sim/libttsim_bh.so --frames 2 --steps 4
 ```
 
 ## Integration

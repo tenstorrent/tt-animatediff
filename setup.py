@@ -37,6 +37,8 @@ setup(
         "numpy>=1.24.0",
         "Pillow>=9.0.0",
         "diffusers>=0.32.1",
+        "transformers>=4.30.0",
+        "accelerate>=0.20.0",
         # tt-metal and ttnn must be installed separately (not on PyPI)
     ],
     extras_require={
