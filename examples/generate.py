@@ -114,6 +114,8 @@ if args.steps is None:
     args.steps = 4 if args.mode == "sim" else 25
 if args.output is None:
     args.output = f"output/{args.mode}.gif"
+if not 0.0 <= args.temporal_alpha <= 1.0:
+    _build_parser().error(f"--temporal-alpha must be in [0, 1], got {args.temporal_alpha}")
 
 # ── sim: resolve ttsim path and configure env before tt-metal loads ────────
 if args.mode == "sim":

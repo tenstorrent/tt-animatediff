@@ -81,37 +81,34 @@ bash weights/download_weights.sh
 
 ## Running the simulator example
 
-`examples/generate_sim.py` is a drop-in version of `generate_blackhole_v2.py`
-that activates the simulator and defaults to 2 frames × 4 steps for a manageable
-first run.
+`examples/generate.py --mode sim` (or the `generate_sim.py` shim) runs the same
+TTNN pipeline as the Blackhole hardware path, redirected to a ttsim virtual device.
+The script handles all required env vars automatically; no `TT_METAL_*` prefixing
+in your shell is required.
 
 ```bash
-# Quick smoke test
-TT_METAL_SIMULATOR=~/sim/libttsim_bh.so \
-TT_METAL_SLOW_DISPATCH_MODE=1 \
-TT_METAL_DISABLE_SFPLOADMACRO=1 \
-    python examples/generate_sim.py
+# Quick smoke test (2 frames × 4 steps — shim default)
+python examples/generate_sim.py
+
+# Equivalent using generate.py directly
+python examples/generate.py --mode sim --frames 2 --steps 4
 
 # Custom prompt, more frames
-TT_METAL_SIMULATOR=~/sim/libttsim_bh.so \
-TT_METAL_SLOW_DISPATCH_MODE=1 \
-TT_METAL_DISABLE_SFPLOADMACRO=1 \
-    python examples/generate_sim.py \
-        --prompt "neon city rain at midnight, cyberpunk aesthetic" \
-        --frames 4 --steps 8 \
-        --output output/sim_4frame.gif
+python examples/generate.py --mode sim \
+    --prompt "neon city rain at midnight, cyberpunk aesthetic" \
+    --frames 4 --steps 8 \
+    --output output/sim_4frame.gif
+
+# Supply ttsim path as a flag instead of env var
+python examples/generate.py --mode sim \
+    --sim ~/sim/libttsim_bh.so \
+    --frames 2 --steps 4
 
 # Full silicon-parity run (slow)
-TT_METAL_SIMULATOR=~/sim/libttsim_bh.so \
-TT_METAL_SLOW_DISPATCH_MODE=1 \
-TT_METAL_DISABLE_SFPLOADMACRO=1 \
-    python examples/generate_sim.py \
-        --frames 8 --steps 25 \
-        --output output/sim_full.gif
+python examples/generate.py --mode sim \
+    --frames 8 --steps 25 \
+    --output output/sim_full.gif
 ```
-
-The script also accepts `--sim /path/to/libttsim_bh.so` as a flag if you prefer
-not to set environment variables.
 
 ---
 
@@ -123,14 +120,14 @@ not to set environment variables.
 | `TT_METAL_SLOW_DISPATCH_MODE` | `1` | Fast dispatch on the simulator has not been characterized for determinism |
 | `TT_METAL_DISABLE_SFPLOADMACRO` | `1` | SFPLOADMACRO is not implemented in the ttsim SFPU |
 
-`generate_sim.py` sets `SLOW_DISPATCH_MODE` and `DISABLE_SFPLOADMACRO` automatically
+`generate.py --mode sim` sets `SLOW_DISPATCH_MODE` and `DISABLE_SFPLOADMACRO` automatically
 as defaults. They can be overridden in your shell if needed.
 
 ---
 
 ## How it works
 
-`generate_sim.py` differs from `generate_blackhole_v2.py` in exactly two ways:
+`generate.py --mode sim` differs from `--mode blackhole` in exactly two ways:
 
 1. **Sets `TT_METAL_SIMULATOR`** before any tt-metal import — this is the only
    change needed to redirect all TTNN dispatch to the virtual device.
@@ -152,14 +149,11 @@ outputs match by running at the same seed:
 
 ```bash
 # On the simulator
-TT_METAL_SIMULATOR=~/sim/libttsim_bh.so \
-TT_METAL_SLOW_DISPATCH_MODE=1 \
-TT_METAL_DISABLE_SFPLOADMACRO=1 \
-    python examples/generate_sim.py \
-        --seed 42 --frames 2 --steps 4 --output output/sim_ref.gif
+python examples/generate.py --mode sim \
+    --seed 42 --frames 2 --steps 4 --output output/sim_ref.gif
 
 # On hardware (same seed)
-python examples/generate_blackhole_v2.py \
+python examples/generate.py --mode blackhole \
     --seed 42 --frames 2 --steps 4 --output output/hw_ref.gif
 ```
 
@@ -171,8 +165,8 @@ by the SD 1.4 TTNN UNet). Any divergence indicates an operation hitting an
 
 ## Known simulator limitations
 
-- **No multi-chip**: ttsim presents one virtual device. `generate_sim.py` always
-  opens `device_ids=[0]` — this matches the hardware example which is also
+- **No multi-chip**: ttsim presents one virtual device. `--mode sim` always
+  opens `device_ids=[0]` — this matches `--mode blackhole` which is also
   restricted to one chip due to the TTNN UNet's `ttnn.to_torch()` constraint.
 - **SFPLOADMACRO unsupported**: requires `TT_METAL_DISABLE_SFPLOADMACRO=1`.
 - **Fast dispatch not validated**: use slow dispatch mode.
@@ -198,12 +192,9 @@ To run the smoke test in CI (no hardware runners needed):
       ~/sim/soc_descriptor.yaml
 
 - name: Smoke test on simulator (2 frames × 4 steps)
-  env:
-    TT_METAL_SIMULATOR: ${{ env.HOME }}/sim/libttsim_bh.so
-    TT_METAL_SLOW_DISPATCH_MODE: "1"
-    TT_METAL_DISABLE_SFPLOADMACRO: "1"
   run: |
-    python examples/generate_sim.py \
+    python examples/generate.py --mode sim \
+      --sim $HOME/sim/libttsim_bh.so \
       --frames 2 --steps 4 --output output/ci_smoke.gif
     test -f output/ci_smoke.gif
 ```

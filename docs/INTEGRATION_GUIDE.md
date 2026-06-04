@@ -49,7 +49,7 @@ The lesson `.md`/walkthrough files in `tt-vscode-toolkit` should:
 - Reference the release tag the lesson was written against (e.g. `# tested against tt-animatediff v0.2.0`)
 - Link to the canonical repo for source exploration
 - Contain the commands to clone + install, not copies of the Python source
-- Reference `examples/generate_baseline.py` and `examples/generate_blackhole_v2.py`
+- Reference `examples/generate_baseline.py` (CPU) and `examples/generate.py` (Blackhole/sim)
   by name — users run them from their checked-out copy, not from the extension bundle
 
 ### What the lesson should NOT contain
@@ -110,12 +110,12 @@ The plugin layer in `plugins/animatediff/plugin.py` should own:
 The plugin should **not** own:
 
 - Model loading, denoising logic, scheduler parameters, or temporal attention —
-  those live in `animatediff_ttnn/` and `examples/generate_blackhole_v2.py` in the
+  those live in `animatediff_ttnn/` and `examples/generate.py` in the
   vendored tree. Keep business logic there, keep it tested there.
 
 ### Subprocess vs. direct import
 
-The current `run_subprocess()` pattern (running `generate_blackhole_v2.py` via
+The current `run_subprocess()` pattern (running `generate.py --mode blackhole` via
 `~/tt-metal/python_env/bin/python`) is the right call for production use because:
 
 - tt-metal's Python env is hermetic and may conflict with the application's env
@@ -166,9 +166,8 @@ pip install -e ".[dev]"          # installs diffusers + dev tools (pytest, black
 | Feature | Hardware required |
 |---|---|
 | `generate_baseline.py` (Phase 1 CPU AnimateDiff) | No — any machine with 16 GB RAM |
-| `generate_blackhole.py` (Phase 2 TTNN UNet) | Yes — Blackhole (P100/P150/P300c/QB2) |
-| `generate_blackhole_v2.py` (Phase 2.5 temporal attention) | Yes — Blackhole |
-| `examples/generate_sim.py` (ttsim simulator) | No — any Linux/x86_64 machine |
+| `generate.py --mode blackhole` (Phase 2.5 TTNN UNet + temporal attention) | Yes — Blackhole (P100/P150/P300c/QB2) |
+| `generate.py --mode sim` (ttsim simulator) | No — any Linux/x86_64 machine |
 | `pytest tests/test_pipeline.py` | No |
 | `pytest tests/test_ttnn_pipeline.py` | No (hardware mocked) |
 
@@ -184,7 +183,7 @@ source ~/tt-metal/python_env/bin/activate
 
 # Run:
 cd ~/tt-animatediff
-python examples/generate_blackhole_v2.py --prompt "your prompt" --frames 8
+python examples/generate.py --prompt "your prompt" --frames 8
 ```
 
 ### Using ttsim (no hardware required)
@@ -207,7 +206,7 @@ from animatediff_ttnn.ttnn_pipeline import setup_blackhole, generate_frames
 from animatediff_ttnn.temporal_attention import generate_frames_temporal
 
 device = setup_blackhole()
-# ... (see examples/generate_blackhole_v2.py for full setup)
+# ... (see examples/generate.py for full setup)
 ```
 
 ---
