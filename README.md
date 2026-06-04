@@ -51,9 +51,9 @@ Expected output: `output/baseline.gif` — 16 frames of temporally coherent anim
 
 ## Phase 2 — Blackhole-Accelerated Frame Generation
 
-Uses the SD 1.4 TTNN UNet from `~/tt-metal/models/demos/wormhole/stable_diffusion/` —
-the same code runs on Blackhole via `TT_METAL_ARCH_NAME=blackhole`. Frames are denoised
-sequentially using `sd_helper_funcs.run()`. Temporal coherence from shared base noise.
+Uses the SD 1.4 TTNN UNet from `~/tt-metal/models/demos/vision/generative/stable_diffusion/wormhole/` —
+the same kernels run on Blackhole via `TT_METAL_ARCH_NAME=blackhole`. Frames are denoised
+sequentially; Phase 2.5 adds cross-frame temporal attention at each step.
 
 **Documented tradeoff:** This is TT-hardware-accelerated spatial denoising for video
 frames, not full AnimateDiff temporal attention. Full integration would require injecting
@@ -133,6 +133,74 @@ python -m pytest tests/ -v
 ```
 
 All tests mock hardware dependencies and run on any machine.
+
+---
+
+## Prompt Guide
+
+This pipeline runs **SD 1.4 + TTNN UNet** (Phase 2/2.5) or **SD 1.4 + MotionAdapter** (Phase 1 CPU). Both differ from modern SD 2.x/SDXL — knowing the model's pedigree helps you write prompts that land.
+
+### Model pedigree
+
+| Property | Value |
+|---|---|
+| Base model | CompVis/stable-diffusion-v1-4 (2022) |
+| Resolution | 512 × 512 (native), upscale externally if needed |
+| CLIP text encoder | ViT-L/14, 77-token max, no long-prompt support |
+| Training data | LAION-400M subset (pre-NSFW filter era) |
+| Temporal coherence (Phase 2.5) | Cross-frame self-attention blend (`--temporal-alpha`, default 0.35) |
+| Temporal coherence (Phase 1 CPU) | Full AnimateDiff MotionAdapter — genuine cross-frame attention |
+
+### What SD 1.4 does well
+
+- **Natural scenes:** forests, mountains, oceans, deserts, sky, fire, water
+- **Painterly / artistic styles:** oil painting, watercolor, impressionism, concept art
+- **Cinematic lighting:** golden hour, neon, moonlight, candlelight, dramatic shadows
+- **Architecture:** temples, ruins, castles, sci-fi structures (avoid photo-realism)
+- **Cosmic / abstract:** nebulae, galaxies, aurora, energy fields, geometric patterns
+- **Retro aesthetics:** CRT glow, vintage film grain, vaporwave, cyberpunk
+
+### What to avoid
+
+- **Photorealistic people / faces** — SD 1.4 struggles with anatomy; faces drift frame-to-frame
+- **Text in the image** — SD 1.4 cannot render legible text
+- **Specific named real places** — results are impressionistic, not faithful
+- **Very long prompts** — CLIP truncates at 77 tokens; keep your prompt under ~60 words
+
+### Prompt patterns that work
+
+```
+# Style before subject → model weights the style heavily
+"watercolor painting of ancient ruins at sunset, soft brushstrokes, muted palette"
+
+# Cinematic lighting descriptors unlock quality
+"cinematic 4K, dramatic side lighting, volumetric fog, depth of field"
+
+# Cosmic + architecture = reliable sweet spot
+"Mayan pyramid under a swirling nebula, starfield, bioluminescent jungle"
+
+# Motion-friendly subjects for animation
+"crackling campfire", "ocean waves", "swirling clouds", "aurora borealis",
+"shifting cosmos", "flowing lava", "drifting smoke"
+```
+
+### `--temporal-alpha` tuning (Phase 2.5)
+
+`--temporal-alpha` blends cross-frame attention into each denoising step.
+
+| Value | Effect |
+|---|---|
+| `0.0` | No cross-frame mixing — each frame denoised independently (shared noise only) |
+| `0.2–0.3` | Subtle coherence, slight variation frame-to-frame |
+| `0.35` | **Default** — good balance for most motion subjects |
+| `0.5–0.7` | Strong coherence; background stabilizes but detail may flatten |
+| `1.0` | Maximum blending — frames are very similar, low motion |
+
+For subjects with fast motion (fire, water) use `0.2–0.35`. For architectural scenes with slow drift (cosmos, aurora) use `0.4–0.6`.
+
+### `--steps` vs quality
+
+PNDM scheduler; minimum effective is ~4 steps (sim/fast preview). 25 steps is the sweet spot for silicon. Beyond 30 gives diminishing returns and increases per-frame time linearly.
 
 ---
 
