@@ -36,6 +36,9 @@
     .btn:hover { opacity: .85; text-decoration: none; }
     .btn-primary { background: var(--teal); color: #080f14; }
     .btn-ghost { background: var(--teal-dim); color: var(--teal); border: 1px solid var(--teal-border); }
+    .hero-related { display: flex; flex-direction: column; gap: .45rem; margin-top: 1.5rem; align-items: center; }
+    .hero-related a { font-size: .82rem; color: var(--muted); transition: color .15s; }
+    .hero-related a:hover { color: var(--teal); text-decoration: none; }
 
     /* ── chip grid ── */
     .chip-section { padding: 3.5rem 2rem; display: flex; flex-direction: column; align-items: center; overflow-x: auto; }
@@ -75,6 +78,24 @@
     .what-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .07em; }
     .what-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
 
+    /* ── prompt guide ── */
+    .prompt-guide { background: var(--bg1); border-top: 1px solid var(--border); padding: 3rem 2rem; }
+    .prompt-inner { max-width: 980px; margin: 0 auto; }
+    .prompt-guide h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: .35rem; font-weight: 700; }
+    .prompt-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .prompt-cols { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .prompt-col { flex: 1 1 240px; }
+    .prompt-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .07em; }
+    .prompt-col ul { font-size: .8rem; color: var(--muted); line-height: 1.8; padding-left: 1.1rem; }
+    .prompt-col li { margin-bottom: .1rem; }
+    .prompt-example { font-size: .75rem; color: var(--text2); font-style: italic; background: var(--bg2); border-left: 2px solid var(--teal-border); padding: .3rem .6rem; border-radius: 0 4px 4px 0; margin-bottom: .4rem; }
+    .alpha-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    .alpha-table td { padding: .3rem .4rem; color: var(--muted); border-bottom: 1px solid rgba(79,209,197,.06); vertical-align: top; }
+    .alpha-table td:first-child { white-space: nowrap; padding-right: .75rem; }
+    .alpha-table code { color: var(--teal); font-size: .75rem; }
+    .alpha-table .hl { color: var(--text2); }
+    .alpha-table .hl code { color: var(--teal); font-weight: 700; }
+
     /* ── footer ── */
     footer { padding: 1.5rem 2rem; text-align: center; border-top: 1px solid rgba(79,209,197,.08); font-size: .72rem; color: var(--muted); }
   </style>
@@ -88,6 +109,10 @@
   <div class="hero-links">
     <a class="btn btn-primary" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
     <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff#prompt-guide">Prompt Guide</a>
+  </div>
+  <div class="hero-related">
+    <a href="https://docs.tenstorrent.com/tt-local-generator/">Generate art locally with AnimateDiff and tt-local-generator →</a>
+    <a href="https://docs.tenstorrent.com/tt-vscode-toolkit/">Learn how to make models like AnimateDiff work on your hardware with tt-vscode-toolkit →</a>
   </div>
 </section>
 
@@ -146,6 +171,55 @@
       <div class="what-col">
         <h4>Open implementation</h4>
         <p>A clean, tested, documented repo anyone with Blackhole hardware can clone and run. Includes a ttsim path for development without silicon.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="prompt-guide">
+  <div class="prompt-inner">
+    <h3>Prompt Guide</h3>
+    <p class="prompt-sub">SD 1.4 at 512×512 with the TTNN UNet has a distinct personality. Knowing it gets you better results.</p>
+
+    <div class="prompt-cols">
+      <div class="prompt-col">
+        <h4>Sweet spots</h4>
+        <ul>
+          <li>Natural scenes — forests, oceans, desert, fire, water, sky</li>
+          <li>Painterly styles — oil, watercolor, impressionism, concept art</li>
+          <li>Cinematic lighting — golden hour, neon, moonlight, candlelight</li>
+          <li>Cosmic &amp; abstract — nebulae, aurora, energy fields, geometry</li>
+          <li>Retro aesthetics — CRT glow, film grain, vaporwave, cyberpunk</li>
+          <li>Architecture — temples, ruins, castles, sci-fi structures</li>
+        </ul>
+      </div>
+      <div class="prompt-col">
+        <h4>Avoid</h4>
+        <ul>
+          <li>Photorealistic faces — anatomy drifts frame-to-frame</li>
+          <li>Text in the image — SD 1.4 cannot render legible text</li>
+          <li>Specific named real places — results are impressionistic</li>
+          <li>Very long prompts — CLIP truncates at 77 tokens (~60 words max)</li>
+        </ul>
+
+        <h4 style="margin-top:1.25rem">Patterns that work</h4>
+        <div class="prompt-example">style before subject — model weights style heavily</div>
+        <div class="prompt-example">add: cinematic 4K, dramatic lighting, depth of field</div>
+        <div class="prompt-example">motion subjects: fire, waves, aurora, swirling clouds</div>
+      </div>
+      <div class="prompt-col">
+        <h4><code>--temporal-alpha</code> tuning</h4>
+        <table class="alpha-table">
+          <tr><td><code>0.0</code></td><td>No cross-frame mixing — shared noise only</td></tr>
+          <tr><td><code>0.2–0.3</code></td><td>Subtle coherence, visible variation</td></tr>
+          <tr><td><code class="hl">0.35</code></td><td class="hl">Default — good for most subjects</td></tr>
+          <tr><td><code>0.5–0.7</code></td><td>Strong coherence, detail may flatten</td></tr>
+          <tr><td><code>1.0</code></td><td>Maximum blending, low motion</td></tr>
+        </table>
+        <p style="margin-top:.75rem;font-size:.75rem;color:var(--muted)">Fast motion (fire, water): 0.2–0.35 · Slow drift (cosmos, aurora): 0.4–0.6</p>
+
+        <h4 style="margin-top:1.25rem"><code>--steps</code></h4>
+        <p style="font-size:.8rem;color:var(--muted)">PNDM scheduler. Minimum ~4 (preview). 25 is the sweet spot on silicon. Beyond 30 gives diminishing returns.</p>
       </div>
     </div>
   </div>
