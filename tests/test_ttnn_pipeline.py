@@ -25,9 +25,16 @@ def test_setup_blackhole_sets_env_var(tmp_path, monkeypatch):
     ttnn_mock.GetNumAvailableDevices.return_value = 1
     ttnn_mock.MeshShape = MagicMock()
     ttnn_mock.open_mesh_device = MagicMock()
+    sd_common = MagicMock(SD_L1_SMALL_SIZE=21056)
     with patch.dict(sys.modules, {
         "ttnn": ttnn_mock,
-        "models.demos.vision.generative.stable_diffusion.wormhole.common": MagicMock(SD_L1_SMALL_SIZE=21056),
+        "models": MagicMock(__path__=[]),
+        "models.demos": MagicMock(__path__=[]),
+        "models.demos.vision": MagicMock(__path__=[]),
+        "models.demos.vision.generative": MagicMock(__path__=[]),
+        "models.demos.vision.generative.stable_diffusion": MagicMock(__path__=[]),
+        "models.demos.vision.generative.stable_diffusion.wormhole": MagicMock(__path__=[]),
+        "models.demos.vision.generative.stable_diffusion.wormhole.common": sd_common,
     }):
         with patch.object(ttnn_pipeline, "TT_METAL_PATH", tmp_path):
             ttnn_pipeline.setup_blackhole()
@@ -46,9 +53,16 @@ def test_setup_blackhole_preserves_existing_arch_name(monkeypatch):
     ttnn_mock.MeshShape = MagicMock()
     ttnn_mock.open_mesh_device = MagicMock()
     with patch.object(ttnn_pipeline, "_ensure_tt_metal_path"):
+        sd_common = MagicMock(SD_L1_SMALL_SIZE=21056)
         with patch.dict(sys.modules, {
             "ttnn": ttnn_mock,
-            "models.demos.vision.generative.stable_diffusion.wormhole.common": MagicMock(SD_L1_SMALL_SIZE=21056),
+            "models": MagicMock(__path__=[]),
+            "models.demos": MagicMock(__path__=[]),
+            "models.demos.vision": MagicMock(__path__=[]),
+            "models.demos.vision.generative": MagicMock(__path__=[]),
+            "models.demos.vision.generative.stable_diffusion": MagicMock(__path__=[]),
+            "models.demos.vision.generative.stable_diffusion.wormhole": MagicMock(__path__=[]),
+            "models.demos.vision.generative.stable_diffusion.wormhole.common": sd_common,
         }):
             ttnn_pipeline.setup_blackhole()
 

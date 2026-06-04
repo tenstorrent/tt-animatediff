@@ -55,7 +55,7 @@ wget -O ~/sim/libttsim_bh.so \
     https://github.com/tenstorrent/ttsim/releases/download/${TTSIM_VERSION}/libttsim_bh.so
 
 # ttsim requires its SOC descriptor to be in the same directory as the .so
-cp $TT_METAL_HOME/tt_metal/soc_descriptors/blackhole_140_arch.yaml \
+cp ~/tt-metal/tt_metal/soc_descriptors/blackhole_140_arch.yaml \
     ~/sim/soc_descriptor.yaml
 ```
 
@@ -188,7 +188,7 @@ To run the smoke test in CI (no hardware runners needed):
     mkdir -p ~/sim
     wget -q -O ~/sim/libttsim_bh.so \
       https://github.com/tenstorrent/ttsim/releases/download/v1.7.0/libttsim_bh.so
-    cp $TT_METAL_HOME/tt_metal/soc_descriptors/blackhole_140_arch.yaml \
+    cp ~/tt-metal/tt_metal/soc_descriptors/blackhole_140_arch.yaml \
       ~/sim/soc_descriptor.yaml
 
 - name: Smoke test on simulator (2 frames × 4 steps)

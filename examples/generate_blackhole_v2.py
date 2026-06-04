@@ -8,8 +8,9 @@ Phase 2.5 (TTNN UNet + cross-frame temporal attention) is now the default
 blackhole mode in generate.py. Kept for backward compatibility.
 """
 
+import runpy
 import sys
 from pathlib import Path
 
 sys.argv = [sys.argv[0], "--mode", "blackhole"] + sys.argv[1:]
-exec(compile(open(Path(__file__).parent / "generate.py").read(), "generate.py", "exec"))
+runpy.run_path(str(Path(__file__).parent / "generate.py"), run_name="__main__")

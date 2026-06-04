@@ -122,9 +122,19 @@ if args.mode == "sim":
     _DEFAULT_SIM = Path.home() / "sim" / "libttsim_bh.so"
     if args.sim:
         _sim_so = Path(args.sim)
+        if not _sim_so.exists():
+            print(f"ERROR: --sim path not found: {_sim_so}", file=sys.stderr)
+            sys.exit(1)
         os.environ["TT_METAL_SIMULATOR"] = str(_sim_so)
     elif os.environ.get("TT_METAL_SIMULATOR"):
         _sim_so = Path(os.environ["TT_METAL_SIMULATOR"])
+        if not _sim_so.exists():
+            print(
+                f"ERROR: TT_METAL_SIMULATOR path not found: {_sim_so}\n"
+                "Update the env var or pass --sim /path/to/libttsim_bh.so",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     else:
         _sim_so = _DEFAULT_SIM
         if not _sim_so.exists():

@@ -10,6 +10,7 @@ Use generate.py directly for new workflows:
     python examples/generate.py --mode sim --frames 2 --steps 4
 """
 
+import runpy
 import sys
 from pathlib import Path
 
@@ -22,4 +23,4 @@ if "--steps" not in _argv and not any(a.startswith("--steps=") for a in _argv):
     _extra += ["--steps", "4"]
 
 sys.argv = [sys.argv[0]] + _extra + _argv
-exec(compile(open(Path(__file__).parent / "generate.py").read(), "generate.py", "exec"))
+runpy.run_path(str(Path(__file__).parent / "generate.py"), run_name="__main__")
