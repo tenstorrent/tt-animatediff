@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+# SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 
 """Phase 1: AnimateDiff baseline using diffusers AnimateDiffPipeline + MotionAdapter.
 

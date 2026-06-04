@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tt-animatediff — A Cosmic Quick Study</title>
+  <meta name="description" content="35 animated GIFs generated on a Tenstorrent Blackhole P300C. AnimateDiff SD 1.4 TTNN UNet — cosmic themes, chip grid layout.">
+  <meta property="og:title" content="tt-animatediff — A Cosmic Quick Study">
+  <meta property="og:description" content="35 animated GIFs generated on Tenstorrent Blackhole hardware. Each glowing cell is a Tensix compute node.">
+  <meta property="og:image" content="assets/study/p1-nebula.gif">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="tt-animatediff — A Cosmic Quick Study">
+  <meta name="twitter:description" content="35 animated GIFs generated on Tenstorrent Blackhole hardware. Each glowing cell is a Tensix compute node.">
+  <meta name="twitter:image" content="assets/study/p1-nebula.gif">
+  <style>
+    :root {
+      --bg0: #080f14; --bg1: #0d1b24; --bg2: #122130;
+      --teal: #4fd1c5; --teal-dim: rgba(79,209,197,.15); --teal-border: rgba(79,209,197,.3);
+      --teal2: #81e6d9; --text: #e8f0f2; --text2: #b0c4d0; --muted: #607d8b;
+      --border: rgba(79,209,197,.12); --radius: 8px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg0); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased; }
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── hero ── */
+    .hero { padding: 4rem 2rem 2.5rem; text-align: center; border-bottom: 1px solid var(--border); }
+    .badge { display: inline-block; font-size: .68rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--teal); border: 1px solid var(--teal-border); border-radius: 20px; padding: .25rem .75rem; margin-bottom: 1.25rem; }
+    .hero h1 { font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 800; line-height: 1.15; margin-bottom: .75rem; }
+    .hero h1 em { color: var(--teal); font-style: normal; }
+    .hero p { font-size: 1rem; color: var(--text2); max-width: 560px; margin: 0 auto 2rem; }
+    .hero-links { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: .4rem; padding: .55rem 1.25rem; border-radius: var(--radius); font-size: .85rem; font-weight: 600; text-decoration: none; transition: opacity .15s; }
+    .btn:hover { opacity: .85; text-decoration: none; }
+    .btn-primary { background: var(--teal); color: #080f14; }
+    .btn-ghost { background: var(--teal-dim); color: var(--teal); border: 1px solid var(--teal-border); }
+    .hero-related { display: flex; flex-direction: column; gap: .45rem; margin-top: 1.5rem; align-items: center; }
+    .hero-related a { font-size: .82rem; color: var(--muted); transition: color .15s; }
+    .hero-related a:hover { color: var(--teal); text-decoration: none; }
+
+    /* ── chip grid ── */
+    .chip-section { padding: 3.5rem 2rem; display: flex; flex-direction: column; align-items: center; overflow-x: auto; }
+    .chip-label { font-size: .72rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 1rem; }
+    .chip-grid { display: grid; grid-template-columns: repeat(11, 72px); grid-template-rows: repeat(10, 72px); gap: 3px; flex-shrink: 0; }
+    .node { border-radius: 5px; border: 1px solid var(--border); background: #0a141c; overflow: hidden; position: relative; }
+    .node img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .node.phase-1 { border-color: rgba(79,209,197,.5); }
+    .node.phase-2 { border-color: rgba(236,150,184,.4); }
+    .node.phase-3 { border-color: rgba(244,196,113,.4); }
+    .node.phase-4 { border-color: rgba(39,174,96,.4); }
+    .node.phase-5 { border-color: rgba(129,230,217,.6); }
+    .node-tip { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(8,15,20,.92); color: var(--text2); font-size: .38rem; padding: 2px 3px; line-height: 1.3; opacity: 0; transition: opacity .2s; pointer-events: none; text-align: center; }
+    .node:hover .node-tip { opacity: 1; }
+
+    /* ── phase legend ── */
+    .phase-legend { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; margin-top: 1.25rem; }
+    .ph { display: flex; align-items: center; gap: .45rem; font-size: .72rem; color: var(--muted); }
+    .ph-dot { width: 10px; height: 10px; border-radius: 2px; border: 1px solid; flex-shrink: 0; }
+
+    /* ── shoulders ── */
+    .shoulders { background: var(--bg1); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 3rem 2rem; text-align: center; }
+    .section-label { font-size: .68rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 1.25rem; display: block; }
+    .cards { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; max-width: 920px; margin: 0 auto; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: .9rem 1.2rem; text-align: left; max-width: 260px; flex: 1 1 220px; }
+    .card h4 { font-size: .82rem; font-weight: 700; color: var(--teal); margin-bottom: .35rem; }
+    .card p { font-size: .74rem; color: var(--muted); line-height: 1.6; }
+    .card a { color: var(--teal2); font-size: .72rem; }
+    .thanks { margin-top: 1.5rem; font-size: .82rem; color: var(--teal); font-style: italic; max-width: 600px; margin-left: auto; margin-right: auto; }
+
+    /* ── what we built ── */
+    .what { padding: 3rem 2rem; }
+    .what-inner { max-width: 860px; margin: 0 auto; }
+    .what h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: 1rem; font-weight: 700; }
+    .what-cols { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .what-col { flex: 1 1 220px; }
+    .what-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .07em; }
+    .what-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+
+    /* ── prompt guide ── */
+    .prompt-guide { background: var(--bg1); border-top: 1px solid var(--border); padding: 3rem 2rem; }
+    .prompt-inner { max-width: 980px; margin: 0 auto; }
+    .prompt-guide h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: .35rem; font-weight: 700; }
+    .prompt-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .prompt-cols { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .prompt-col { flex: 1 1 240px; }
+    .prompt-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .07em; }
+    .prompt-col ul { font-size: .8rem; color: var(--muted); line-height: 1.8; padding-left: 1.1rem; }
+    .prompt-col li { margin-bottom: .1rem; }
+    .prompt-example { font-size: .75rem; color: var(--text2); font-style: italic; background: var(--bg2); border-left: 2px solid var(--teal-border); padding: .3rem .6rem; border-radius: 0 4px 4px 0; margin-bottom: .4rem; }
+    .alpha-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    .alpha-table td { padding: .3rem .4rem; color: var(--muted); border-bottom: 1px solid rgba(79,209,197,.06); vertical-align: top; }
+    .alpha-table td:first-child { white-space: nowrap; padding-right: .75rem; }
+    .alpha-table code { color: var(--teal); font-size: .75rem; }
+    .alpha-table .hl { color: var(--text2); }
+    .alpha-table .hl code { color: var(--teal); font-weight: 700; }
+
+    /* ── footer ── */
+    footer { padding: 1.5rem 2rem; text-align: center; border-top: 1px solid rgba(79,209,197,.08); font-size: .72rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="badge">AnimateDiff on Tenstorrent Blackhole</div>
+  <h1>A Cosmic <em>Quick Study</em></h1>
+  <p>35 animated GIFs generated on a single Blackhole chip. Each cell in this grid is a Tensix compute node. The ones that glow ran the model.</p>
+  <div class="hero-links">
+    <a class="btn btn-primary" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
+    <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff#prompt-guide">Prompt Guide</a>
+  </div>
+  <div class="hero-related">
+    <a href="https://docs.tenstorrent.com/tt-local-generator/">Generate art locally with AnimateDiff and tt-local-generator →</a>
+    <a href="https://docs.tenstorrent.com/tt-vscode-toolkit/">Learn how to make models like AnimateDiff work on your hardware with tt-vscode-toolkit →</a>
+  </div>
+</section>
+
+<section class="chip-section">
+  <div class="chip-label">Blackhole P300C · 11 × 10 Tensix cores · 110 nodes</div>
+  <div class="chip-grid" id="grid"></div>
+  <div class="phase-legend">
+    <div class="ph"><div class="ph-dot" style="border-color:#4fd1c5;background:rgba(79,209,197,.1)"></div>Pure cosmic</div>
+    <div class="ph"><div class="ph-dot" style="border-color:#ec96b8;background:rgba(236,150,184,.1)"></div>Intertwining oneness</div>
+    <div class="ph"><div class="ph-dot" style="border-color:#f4c471;background:rgba(244,196,113,.1)"></div>Liminal threshold</div>
+    <div class="ph"><div class="ph-dot" style="border-color:#27ae60;background:rgba(39,174,96,.1)"></div>Tech emergence</div>
+    <div class="ph"><div class="ph-dot" style="border-color:#81e6d9;background:rgba(129,230,217,.15)"></div>Full integration</div>
+    <div class="ph"><div class="ph-dot" style="border-color:rgba(79,209,197,.15);background:#0a141c"></div>Harvested core</div>
+  </div>
+</section>
+
+<section class="shoulders">
+  <span class="section-label">Standing on the shoulders of giants</span>
+  <div class="cards">
+    <div class="card">
+      <h4>AnimateDiff</h4>
+      <p>Yuwei Guo, Chuanxia Zheng, Ruizhen Hu et al. The insight that motion priors can be injected into any SD UNet as a plug-and-play MotionAdapter — without retraining the base model. We just ran it faster.<br><br>
+      <a href="https://arxiv.org/abs/2307.04725">arxiv 2307.04725 →</a></p>
+    </div>
+    <div class="card">
+      <h4>Stable Diffusion 1.4</h4>
+      <p>Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, Björn Ommer (CompVis / Stability AI). The latent diffusion model that made high-quality generation accessible to everyone.<br><br>
+      <a href="https://github.com/CompVis/stable-diffusion">CompVis/stable-diffusion →</a></p>
+    </div>
+    <div class="card">
+      <h4>🤗 diffusers</h4>
+      <p>The Hugging Face team. The <code style="color:#81e6d9;font-size:.72rem">AnimateDiffPipeline</code> and <code style="color:#81e6d9;font-size:.72rem">MotionAdapter</code> abstractions gave us a verified CPU reference to build from and compare against.<br><br>
+      <a href="https://github.com/huggingface/diffusers">huggingface/diffusers →</a></p>
+    </div>
+    <div class="card">
+      <h4>TT-Metalium &amp; TTNN</h4>
+      <p>The Tenstorrent systems team. The SD 1.4 TTNN UNet kernel — built for Wormhole, adapted here for Blackhole — is what makes the hardware path possible. We wired the temporal loop around it.<br><br>
+      <a href="https://github.com/tenstorrent/tt-metal">tenstorrent/tt-metal →</a></p>
+    </div>
+  </div>
+  <p class="thanks">We ported, adapted, debugged, and shipped — but the hard science and the hard systems work were done by these teams. This repo is gratitude in the form of running code.</p>
+</section>
+
+<section class="what">
+  <div class="what-inner">
+    <h3>What Tenstorrent contributed</h3>
+    <div class="what-cols">
+      <div class="what-col">
+        <h4>Hardware path</h4>
+        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~15 s/frame on P300C vs ~2 min/frame on CPU.</p>
+      </div>
+      <div class="what-col">
+        <h4>Temporal attention</h4>
+        <p>Cross-frame self-attention at each PNDM step across all N frame latents simultaneously — a bridge toward full MotionAdapter integration in TTNN.</p>
+      </div>
+      <div class="what-col">
+        <h4>Open implementation</h4>
+        <p>A clean, tested, documented repo anyone with Blackhole hardware can clone and run. Includes a ttsim path for development without silicon.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="prompt-guide">
+  <div class="prompt-inner">
+    <h3>Prompt Guide</h3>
+    <p class="prompt-sub">SD 1.4 at 512×512 with the TTNN UNet has a distinct personality. Knowing it gets you better results.</p>
+
+    <div class="prompt-cols">
+      <div class="prompt-col">
+        <h4>Sweet spots</h4>
+        <ul>
+          <li>Natural scenes — forests, oceans, desert, fire, water, sky</li>
+          <li>Painterly styles — oil, watercolor, impressionism, concept art</li>
+          <li>Cinematic lighting — golden hour, neon, moonlight, candlelight</li>
+          <li>Cosmic &amp; abstract — nebulae, aurora, energy fields, geometry</li>
+          <li>Retro aesthetics — CRT glow, film grain, vaporwave, cyberpunk</li>
+          <li>Architecture — temples, ruins, castles, sci-fi structures</li>
+        </ul>
+      </div>
+      <div class="prompt-col">
+        <h4>Avoid</h4>
+        <ul>
+          <li>Photorealistic faces — anatomy drifts frame-to-frame</li>
+          <li>Text in the image — SD 1.4 cannot render legible text</li>
+          <li>Specific named real places — results are impressionistic</li>
+          <li>Very long prompts — CLIP truncates at 77 tokens (~60 words max)</li>
+        </ul>
+
+        <h4 style="margin-top:1.25rem">Patterns that work</h4>
+        <div class="prompt-example">style before subject — model weights style heavily</div>
+        <div class="prompt-example">add: cinematic 4K, dramatic lighting, depth of field</div>
+        <div class="prompt-example">motion subjects: fire, waves, aurora, swirling clouds</div>
+      </div>
+      <div class="prompt-col">
+        <h4><code>--temporal-alpha</code> tuning</h4>
+        <table class="alpha-table">
+          <tr><td><code>0.0</code></td><td>No cross-frame mixing — shared noise only</td></tr>
+          <tr><td><code>0.2–0.3</code></td><td>Subtle coherence, visible variation</td></tr>
+          <tr><td><code class="hl">0.35</code></td><td class="hl">Default — good for most subjects</td></tr>
+          <tr><td><code>0.5–0.7</code></td><td>Strong coherence, detail may flatten</td></tr>
+          <tr><td><code>1.0</code></td><td>Maximum blending, low motion</td></tr>
+        </table>
+        <p style="margin-top:.75rem;font-size:.75rem;color:var(--muted)">Fast motion (fire, water): 0.2–0.35 · Slow drift (cosmos, aurora): 0.4–0.6</p>
+
+        <h4 style="margin-top:1.25rem"><code>--steps</code></h4>
+        <p style="font-size:.8rem;color:var(--muted)">PNDM scheduler. Minimum ~4 (preview). 25 is the sweet spot on silicon. Beyond 30 gives diminishing returns.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <a href="https://github.com/tenstorrent/tt-animatediff">tt-animatediff</a> ·
+  Apache 2.0 ·
+  Built on <a href="https://github.com/tenstorrent/tt-metal">TT-Metalium</a> ·
+  Original work by <a href="https://arxiv.org/abs/2307.04725">Guo et al. 2023</a>
+</footer>
+
+<script>
+const GIFS = [
+  {name:"p1-nebula",        row:0, col:0,  phase:1, prompt:"swirling nebula in deep space"},
+  {name:"p1-galaxy",        row:0, col:2,  phase:1, prompt:"spiral galaxy from above"},
+  {name:"p1-aurora",        row:0, col:4,  phase:1, prompt:"aurora borealis over arctic ice"},
+  {name:"p1-starfield",     row:0, col:6,  phase:1, prompt:"infinite starfield rotating"},
+  {name:"p1-solar-flare",   row:0, col:8,  phase:1, prompt:"solar flare erupting"},
+  {name:"p1-gas-cloud",     row:0, col:10, phase:1, prompt:"interstellar gas cloud"},
+  {name:"p1-crystal-cave",  row:1, col:1,  phase:1, prompt:"crystal cave, bioluminescent cosmic light"},
+  {name:"p1-deep-ocean",    row:1, col:3,  phase:1, prompt:"deep ocean at night, bioluminescent"},
+  {name:"p1-lunar-halo",    row:1, col:6,  phase:1, prompt:"full moon with atmospheric halo"},
+  {name:"p1-north-lights",  row:1, col:8,  phase:1, prompt:"northern lights over pine forest"},
+  {name:"p1-milky-way",     row:2, col:0,  phase:1, prompt:"Milky Way over desert landscape"},
+  {name:"p1-fractal-tunnel",row:2, col:3,  phase:1, prompt:"fractal space tunnel"},
+  {name:"p2-mandala",       row:2, col:7,  phase:2, prompt:"sacred mandala blooming from starfield"},
+  {name:"p2-mycelium",      row:2, col:10, phase:2, prompt:"mycelium network, bioluminescent spores"},
+  {name:"p2-dna",           row:3, col:1,  phase:2, prompt:"DNA helix in cosmic void"},
+  {name:"p2-roots-cosmos",  row:3, col:5,  phase:2, prompt:"tree roots intertwining with galaxies"},
+  {name:"p2-consciousness",  row:3, col:9, phase:2, prompt:"threads of consciousness, neural web"},
+  {name:"p2-sacred-geo",    row:4, col:0,  phase:2, prompt:"sacred geometry in cosmic space"},
+  {name:"p2-forest-mind",   row:4, col:4,  phase:2, prompt:"forest canopy as neural network"},
+  {name:"p2-reef",          row:4, col:7,  phase:2, prompt:"living reef as collective mind"},
+  {name:"p2-meridians",     row:4, col:10, phase:2, prompt:"energy meridians, body silhouette"},
+  {name:"p3-temple",        row:5, col:2,  phase:3, prompt:"Mayan temple under shifting cosmos"},
+  {name:"p3-cave-circuit",  row:5, col:6,  phase:3, prompt:"cave paintings morphing to circuit traces"},
+  {name:"p3-standing-stones",row:5,col:9,  phase:3, prompt:"stone circle with aurora"},
+  {name:"p3-crystal-data",  row:6, col:1,  phase:3, prompt:"crystal mountain with data streams"},
+  {name:"p3-ley-fiber",     row:6, col:5,  phase:3, prompt:"ley lines becoming fiber optic"},
+  {name:"p3-mayan-grid",    row:6, col:10, phase:3, prompt:"Mayan calendar dissolving to grid"},
+  {name:"p4-circuit-moss",  row:7, col:0,  phase:4, prompt:"circuit board growing like moss"},
+  {name:"p4-silicon",       row:7, col:4,  phase:4, prompt:"silicon crystal lattice, cosmic light"},
+  {name:"p4-neural-const",  row:7, col:8,  phase:4, prompt:"neural network as constellation"},
+  {name:"p4-server-aurora", row:8, col:2,  phase:4, prompt:"server room bathed in aurora"},
+  {name:"p4-chip-city",     row:8, col:7,  phase:4, prompt:"chip die as aerial city at night"},
+  {name:"p5-chip-cosmos",   row:9, col:0,  phase:5, prompt:"Blackhole chip glowing with cosmos"},
+  {name:"p5-hand-galaxy",   row:9, col:5,  phase:5, prompt:"hand touching circuit blooms to galaxy"},
+  {name:"p5-grid-is-all",   row:9, col:10, phase:5, prompt:"grid revealed as fabric of universe"},
+];
+
+const gifMap = new Map(GIFS.map(g => [g.row * 11 + g.col, g]));
+const grid = document.getElementById('grid');
+
+for (let i = 0; i < 110; i++) {
+  const r = Math.floor(i / 11), c = i % 11;
+  const div = document.createElement('div');
+  div.className = 'node';
+  if (gifMap.has(i)) {
+    const g = gifMap.get(i);
+    div.classList.add(`phase-${g.phase}`);
+    const img = document.createElement('img');
+    img.src = `assets/study/${g.name}.gif`;
+    img.alt = g.prompt;
+    img.loading = 'lazy';
+    const tip = document.createElement('div');
+    tip.className = 'node-tip';
+    tip.textContent = g.prompt;
+    div.appendChild(img);
+    div.appendChild(tip);
+  }
+  grid.appendChild(div);
+}
+</script>
+</body>
+</html>

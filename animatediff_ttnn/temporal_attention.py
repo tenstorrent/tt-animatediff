@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2024 Tenstorrent USA, Inc.
+# SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 
 """Cross-frame temporal attention for AnimateDiff Phase 2.5 on Blackhole.
 
@@ -83,10 +83,10 @@ def generate_frames_temporal(
 ) -> List:
     """Generate temporally-coherent frames on Blackhole with cross-frame attention.
 
-    All N frames are denoised in parallel (one TTNN UNet call per frame per step).
+    Frames are denoised sequentially (one TTNN UNet call per frame per step).
     Cross-frame attention is applied to the stacked noise predictions at each step
-    before the scheduler commits to the next latent. Total TTNN UNet calls equals
-    Phase 2: num_frames × num_steps.
+    before the scheduler commits to the next latent. Total TTNN UNet calls:
+    num_frames × num_steps (same as Phase 2).
 
     Args:
         device: TTNN Blackhole device from setup_blackhole()
@@ -111,8 +111,8 @@ def generate_frames_temporal(
     from diffusers import PNDMScheduler
     from PIL import Image
     from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
-    from models.demos.wormhole.stable_diffusion.sd_helper_funcs import tt_guide
-    from models.demos.wormhole.stable_diffusion.sd_pndm_scheduler import TtPNDMScheduler
+    from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
+    from models.demos.vision.generative.stable_diffusion.wormhole.sd_pndm_scheduler import TtPNDMScheduler
 
     lh, lw = height // 8, width // 8
 
