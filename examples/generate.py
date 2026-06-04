@@ -161,8 +161,8 @@ def load_sd14_ttnn(device):
     """
     from diffusers import AutoencoderKL, UNet2DConditionModel
     from ttnn.model_preprocessing import preprocess_model_parameters
-    from models.demos.wormhole.stable_diffusion.custom_preprocessing import custom_preprocessor
-    from models.demos.wormhole.stable_diffusion.tt.ttnn_functional_unet_2d_condition_model_new_conv import (
+    from models.demos.vision.generative.stable_diffusion.wormhole.custom_preprocessing import custom_preprocessor
+    from models.demos.vision.generative.stable_diffusion.wormhole.tt.ttnn_functional_unet_2d_condition_model_new_conv import (
         UNet2DConditionModel as UNet2D,
     )
 
@@ -249,7 +249,7 @@ def _open_device():
     """Open a MeshDevice — real Blackhole or ttsim virtual device."""
     from animatediff_ttnn.ttnn_pipeline import setup_blackhole, _ensure_tt_metal_path
     import ttnn
-    from models.demos.wormhole.stable_diffusion.common import SD_L1_SMALL_SIZE
+    from models.demos.vision.generative.stable_diffusion.wormhole.common import SD_L1_SMALL_SIZE
 
     if args.mode == "sim":
         _ensure_tt_metal_path()
