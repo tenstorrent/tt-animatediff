@@ -44,11 +44,12 @@
     .chip-section { padding: 3.5rem 1rem; display: flex; flex-direction: column; align-items: center; }
     .chip-label { font-size: .72rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 1rem; }
     /* Cell scales to fill viewport width on mobile, caps at 72px on desktop.
-       (100vw - 2rem padding - 10 gaps) / 11 columns */
+       --gap is fixed so --cell has no circular dependency:
+       (100vw - 2rem section padding - 10 * 3px gaps) / 11 columns */
     .chip-grid {
       display: grid;
-      --cell: clamp(28px, calc((100vw - 2rem - 20px) / 11), 72px);
-      --gap: clamp(1px, .35vw, 3px);
+      --gap: 3px;
+      --cell: clamp(28px, calc((100vw - 2rem - 30px) / 11), 72px);
       grid-template-columns: repeat(11, var(--cell));
       grid-template-rows: repeat(10, var(--cell));
       gap: var(--gap);
