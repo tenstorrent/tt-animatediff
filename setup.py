@@ -48,6 +48,9 @@ setup(
             "flake8>=6.0.0",
             "mypy>=1.0.0",
         ],
+        "ui": [
+            "gradio>=4.0.0",
+        ],
     },
     entry_points={},
 )
