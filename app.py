@@ -152,7 +152,7 @@ _DESCRIPTION = """
 See the [prompt guide](https://tenstorrent.github.io/tt-animatediff/#prompt-guide) for tips.
 """
 
-with gr.Blocks(title="tt-animatediff", theme=gr.themes.Base()) as demo:
+with gr.Blocks(title="tt-animatediff") as demo:
     gr.Markdown("# tt-animatediff")
     gr.Markdown(_DESCRIPTION)
 
