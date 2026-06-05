@@ -80,7 +80,7 @@ def _ensure_bh_device(mode: str, sim_path: str):
         _bh_device = setup_blackhole(device_ids=[0])
 
     # Load models onto device
-    from examples.generate import load_sd14_ttnn
+    from animatediff_ttnn.generation_helpers import load_sd14_ttnn
     _bh_models = load_sd14_ttnn(_bh_device)
     return _bh_device, _bh_models
 
@@ -117,8 +117,7 @@ def generate(
         export_gif(frames_list, out_path)
 
     else:  # blackhole or sim
-        import torch
-        from examples.generate import encode_prompt
+        from animatediff_ttnn.generation_helpers import encode_prompt
         from animatediff_ttnn.temporal_attention import generate_frames_temporal
         from animatediff_ttnn.pipeline import export_gif
 
@@ -195,7 +194,6 @@ with gr.Blocks(title="tt-animatediff", theme=gr.themes.Base()) as demo:
 
         with gr.Column(scale=1):
             output_gif = gr.Image(label="Output GIF", type="filepath")
-            status = gr.Markdown("")
 
     run_btn.click(
         fn=generate,
