@@ -41,10 +41,19 @@
     .hero-related a:hover { color: var(--teal); text-decoration: none; }
 
     /* ── chip grid ── */
-    .chip-section { padding: 3.5rem 2rem; display: flex; flex-direction: column; align-items: center; overflow-x: auto; }
+    .chip-section { padding: 3.5rem 1rem; display: flex; flex-direction: column; align-items: center; }
     .chip-label { font-size: .72rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 1rem; }
-    .chip-grid { display: grid; grid-template-columns: repeat(11, 72px); grid-template-rows: repeat(10, 72px); gap: 3px; flex-shrink: 0; }
-    .node { border-radius: 5px; border: 1px solid var(--border); background: #0a141c; overflow: hidden; position: relative; }
+    /* Cell scales to fill viewport width on mobile, caps at 72px on desktop.
+       (100vw - 2rem padding - 10 gaps) / 11 columns */
+    .chip-grid {
+      display: grid;
+      --cell: clamp(28px, calc((100vw - 2rem - 20px) / 11), 72px);
+      --gap: clamp(1px, .35vw, 3px);
+      grid-template-columns: repeat(11, var(--cell));
+      grid-template-rows: repeat(10, var(--cell));
+      gap: var(--gap);
+    }
+    .node { border-radius: clamp(2px, .4vw, 5px); border: 1px solid var(--border); background: #0a141c; overflow: hidden; position: relative; }
     .node img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .node.phase-1 { border-color: rgba(79,209,197,.5); }
     .node.phase-2 { border-color: rgba(236,150,184,.4); }
@@ -98,6 +107,26 @@
 
     /* ── footer ── */
     footer { padding: 1.5rem 2rem; text-align: center; border-top: 1px solid rgba(79,209,197,.08); font-size: .72rem; color: var(--muted); }
+
+    /* ── mobile ── */
+    @media (max-width: 600px) {
+      .hero { padding: 2.5rem 1rem 2rem; }
+      .hero h1 { font-size: 1.6rem; }
+      .hero p { font-size: .9rem; }
+      .hero-links { gap: .6rem; }
+      .chip-section { padding: 2rem .5rem; }
+      .chip-label { font-size: .62rem; }
+      .phase-legend { gap: .65rem; margin-top: 1rem; }
+      .ph { font-size: .65rem; }
+      .shoulders { padding: 2rem 1rem; }
+      .cards { gap: .75rem; }
+      .card { max-width: 100%; flex-basis: 100%; }
+      .what { padding: 2rem 1rem; }
+      .what-cols { gap: 1.25rem; }
+      .prompt-guide { padding: 2rem 1rem; }
+      .prompt-cols { gap: 1.25rem; }
+      footer { padding: 1.25rem 1rem; }
+    }
   </style>
 </head>
 <body>
