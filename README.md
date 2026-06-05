@@ -119,6 +119,22 @@ python examples/generate.py --mode sim --frames 2 --steps 4
 python examples/generate.py --mode sim --sim ~/sim/libttsim_bh.so --frames 2 --steps 4
 ```
 
+## Interactive UI
+
+Launch the Gradio web interface for point-and-click generation:
+
+```bash
+pip install -e ".[ui]"
+source ~/tt-metal/python_env/bin/activate  # for blackhole/sim modes
+python app.py
+# Open http://localhost:7860
+```
+
+Also available on [HuggingFace Spaces](https://huggingface.co/spaces/tenstorrent/tt-animatediff)
+(runs on ttsim — no hardware required, slower).
+
+See [docs/UI.md](docs/UI.md) for full usage.
+
 ## Integration
 
 For guidance on how to consume this project from other repos — as a toolkit
