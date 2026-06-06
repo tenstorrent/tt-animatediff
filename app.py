@@ -23,7 +23,9 @@ from pathlib import Path
 import gradio as gr
 
 # Default mode: env var SPACE_MODE overrides (set to "sim" on HF Spaces)
-DEFAULT_MODE = os.environ.get("SPACE_MODE", "blackhole")
+_VALID_MODES = {"blackhole", "sim", "cpu"}
+_raw_mode = os.environ.get("SPACE_MODE", "blackhole")
+DEFAULT_MODE = _raw_mode if _raw_mode in _VALID_MODES else "blackhole"
 
 # Add repo root to path so animatediff_ttnn is importable
 sys.path.insert(0, str(Path(__file__).parent))
@@ -101,6 +103,12 @@ def generate(
     lightning_steps: int = 4,
 ):
     """Run generation and return a GIF path for Gradio to display."""
+    # Cast numeric inputs — Gradio Number/Slider can deliver floats
+    frames = int(frames)
+    steps = int(steps)
+    seed = int(seed)
+    lightning_steps = int(lightning_steps)
+
     if not prompt.strip():
         raise gr.Error("Prompt cannot be empty.")
     if not 0.0 <= temporal_alpha <= 1.0:

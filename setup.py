@@ -39,6 +39,8 @@ setup(
         "diffusers>=0.32.1",
         "transformers>=4.30.0",
         "accelerate>=0.20.0",
+        "huggingface_hub>=0.20.0",
+        "safetensors>=0.4.0",
         # tt-metal and ttnn must be installed separately (not on PyPI)
     ],
     extras_require={

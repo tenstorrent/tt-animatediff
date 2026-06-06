@@ -204,7 +204,7 @@
     <div class="lightning-cols">
       <div class="lightning-col">
         <h4>AnimateDiff-Lightning</h4>
-        <p>We integrated <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank">arXiv:2403.12706</a>) into the CPU path. 4-step Lightning produces comparable quality to 25-step standard AnimateDiff, roughly 6× faster. Enable with:</p>
+        <p>We integrated <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) into the CPU path. 4-step Lightning produces comparable quality to 25-step standard AnimateDiff, roughly 6× faster. Enable with:</p>
         <pre class="lightning-code">python examples/generate.py --mode cpu --lightning --steps 4</pre>
         <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Note: Lightning uses guidance_scale=1.0 (CFG disabled) — required by the distilled weights. This gives a more saturated, vivid aesthetic vs. the standard model.</p>
       </div>

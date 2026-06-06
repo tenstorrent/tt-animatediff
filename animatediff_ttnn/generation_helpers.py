@@ -7,8 +7,6 @@ without tt-metal present (imports inside functions are lazy).
 """
 
 import torch
-from pathlib import Path
-import sys
 
 
 def load_sd14_ttnn(device):

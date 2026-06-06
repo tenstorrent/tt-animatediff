@@ -37,7 +37,7 @@ def create_lightning_pipeline(
 
     Args:
         step: Distillation step count — 2, 4, or 8. 4 is the recommended default.
-              Use 2 (or 3 steps at inference) for fastest output with good quality.
+              Use 2 for fastest output; 8 for highest quality.
         model_id: Base SD model. Lightning works best with stylised bases.
         torch_dtype: torch.float32 (CPU) or torch.float16 (GPU).
 

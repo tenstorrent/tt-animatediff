@@ -42,10 +42,13 @@ python app.py
 
 ## HuggingFace Spaces deployment
 
+The `spaces/` directory is the Space entrypoint — `spaces/app.py` sets
+`SPACE_MODE=sim` and then imports the shared `app.py` from the repo root.
+
 1. Create a new Space at https://huggingface.co/spaces (SDK: Gradio)
-2. Copy the contents of `spaces/` into the Space repo root
-3. Copy `app.py` and `animatediff_ttnn/` into the Space repo root
-4. The Space runs in `sim` mode automatically (no hardware required)
+2. Copy the full repo into the Space (both `spaces/` and repo-root files)
+3. Set `app_file: spaces/app.py` in the Space card metadata
+4. The Space detects `SPACE_MODE=sim` and runs in sim mode automatically
 
 Note: ttsim requires a Linux x86_64 runner. Upload `libttsim_bh.so` as a
 Space file or add a setup script to download it at startup.

@@ -5,7 +5,7 @@ colorFrom: teal
 colorTo: indigo
 sdk: gradio
 sdk_version: "4.44.1"
-app_file: app.py
+app_file: spaces/app.py
 pinned: false
 license: apache-2.0
 short_description: AnimateDiff on Tenstorrent Blackhole (ttsim)
