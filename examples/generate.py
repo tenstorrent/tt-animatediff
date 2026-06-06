@@ -103,6 +103,19 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Path to libttsim_bh.so for sim mode (overrides TT_METAL_SIMULATOR)",
     )
+    parser.add_argument(
+        "--lightning",
+        action="store_true",
+        help="Use AnimateDiff-Lightning distilled weights for cpu mode (~6× faster, comparable quality)",
+    )
+    parser.add_argument(
+        "--lightning-steps",
+        type=int,
+        default=4,
+        choices=[2, 4, 8],
+        dest="lightning_steps",
+        help="Lightning distillation step count: 2, 4, or 8 (default 4)",
+    )
     return parser
 
 args = _build_parser().parse_args()
@@ -173,16 +186,28 @@ from animatediff_ttnn.generation_helpers import load_sd14_ttnn, encode_prompt
 # ══════════════════════════════════════════════════════════════════════════
 
 def run_cpu():
-    from animatediff_ttnn.pipeline import create_animatediff_pipeline, generate, export_gif
+    from animatediff_ttnn.pipeline import (
+        create_animatediff_pipeline, create_lightning_pipeline, generate, export_gif,
+    )
 
-    print("AnimateDiff — CPU mode (diffusers AnimateDiffPipeline + MotionAdapter)")
+    if args.lightning:
+        label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster)"
+        guidance = 1.0  # Lightning requires CFG=1.0
+    else:
+        label = "AnimateDiff — CPU mode (diffusers AnimateDiffPipeline + MotionAdapter)"
+        guidance = 7.5
+
+    print(label)
     print(f"  Prompt  : {args.prompt}")
     print(f"  Frames  : {args.frames}  Steps: {args.steps}  Seed: {args.seed}")
     print()
 
-    print("Loading pipeline (first run downloads ~4.7 GB)...")
+    print("Loading pipeline (first run downloads weights)...")
     t0 = time.time()
-    pipe = create_animatediff_pipeline()
+    if args.lightning:
+        pipe = create_lightning_pipeline(step=args.lightning_steps)
+    else:
+        pipe = create_animatediff_pipeline()
     print(f"  Loaded in {time.time() - t0:.1f}s\n")
 
     print(f"Generating {args.frames} frames...")
@@ -191,6 +216,7 @@ def run_cpu():
         pipe, args.prompt,
         negative_prompt=args.negative_prompt,
         num_frames=args.frames,
+        guidance_scale=guidance,
         num_inference_steps=args.steps,
         seed=args.seed,
     )
@@ -199,8 +225,12 @@ def run_cpu():
 
     export_gif(frames, args.output)
     print(f"Saved {len(frames)} frames → {args.output}")
-    print("\nNote: MotionAdapter injected temporal attention into every UNet block.")
-    print("      Each denoising step attends across all frames simultaneously.")
+    if args.lightning:
+        print(f"\nNote: AnimateDiff-Lightning {args.lightning_steps}-step distilled weights (ByteDance).")
+        print("      CFG disabled (guidance_scale=1.0) — required for Lightning.")
+    else:
+        print("\nNote: MotionAdapter injected temporal attention into every UNet block.")
+        print("      Each denoising step attends across all frames simultaneously.")
 
 
 # ══════════════════════════════════════════════════════════════════════════

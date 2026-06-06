@@ -30,17 +30,20 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 NEG_DEFAULT = "blurry, low quality, distorted, text, people, faces, modern buildings"
 
-_cpu_pipe = None       # cached CPU pipeline (slow to load)
+_cpu_pipes: dict = {}  # keyed by (lightning: bool, lightning_steps: int)
 _bh_device = None      # cached Blackhole/sim MeshDevice
 _bh_models = None      # cached (ttnn_model, torch_vae, config, torch_time_proj)
 
 
-def _ensure_cpu_pipeline():
-    global _cpu_pipe
-    if _cpu_pipe is None:
-        from animatediff_ttnn.pipeline import create_animatediff_pipeline
-        _cpu_pipe = create_animatediff_pipeline()
-    return _cpu_pipe
+def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
+    key = (lightning, lightning_steps)
+    if key not in _cpu_pipes:
+        from animatediff_ttnn.pipeline import create_animatediff_pipeline, create_lightning_pipeline
+        if lightning:
+            _cpu_pipes[key] = create_lightning_pipeline(step=lightning_steps)
+        else:
+            _cpu_pipes[key] = create_animatediff_pipeline()
+    return _cpu_pipes[key]
 
 
 def _ensure_bh_device(mode: str, sim_path: str):
@@ -94,6 +97,8 @@ def generate(
     seed: int,
     temporal_alpha: float,
     sim_path: str,
+    lightning: bool = False,
+    lightning_steps: int = 4,
 ):
     """Run generation and return a GIF path for Gradio to display."""
     if not prompt.strip():
@@ -106,11 +111,13 @@ def generate(
 
     if mode == "cpu":
         from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
-        pipe = _ensure_cpu_pipeline()
+        pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
+        guidance = 1.0 if lightning else 7.5
         frames_list = cpu_generate(
             pipe, prompt,
             negative_prompt=negative_prompt,
             num_frames=frames,
+            guidance_scale=guidance,
             num_inference_steps=steps,
             seed=seed,
         )
@@ -185,10 +192,23 @@ with gr.Blocks(title="tt-animatediff") as demo:
                 placeholder="~/sim/libttsim_bh.so",
                 visible=False,
             )
+            with gr.Row(visible=False) as lightning_row:
+                lightning = gr.Checkbox(label="⚡ Lightning mode (~6× faster, comparable quality)", value=False)
+                lightning_steps = gr.Radio(
+                    choices=[2, 4, 8], value=4, label="Lightning steps",
+                    info="4 recommended; 2 for fastest, 8 for highest quality",
+                )
+
+            def _update_visibility(m):
+                return [
+                    gr.update(visible=(m == "sim")),
+                    gr.update(visible=(m == "cpu")),
+                ]
+
             mode.change(
-                fn=lambda m: gr.update(visible=(m == "sim")),
+                fn=_update_visibility,
                 inputs=mode,
-                outputs=sim_path,
+                outputs=[sim_path, lightning_row],
             )
             run_btn = gr.Button("Generate", variant="primary")
 
@@ -197,7 +217,8 @@ with gr.Blocks(title="tt-animatediff") as demo:
 
     run_btn.click(
         fn=generate,
-        inputs=[mode, prompt, negative_prompt, frames, steps, seed, temporal_alpha, sim_path],
+        inputs=[mode, prompt, negative_prompt, frames, steps, seed, temporal_alpha,
+                sim_path, lightning, lightning_steps],
         outputs=output_gif,
     )
 
