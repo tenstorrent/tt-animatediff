@@ -78,6 +78,25 @@
     .what-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .07em; }
     .what-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
 
+    /* ── lightning section ── */
+    .lightning-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    .lightning-inner { max-width: 980px; margin: 0 auto; }
+    .lightning-section h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: .35rem; font-weight: 700; }
+    .lightning-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .lightning-cols { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .lightning-col { flex: 1 1 280px; }
+    .lightning-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .07em; }
+    .lightning-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+    .lightning-code { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: .5rem .75rem; font-size: .75rem; color: var(--teal); font-family: monospace; white-space: pre-wrap; margin: .5rem 0; }
+    .lightning-gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; max-width: 600px; }
+    .lgif { margin: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid rgba(79,209,197,.3); }
+    .lgif img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .lgif figcaption { padding: .4rem .6rem; font-size: .7rem; color: var(--muted); background: var(--card); }
+    @media (max-width: 600px) {
+      .lightning-cols { gap: 1.25rem; }
+      .lightning-gallery { grid-template-columns: repeat(2, 1fr); max-width: 100%; }
+    }
+
     /* ── prompt guide ── */
     .prompt-guide { background: var(--bg1); border-top: 1px solid var(--border); padding: 3rem 2rem; }
     .prompt-inner { max-width: 980px; margin: 0 auto; }
@@ -172,6 +191,47 @@
         <h4>Open implementation</h4>
         <p>A clean, tested, documented repo anyone with Blackhole hardware can clone and run. Includes a ttsim path for development without silicon.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section class="lightning-section">
+  <div class="lightning-inner">
+    <span class="section-label">Recent additions</span>
+    <h3>⚡ AnimateDiff-Lightning &amp; Gradio UI</h3>
+    <p class="lightning-sub">Two new additions since the initial release.</p>
+
+    <div class="lightning-cols">
+      <div class="lightning-col">
+        <h4>AnimateDiff-Lightning</h4>
+        <p>We integrated <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank">arXiv:2403.12706</a>) into the CPU path. 4-step Lightning produces comparable quality to 25-step standard AnimateDiff, roughly 6× faster. Enable with:</p>
+        <pre class="lightning-code">python examples/generate.py --mode cpu --lightning --steps 4</pre>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Note: Lightning uses guidance_scale=1.0 (CFG disabled) — required by the distilled weights. This gives a more saturated, vivid aesthetic vs. the standard model.</p>
+      </div>
+      <div class="lightning-col">
+        <h4>Gradio UI</h4>
+        <p>A browser-based interface for point-and-click generation — all three modes (Blackhole, ttsim, CPU) plus Lightning controls, live in the same window.</p>
+        <pre class="lightning-code">pip install -e ".[ui]"
+python app.py
+# → http://localhost:7860</pre>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Select mode → enter prompt → adjust frames/steps/seed → click Generate. Lightning checkbox appears in cpu mode. Output GIF displays inline.</p>
+      </div>
+    </div>
+
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — 4-step CPU, ~85s for 8 frames</div>
+    <div class="lightning-gallery">
+      <figure class="lgif">
+        <img src="assets/study/lightning-mandala.gif" alt="sacred mandala blooming from starfield" loading="lazy">
+        <figcaption>sacred mandala · starfield</figcaption>
+      </figure>
+      <figure class="lgif">
+        <img src="assets/study/lightning-aurora.gif" alt="aurora borealis over frozen tundra" loading="lazy">
+        <figcaption>aurora · frozen tundra</figcaption>
+      </figure>
+      <figure class="lgif">
+        <img src="assets/study/lightning-mycelium.gif" alt="mycelium network bioluminescent light" loading="lazy">
+        <figcaption>mycelium · bioluminescent</figcaption>
+      </figure>
     </div>
   </div>
 </section>
