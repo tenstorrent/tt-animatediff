@@ -111,6 +111,9 @@ def generate_frames_temporal(
     width: int = 512,
     temporal_alpha: float = 0.35,
     use_lightning: bool = False,
+    chain_from: str | None = None,
+    chain_save: str | None = None,
+    chain_alpha: float = 0.6,
 ) -> List:
     """Generate temporally-coherent frames on Blackhole with cross-frame attention.
 
@@ -139,6 +142,14 @@ def generate_frames_temporal(
                         1 → full attention; default 0.35)
         use_lightning: If True, use EulerDiscreteScheduler instead of PNDM.
                        CFG=7.5 still applies (base UNet, no distilled adapter).
+        chain_from: Path to a .pt file saved by a previous run's chain_save.
+                    The stored latents are blended into this run's base_noise at
+                    chain_alpha weight — visual continuity across prompts without
+                    explicit conditioning.
+        chain_save: Path to save this run's final denoised latents as a .pt file
+                    so the next run can use them via chain_from.
+        chain_alpha: Blend weight for chain_from latents (0 = ignore, 1 = replace).
+                     Default 0.6 — dominant influence but not overriding fresh noise.
 
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
@@ -200,6 +211,24 @@ def generate_frames_temporal(
     generator = torch.Generator().manual_seed(seed)
     base_noise = torch.randn(1, 4, lh, lw, generator=generator)
     noise_perturb = 0.02 if use_lightning else 0.05
+
+    # Chain continuity: blend previous run's final latents into this run's seed noise.
+    # The saved latents are at the denoised scale (~0 mean, ~1 std after scheduler),
+    # so we normalise them back to unit Gaussian before blending — same space as base_noise.
+    if chain_from is not None:
+        from pathlib import Path as _Path
+        chain_path = _Path(chain_from)
+        if chain_path.exists():
+            prev = torch.load(chain_path, weights_only=True)  # (num_frames_prev, 4, lh, lw)
+            # Use mean of previous frames as a single seed direction
+            prev_mean = prev.mean(dim=0, keepdim=True).float()
+            # Normalise to unit std so it's in the same space as base_noise
+            std = prev_mean.std().clamp(min=1e-6)
+            prev_norm = prev_mean / std
+            base_noise = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_norm
+            print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha}")
+        else:
+            print(f"  Chain: warning — {chain_from} not found, ignoring")
 
     frame_latents = []
     for _ in range(num_frames):
@@ -324,6 +353,14 @@ def generate_frames_temporal(
     ttnn_text_emb.deallocate(True)
     for t_tensor in _tlist:
         t_tensor.deallocate(True)
+
+    # Chain save: persist final denoised latents for the next chained run.
+    if chain_save is not None:
+        from pathlib import Path as _Path
+        save_path = _Path(chain_save)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(torch.cat(frame_latents, dim=0), save_path)
+        print(f"  Chain: saved latents → {save_path}")
 
     # Decode all latents with TTNN VAE on Blackhole.
     # Input: (1, 4, lh, lw) CPU tensor → permute to NHWC for TTNN conv layout.

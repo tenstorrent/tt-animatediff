@@ -23,15 +23,15 @@
   "p3-temple": "done",
   "p3-cave-circuit": "done",
   "p3-standing-stones": "done",
-  "p3-crystal-data": "done",
   "p3-ley-fiber": "done",
   "p3-mayan-grid": "done",
   "p4-circuit-moss": "done",
-  "p4-silicon": "done",
-  "p4-neural-const": "done",
   "p4-server-aurora": "done",
-  "p4-chip-city": "done",
   "p5-chip-cosmos": "done",
   "p5-hand-galaxy": "done",
-  "p5-grid-is-all": "done"
+  "p5-grid-is-all": "done",
+  "p3-crystal-data": "done",
+  "p4-silicon": "done",
+  "p4-neural-const": "done",
+  "p4-chip-city": "done"
 }

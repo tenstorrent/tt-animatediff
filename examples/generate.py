@@ -124,6 +124,28 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="lightning_steps",
         help="Lightning distillation step count: 2, 4, or 8 (default 4)",
     )
+    parser.add_argument(
+        "--chain-from",
+        default=None,
+        dest="chain_from",
+        metavar="PATH",
+        help="Load latents saved by a previous --chain-save run and blend into seed noise "
+             "for visual narrative continuity across prompts (blackhole/sim only).",
+    )
+    parser.add_argument(
+        "--chain-save",
+        default=None,
+        dest="chain_save",
+        metavar="PATH",
+        help="Save this run's final denoised latents to PATH (.pt) for use by --chain-from.",
+    )
+    parser.add_argument(
+        "--chain-alpha",
+        type=float,
+        default=0.6,
+        dest="chain_alpha",
+        help="Blend weight for --chain-from latents (0=ignore, 1=replace; default 0.6).",
+    )
     return parser
 
 args = _build_parser().parse_args()
@@ -290,6 +312,10 @@ def run_ttnn():
         print(f"  CFG            : 7.5 (TTNN path uses base SD 1.4 UNet, not distilled adapter)")
     else:
         print(f"  Scheduler      : PNDM (scaled_linear, skip_prk)")
+    if args.chain_from:
+        print(f"  Chain from     : {args.chain_from}  (alpha={args.chain_alpha})")
+    if args.chain_save:
+        print(f"  Chain save     : {args.chain_save}")
     if args.mode == "sim":
         print(f"\n  Note: ttsim is 10–100× slower than silicon.")
     print()
@@ -325,6 +351,9 @@ def run_ttnn():
             seed=args.seed,
             temporal_alpha=args.temporal_alpha,
             use_lightning=args.lightning,
+            chain_from=args.chain_from,
+            chain_save=args.chain_save,
+            chain_alpha=args.chain_alpha,
         )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
