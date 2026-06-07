@@ -339,7 +339,7 @@ def generate_frames_temporal(
         ttnn_lat.deallocate(True)
         # Reshape to (1, H, W, 3) then permute to (1, 3, H, W)
         ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
-        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2]))
+        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2])).float()
         ttnn_decoded.deallocate(True)
         img = (decoded / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
