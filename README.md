@@ -360,6 +360,15 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.6.0 — 2026-06-07
+- **TTNN VAE on Blackhole** — VAE decode now runs fully on Blackhole hardware (no CPU fallback). Root cause of previous OOM identified: live UNet L1 tensors were not deallocated before VAE decode. Fix mirrors the official `sd_helper_funcs.py::run()` deallocation pattern. `load_sd14_ttnn()` now returns a TTNN `Vae` instance alongside the UNet.
+- **`--chain` stateful latent threading** — `--chain-save <path>` persists final denoised latents; `--chain-from <path>` blends them into the next run's seed noise at configurable `--chain-alpha` (default 0.6). Creates visual narrative continuity across independent prompts without explicit conditioning.
+- **Grid refresh** — four grid cells (`p3-crystal-data`, `p4-silicon`, `p4-neural-const`, `p4-chip-city`) regenerated with evolved prompts (pinks, purples, recognizable Tensix-emergent phenomena) using Lightning mode. Grid nodes display a ⚡ pip and pink glow for Lightning cells.
+- **Mermaid architecture diagrams** — execution flow and original-vs-current comparison diagrams added to README and website; fixed `direction TB` syntax error in nested subgraphs (invalid in Mermaid v11).
+- **`generate.py` default-steps fix** — Blackhole Lightning defaulted to 4 steps (distillation constraint); now correctly defaults to 25. CPU Lightning still uses `--lightning-steps`.
+- **bfloat16→float32 cast fix** — `ttnn.to_torch()` returns bfloat16; added `.float()` before numpy conversion to fix `unsupported ScalarType BFloat16` crash.
+- Home-page Lightning samples replaced with gallery GIFs generated post CFG-fix.
+
 ### v0.5.0 — 2026-06-07
 - **Lightning CFG fix** — Blackhole/sim Lightning path now uses CFG=7.5 (was incorrectly 1.0); CFG=1.0 only applies to the real distilled CPU adapter
 - **10-prompt comparison gallery** — [gallery.html](https://tenstorrent.github.io/tt-animatediff/gallery.html): standard PNDM vs Euler Lightning, all prompts, 25 steps each
