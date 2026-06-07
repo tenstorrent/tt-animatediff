@@ -195,8 +195,14 @@ def generate_frames_temporal(
         # Collect TTNN noise predictions for all frames at timestep t
         noise_preds = []
         for i in range(num_frames):
+            latent_cpu = frame_latents[i]
+            if use_lightning:
+                # Euler schedulers require scaling the latent by 1/sqrt(sigma^2+1)
+                # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
+                # there, but Euler's sigma starts at ~25 and must be normalized).
+                latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
             lat = to_device(
-                frame_latents[i], device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+                latent_cpu, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
             )
             # TTNN UNet expects batch=2 for CFG (unconditional + conditional)
             lat_input = ttnn.concat([lat, lat], dim=0)
