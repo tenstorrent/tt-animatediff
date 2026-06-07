@@ -112,6 +112,39 @@
       .lightning-gallery { grid-template-columns: repeat(2, 1fr); max-width: 100%; }
     }
 
+    /* ── chain section ── */
+    .chain-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    .chain-inner { max-width: 980px; margin: 0 auto; }
+    .chain-section h3 { font-size: 1.1rem; color: var(--pink, #ec96b8); margin-bottom: .35rem; font-weight: 700; }
+    .chain-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .chain-strip { display: flex; align-items: flex-end; gap: 0; overflow-x: auto; padding-bottom: .5rem; }
+    .chain-item { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; }
+    .chain-item figure { margin: 0; border-radius: var(--radius); overflow: hidden;
+      border: 1px solid rgba(236,150,184,.45); width: 140px; }
+    .chain-item img { width: 140px; height: 140px; object-fit: cover; display: block; }
+    .chain-item figcaption { padding: .35rem .5rem; font-size: .62rem; color: var(--muted);
+      background: var(--card); line-height: 1.35; text-align: center; }
+    .chain-arrow { flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+      padding: 0 .35rem; padding-bottom: 2rem; }
+    .chain-arrow-line { width: 28px; height: 1px; background: rgba(236,150,184,.4); margin-top: 69px; }
+    .chain-arrow-tip { width: 0; height: 0;
+      border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+      border-left: 6px solid rgba(236,150,184,.55); margin-top: -4px; margin-left: 22px; }
+    .chain-arrow-label { font-size: .55rem; color: rgba(236,150,184,.6);
+      letter-spacing: .06em; text-transform: uppercase; margin-top: .4rem; white-space: nowrap; }
+    .chain-cols { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 2rem; }
+    .chain-col { flex: 1 1 280px; }
+    .chain-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .5rem;
+      text-transform: uppercase; letter-spacing: .07em; }
+    .chain-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+    .chain-code { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: .5rem .75rem; font-size: .75rem; color: rgba(236,150,184,.9);
+      font-family: monospace; white-space: pre-wrap; margin: .5rem 0; }
+    @media (max-width: 700px) {
+      .chain-item figure { width: 110px; }
+      .chain-item img { width: 110px; height: 110px; }
+    }
+
     /* ── prompt guide ── */
     .prompt-guide { background: var(--bg1); border-top: 1px solid var(--border); padding: 3rem 2rem; }
     .prompt-inner { max-width: 980px; margin: 0 auto; }
@@ -318,6 +351,100 @@ python app.py
         <img src="assets/study/lightning-mycelium.gif" alt="deep sea hydrothermal vent with bioluminescent ecosystem" loading="lazy">
         <figcaption>deep sea vent · bioluminescent</figcaption>
       </figure>
+    </div>
+  </div>
+</section>
+
+<section class="chain-section">
+  <div class="chain-inner">
+    <span class="section-label">Stateful latent threading</span>
+    <h3>🔗 Chain Continuity</h3>
+    <p class="chain-sub">Six independent prompts. One subject — retro 3D glasses — threaded through each by blending the previous run's final denoised latents into the next run's seed noise. No explicit conditioning, no fine-tuning. Just hardware-resident state.</p>
+
+    <div class="chain-strip">
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-neon.gif" alt="retro 3D glasses on neon-lit diner counter" loading="lazy">
+          <figcaption>neon diner<br>35mm film</figcaption>
+        </figure>
+      </div>
+      <div class="chain-arrow">
+        <div class="chain-arrow-line"></div>
+        <div class="chain-arrow-tip"></div>
+        <div class="chain-arrow-label">α 0.55</div>
+      </div>
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-cosmic.gif" alt="retro 3D glasses floating in deep space nebula" loading="lazy">
+          <figcaption>deep space<br>violet nebula ⚡</figcaption>
+        </figure>
+      </div>
+      <div class="chain-arrow">
+        <div class="chain-arrow-line"></div>
+        <div class="chain-arrow-tip"></div>
+        <div class="chain-arrow-label">α 0.50</div>
+      </div>
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-forest.gif" alt="retro 3D glasses on bioluminescent forest floor" loading="lazy">
+          <figcaption>bioluminescent<br>forest</figcaption>
+        </figure>
+      </div>
+      <div class="chain-arrow">
+        <div class="chain-arrow-line"></div>
+        <div class="chain-arrow-tip"></div>
+        <div class="chain-arrow-label">α 0.55</div>
+      </div>
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-circuit.gif" alt="retro 3D glasses dissolving into circuit board" loading="lazy">
+          <figcaption>circuit board<br>Tenstorrent ⚡</figcaption>
+        </figure>
+      </div>
+      <div class="chain-arrow">
+        <div class="chain-arrow-line"></div>
+        <div class="chain-arrow-tip"></div>
+        <div class="chain-arrow-label">α 0.45</div>
+      </div>
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-watercolor.gif" alt="retro 3D glasses in flowing watercolor" loading="lazy">
+          <figcaption>watercolor<br>studio art</figcaption>
+        </figure>
+      </div>
+      <div class="chain-arrow">
+        <div class="chain-arrow-line"></div>
+        <div class="chain-arrow-tip"></div>
+        <div class="chain-arrow-label">α 0.50</div>
+      </div>
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-ocean.gif" alt="retro 3D glasses on tropical coral reef" loading="lazy">
+          <figcaption>coral reef<br>underwater ⚡</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <div class="chain-cols">
+      <div class="chain-col">
+        <h4>How it works</h4>
+        <p>After each generation, <code>--chain-save</code> persists the final denoised latent tensors to a <code>.pt</code> file. The next run loads them with <code>--chain-from</code> and blends the normalised mean into the seed noise before denoising begins. Each step's solver then steers away from shared noise toward the new prompt — so the subject's form lingers in the structure while the context changes completely.</p>
+        <pre class="chain-code"># Run 1 — save latents
+python examples/generate.py \
+  --prompt "retro 3D glasses, neon diner" \
+  --chain-save chain.pt
+
+# Run 2 — thread DNA from run 1
+python examples/generate.py \
+  --prompt "retro 3D glasses, deep space" \
+  --chain-from chain.pt --chain-alpha 0.55 \
+  --chain-save chain.pt</pre>
+      </div>
+      <div class="chain-col">
+        <h4>Why this is hardware-native</h4>
+        <p>Standard diffusion pipelines evict all intermediate tensors between calls. On Tenstorrent Blackhole, the denoised latent state lives in L1 between runs — the hardware makes persistent-state inference cheap. Chain threading is only practical at this cost because the latents never need to round-trip through host memory. It's a primitive that other architectures can't express efficiently without bespoke memory management. <code>--chain-alpha</code> (0–1) controls how strongly the previous run's identity bleeds through — lower values let the new prompt fully take over; higher values preserve more of the subject's structural fingerprint.</p>
+        <p style="margin-top:.75rem;font-size:.78rem;">The Gradio UI exposes chain controls under the <em>Chain continuity</em> accordion — load a <code>.pt</code> from disk and chain runs interactively.</p>
+      </div>
     </div>
   </div>
 </section>
