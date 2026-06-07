@@ -78,6 +78,19 @@
     .what-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .07em; }
     .what-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
 
+    /* ── architecture / mermaid section ── */
+    .arch-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    .arch-inner { max-width: 980px; margin: 0 auto; }
+    .arch-section h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: .35rem; font-weight: 700; }
+    .arch-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .arch-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+    .arch-tab { font-size: .72rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: .25rem .65rem; cursor: pointer; background: transparent; transition: color .15s, border-color .15s; }
+    .arch-tab.active, .arch-tab:hover { color: var(--teal); border-color: var(--teal-border); }
+    .arch-diagram { display: none; background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; overflow-x: auto; }
+    .arch-diagram.active { display: block; }
+    .arch-diagram .mermaid { max-width: 100%; }
+    .arch-caption { margin-top: .75rem; font-size: .75rem; color: var(--muted); line-height: 1.6; }
+
     /* ── lightning section ── */
     .lightning-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
     .lightning-inner { max-width: 980px; margin: 0 auto; }
@@ -196,6 +209,73 @@
   </div>
 </section>
 
+<section class="arch-section">
+  <div class="arch-inner">
+    <span class="section-label">How it works</span>
+    <h3>Architecture &amp; Execution Flow</h3>
+    <p class="arch-sub">What runs on Blackhole silicon, what runs on CPU, and where this differs from standard AnimateDiff.</p>
+
+    <div class="arch-tabs">
+      <button class="arch-tab active" onclick="showDiagram('flow')">Execution flow</button>
+      <button class="arch-tab" onclick="showDiagram('arch')">Original vs current</button>
+    </div>
+
+    <div id="diag-flow" class="arch-diagram active">
+      <div class="mermaid">
+flowchart TD
+    P([Prompt + seed]) --> ENC["CLIP encode\n(CPU — always)"]
+    ENC --> MODE{Mode?}
+
+    MODE -->|cpu| CPU_SCHED["PNDM or Euler scheduler\n+ MotionAdapter weights"]
+    CPU_SCHED --> CPU_UNET["diffusers UNet2DConditionModel\n+ MotionAdapter TemporalTransformer\nFull AnimateDiff — CPU only"]
+    CPU_UNET --> CPU_VAE["VAE decode — CPU"]
+    CPU_VAE --> GIF([Output GIF])
+
+    MODE -->|blackhole / sim| LOOP["Denoising loop\none scheduler per frame"]
+    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C silicon\n~15 s / frame"]
+    BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all frames — CPU"]
+    CFA --> STEP["scheduler.step — one per frame"]
+    STEP -->|Lightning mode| LAT["cross_frame_attention\nprev_sample blended\n0.4× alpha — cosine decay"]
+    LAT --> NEXT{more steps?}
+    STEP -->|Standard PNDM| NEXT
+    NEXT -->|yes| LOOP
+    NEXT -->|no| BH_VAE["VAE decode — CPU\nTTNN VAE conv_out OOMs on BH"]
+    BH_VAE --> GIF
+      </div>
+      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode adds a second blend pass on the latents after <code>scheduler.step()</code>.</p>
+    </div>
+
+    <div id="diag-arch" class="arch-diagram">
+      <div class="mermaid">
+flowchart LR
+    subgraph WRONG["❌ Original — silent failure"]
+        direction TB
+        W1["SD 3.5 DiT\n2432-dim features"] -->|motion weights injected| W2["mm_sd_v15_v2.ckpt\ntrained for SD 1.5 UNet\n320-dim features"]
+        W2 --> W3["Dimension mismatch\nNo temporal attention\nactually applied"]
+    end
+
+    subgraph RIGHT["✅ Current"]
+        direction TB
+        R1["SD 1.4 UNet\n320-dim — correct architecture"] -->|CPU| R2["MotionAdapter\nTemporalTransformer 320-dim\nFull AnimateDiff ✓"]
+        R1 -->|Blackhole| R3["TTNN UNet2D\nCross-frame attention blend\nPhase 2.5 approximation"]
+    end
+
+    WRONG -.->|fix: use matching architecture| RIGHT
+      </div>
+      <p class="arch-caption">The original code applied <code>mm_sd_v15_v2.ckpt</code> motion weights (trained for SD 1.5 UNet, 320-dim features) to the SD 3.5 DiT (a Diffusion Transformer, 2432-dim). The shapes are incompatible — no temporal attention was actually running. The fix was switching to SD 1.4 whose UNet matches the motion weights exactly.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+function showDiagram(name) {
+  document.querySelectorAll('.arch-diagram').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.arch-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('diag-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
 <section class="lightning-section">
   <div class="lightning-inner">
     <span class="section-label">Recent additions</span>
@@ -284,7 +364,7 @@ python app.py
         <p style="margin-top:.75rem;font-size:.75rem;color:var(--muted)">Fast motion (fire, water): 0.2–0.35 · Slow drift (cosmos, aurora): 0.4–0.6</p>
 
         <h4 style="margin-top:1.25rem"><code>--steps</code></h4>
-        <p style="font-size:.8rem;color:var(--muted)">PNDM scheduler. Minimum ~4 (preview). 25 is the sweet spot on silicon. Beyond 30 gives diminishing returns.</p>
+        <p style="font-size:.8rem;color:var(--muted)">PNDM and Euler (Lightning): 25 is the sweet spot on silicon for both. Minimum ~4 for quick previews. CPU Lightning uses 4 steps (distilled adapter).</p>
       </div>
     </div>
   </div>
@@ -297,6 +377,31 @@ python app.py
   Original work by <a href="https://arxiv.org/abs/2307.04725">Guo et al. 2023</a>
 </footer>
 
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      background: '#0d1b24',
+      primaryColor: '#0f2a35',
+      primaryBorderColor: '#4fd1c5',
+      primaryTextColor: '#e8f0f2',
+      secondaryColor: '#122130',
+      secondaryBorderColor: '#81e6d9',
+      tertiaryColor: '#1a3c47',
+      tertiaryBorderColor: '#607d8b',
+      lineColor: '#4fd1c5',
+      textColor: '#e8f0f2',
+      edgeLabelBackground: '#0d1b24',
+      clusterBkg: '#0f2a35',
+      clusterBorder: '#4fd1c5',
+      titleColor: '#4fd1c5',
+      fontFamily: "'Segoe UI', system-ui, sans-serif",
+      fontSize: '13px',
+    },
+  });
+</script>
 <script>
 const GIFS = [
   {name:"p1-nebula",        row:0, col:0,  phase:1, prompt:"swirling nebula in deep space"},

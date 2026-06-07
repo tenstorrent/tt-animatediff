@@ -286,24 +286,62 @@ Blackhole/sim Lightning ignores `--lightning-steps` and uses `--steps` (default 
 
 ---
 
-## AnimateDiff Architecture Reference
+## Execution Flow
 
+```mermaid
+flowchart TD
+    P([Prompt + seed]) --> ENC["CLIP encode\n(CPU, always)"]
+    ENC --> MODE{Mode?}
+
+    MODE -->|cpu| CPU_SCHED["PNDMScheduler\nor EulerDiscreteScheduler\n(Lightning)"]
+    CPU_SCHED --> CPU_UNET["diffusers UNet2DConditionModel\n+ MotionAdapter\n(CPU — full temporal attention)"]
+    CPU_UNET --> CPU_VAE["VAE decode (CPU)"]
+    CPU_VAE --> GIF([GIF])
+
+    MODE -->|blackhole / sim| BH_SCHED["PNDMScheduler (standard)\nor EulerDiscreteScheduler (Lightning)\n— one per frame"]
+    BH_SCHED --> LOOP["For each step t:"]
+    LOOP --> BH_UNET["TTNN UNet2D — SD 1.4\nBlackhole P300C\n~15 s/frame"]
+    BH_UNET --> CFA["cross_frame_attention()\nnoise_preds blended\n(CPU, tiny)"]
+    CFA --> STEP["scheduler.step()\n— one per frame"]
+    STEP -->|Lightning: +latent blend| LAT["cross_frame_attention()\nprev_sample blended\nα × 0.4, cosine decay"]
+    LAT --> LOOP
+    STEP -->|PNDM| LOOP
+    LOOP -->|done| BH_VAE["VAE decode (CPU)\n— TTNN VAE conv_out OOMs"]
+    BH_VAE --> GIF
+
+    style BH_UNET fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
+    style CFA fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
+    style LAT fill:#0f2a35,stroke:#81e6d9,color:#e8f0f2
 ```
-SD 1.4 UNet without MotionAdapter:
-  Noise → [Down blocks] → [Mid block] → [Up blocks] → Denoised latent
-           each block has BasicTransformerBlock(spatial attention)
 
-SD 1.4 UNet WITH MotionAdapter (Phase 1 CPU):
-  Noise → [Down blocks] → [Mid block] → [Up blocks] → Denoised latent
-           each BasicTransformerBlock has:
-             spatial attention (unchanged)
-             + TemporalTransformer(cross-frame attention, 320-dim)
-                                              ↑
-                              mm_sd_v15_v2.ckpt weights live here
+## Architecture Reference: Original vs Current
+
+The original implementation used architecturally incompatible components:
+
+```mermaid
+flowchart LR
+    subgraph WRONG["❌ Original — silent failure"]
+        direction TB
+        W1["SD 3.5 DiT\n2432-dim features"] -->|motion weights applied| W2["mm_sd_v15_v2.ckpt\ntrained for 320-dim UNet"]
+        W2 --> W3["No temporal attention\nactually applied\n(dimension mismatch)"]
+    end
+
+    subgraph RIGHT["✅ Current — correct"]
+        direction TB
+        R1["SD 1.4 UNet\n320-dim features"] -->|CPU path| R2["MotionAdapter\nTemporalTransformer\n320-dim ✓"]
+        R1 -->|Blackhole path| R3["TTNN UNet2D\ncross-frame blend\n(Phase 2.5)"]
+        R2 --> R4["Full AnimateDiff\ntemporal attention"]
+        R3 --> R5["Approximate temporal\nvia noise-pred blending"]
+    end
+
+    WRONG -.->|fix: use SD 1.4| RIGHT
+
+    style WRONG fill:#2d0f0f,stroke:#ff6b6b,color:#e8f0f2
+    style RIGHT fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
 ```
 
 Full AnimateDiff on Blackhole (Phase 3) requires TemporalTransformer layers
-inserted into the TTNN UNet transformer blocks.
+inserted into the TTNN UNet transformer blocks — tracked as future work.
 
 ---
 
