@@ -96,6 +96,35 @@ def _cosine_alpha(step_idx: int, num_steps: int, alpha_max: float, alpha_min_fra
     return alpha_max * (alpha_min_frac + (1.0 - alpha_min_frac) * cosine)
 
 
+def _latent_preview(frame_latents: list, height: int, width: int):
+    """Fast CPU-side preview of current denoising latents — no VAE, no hardware.
+
+    Maps 3 of the 4 latent channels to RGB via tanh soft-clipping and bilinear
+    upsample to full resolution. Shows structure emerging from noise in real time
+    without adding any latency to the hardware pipeline.
+
+    Args:
+        frame_latents: List of (1, 4, lh, lw) CPU tensors — current denoised latents.
+        height, width: Target image size in pixels.
+
+    Returns:
+        List of PIL Images, one per frame — approximate colourised preview.
+    """
+    from PIL import Image as _Image
+    import numpy as _np
+
+    frames = []
+    for lat in frame_latents:
+        rgb = lat[0, :3].float()                   # (3, lh, lw) — first 3 channels as RGB proxy
+        rgb = torch.tanh(rgb * 0.5) * 0.5 + 0.5   # soft-clip wide dynamic range to [0, 1]
+        rgb_up = torch.nn.functional.interpolate(
+            rgb.unsqueeze(0), size=(height, width), mode="bilinear", align_corners=False
+        )[0]                                        # (3, H, W)
+        arr = (rgb_up.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype(_np.uint8)
+        frames.append(_Image.fromarray(arr))
+    return frames
+
+
 def generate_frames_temporal(
     device,
     ttnn_model,
@@ -114,6 +143,7 @@ def generate_frames_temporal(
     chain_from: str | None = None,
     chain_save: str | None = None,
     chain_alpha: float = 0.6,
+    on_step=None,
 ) -> List:
     """Generate temporally-coherent frames on Blackhole with cross-frame attention.
 
@@ -150,6 +180,10 @@ def generate_frames_temporal(
                     so the next run can use them via chain_from.
         chain_alpha: Blend weight for chain_from latents (0 = ignore, 1 = replace).
                      Default 0.6 — dominant influence but not overriding fresh noise.
+        on_step: Optional callable(step_idx, num_steps, frame_latents) called after
+                 each complete denoising step. frame_latents is the current list of
+                 (1, 4, lh, lw) CPU tensors — pass them to _latent_preview() for a
+                 fast in-progress visual. Called in the TTNN thread; must be thread-safe.
 
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
@@ -337,6 +371,8 @@ def generate_frames_temporal(
                 ).prev_sample
 
         print(f"  Step {step_idx + 1}/{num_steps_actual}", end="\r", flush=True)
+        if on_step is not None:
+            on_step(step_idx, num_steps_actual, frame_latents)
 
     print()
 

@@ -10,14 +10,18 @@ Local (Blackhole hardware):
 HuggingFace Spaces (ttsim, no hardware):
     Deployed from spaces/ — sets SPACE_MODE=sim automatically.
 
-The UI exposes the same parameters as generate.py.  Backend functions are
-imported lazily inside the generate callback so the module loads without
-tt-metal present.
+Streaming: the generate callback is a Python generator. After each denoising
+step, _latent_preview() converts the current noisy latents to a colourised
+preview GIF (tanh-mapped RGB, bilinear upsampled) and yields it to Gradio.
+The final yield is the VAE-decoded result. No hardware overhead per preview —
+preview decode is pure CPU tensor ops on the 64×64 latent grid.
 """
 
 import os
+import queue
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import gradio as gr
@@ -84,10 +88,16 @@ def _ensure_bh_device(mode: str, sim_path: str):
     else:
         _bh_device = setup_blackhole(device_ids=[0])
 
-    # Load models onto device
     from animatediff_ttnn.generation_helpers import load_sd14_ttnn
     _bh_models = load_sd14_ttnn(_bh_device)
     return _bh_device, _bh_models
+
+
+def _save_preview_gif(frames, path: str) -> str:
+    """Save a list of PIL Images as an animated GIF and return the path."""
+    from animatediff_ttnn.pipeline import export_gif
+    export_gif(frames, path)
+    return path
 
 
 def generate(
@@ -101,8 +111,18 @@ def generate(
     sim_path: str,
     lightning: bool = False,
     lightning_steps: int = 4,
+    chain_from: str = "",
+    chain_save: str = "",
+    chain_alpha: float = 0.6,
 ):
-    """Run generation and return a GIF path for Gradio to display."""
+    """Generator: yields preview GIF paths as denoising progresses, then final GIF.
+
+    Streaming works by running the TTNN generation in a background thread while
+    the Gradio handler thread reads previews from a queue and yields them. Each
+    denoising step fires on_step(), which encodes a fast CPU-side latent preview
+    (no VAE, no hardware) into a GIF and enqueues it. The sentinel None signals
+    that generation is complete and the final result is ready.
+    """
     # Cast numeric inputs — Gradio Number/Slider can deliver floats
     frames = int(frames)
     steps = int(steps)
@@ -114,10 +134,14 @@ def generate(
     if not 0.0 <= temporal_alpha <= 1.0:
         raise gr.Error("Temporal alpha must be between 0 and 1.")
 
+    chain_from_path = chain_from.strip() or None
+    chain_save_path = chain_save.strip() or None
+
     out_dir = Path(tempfile.mkdtemp())
-    out_path = str(out_dir / "output.gif")
+    final_path = str(out_dir / "output.gif")
 
     if mode == "cpu":
+        # CPU mode has no step-level callback hook — just run and yield final
         from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
         pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
         guidance = 1.0 if lightning else 7.5
@@ -129,32 +153,86 @@ def generate(
             num_inference_steps=steps,
             seed=seed,
         )
-        export_gif(frames_list, out_path)
+        export_gif(frames_list, final_path)
+        yield final_path
+        return
 
-    else:  # blackhole or sim
-        from animatediff_ttnn.generation_helpers import encode_prompt
-        from animatediff_ttnn.temporal_attention import generate_frames_temporal
-        from animatediff_ttnn.pipeline import export_gif
+    # Blackhole / sim — stream per-step previews then yield final
+    from animatediff_ttnn.generation_helpers import encode_prompt
+    from animatediff_ttnn.temporal_attention import generate_frames_temporal, _latent_preview
+    from animatediff_ttnn.pipeline import export_gif
 
-        device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
-        text_embeddings = encode_prompt(prompt, negative_prompt)
-        frames_list = generate_frames_temporal(
-            device=device,
-            ttnn_model=ttnn_model,
-            ttnn_vae=ttnn_vae,
-            config=config,
-            torch_time_proj=torch_time_proj,
-            text_embeddings=text_embeddings,
-            num_frames=frames,
-            num_steps=steps,
-            guidance_scale=7.5,  # base SD 1.4 UNet always uses CFG=7.5; CFG=1.0 only for real distilled adapter on CPU
-            seed=seed,
-            temporal_alpha=temporal_alpha,
-            use_lightning=lightning,
-        )
-        export_gif(frames_list, out_path)
+    device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
+    text_embeddings = encode_prompt(prompt, negative_prompt)
 
-    return out_path
+    # Queue carries (preview_gif_path | None, error | None)
+    # None preview + None error = done, final result is ready
+    step_q: queue.Queue = queue.Queue()
+    result_holder = []
+    error_holder = []
+
+    # Preview cadence: emit every step for ≤10 steps, every 2 steps otherwise.
+    # Avoids flooding Gradio with updates on long runs while still feeling live.
+    preview_every = 1 if steps <= 10 else 2
+
+    height, width = 512, 512
+
+    def on_step(step_idx, num_steps, frame_latents):
+        if step_idx % preview_every != 0 and step_idx != num_steps - 1:
+            return
+        preview_frames = _latent_preview(frame_latents, height, width)
+        p = str(out_dir / f"preview_{step_idx:03d}.gif")
+        export_gif(preview_frames, p)
+        step_q.put((p, None))
+
+    def worker():
+        try:
+            fl = generate_frames_temporal(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                num_frames=frames,
+                num_steps=steps,
+                guidance_scale=7.5,
+                seed=seed,
+                temporal_alpha=temporal_alpha,
+                use_lightning=lightning,
+                chain_from=chain_from_path,
+                chain_save=chain_save_path,
+                chain_alpha=chain_alpha,
+                on_step=on_step,
+                height=height,
+                width=width,
+            )
+            result_holder.append(fl)
+        except Exception as exc:
+            error_holder.append(exc)
+        finally:
+            step_q.put((None, None))  # sentinel
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    # Yield previews as they arrive; stop when sentinel received
+    while True:
+        item = step_q.get()
+        preview_path, err = item
+        if err is not None:
+            raise gr.Error(str(err))
+        if preview_path is None:
+            break
+        yield preview_path
+
+    t.join()
+
+    if error_holder:
+        raise gr.Error(str(error_holder[0]))
+
+    export_gif(result_holder[0], final_path)
+    yield final_path
 
 
 # ── UI layout ─────────────────────────────────────────────────────────────
@@ -166,6 +244,7 @@ _DESCRIPTION = """
 - **sim** — runs on ttsim virtual device (bit-exact, slower)
 - **cpu** — runs on CPU via diffusers AnimateDiffPipeline (~2 min/frame)
 
+Preview updates stream in real time as each denoising step completes.
 See the [prompt guide](https://tenstorrent.github.io/tt-animatediff/#prompt-guide) for tips.
 """
 
@@ -191,43 +270,65 @@ with gr.Blocks(title="tt-animatediff") as demo:
                 lines=2,
             )
             with gr.Row():
-                frames = gr.Slider(2, 24, value=8, step=1, label="Frames")
-                steps = gr.Slider(4, 50, value=25, step=1, label="Steps")
+                frames_slider = gr.Slider(2, 24, value=8, step=1, label="Frames")
+                steps_slider = gr.Slider(4, 50, value=25, step=1, label="Steps")
             with gr.Row():
-                seed = gr.Number(value=42, label="Seed", precision=0)
-                temporal_alpha = gr.Slider(0.0, 1.0, value=0.35, step=0.05,
-                                           label="Temporal alpha (blackhole/sim only)")
+                seed_num = gr.Number(value=42, label="Seed", precision=0)
+                temporal_alpha_slider = gr.Slider(
+                    0.0, 1.0, value=0.35, step=0.05,
+                    label="Temporal alpha (blackhole/sim only)",
+                )
             sim_path = gr.Textbox(
                 label="Sim binary path (sim mode only)",
                 placeholder="~/sim/libttsim_bh.so",
                 visible=False,
             )
+
             with gr.Row():
-                lightning = gr.Checkbox(label="⚡ Lightning (Euler scheduler; ~6× faster on CPU, same speed on Blackhole)", value=False)
+                lightning = gr.Checkbox(
+                    label="⚡ Lightning (Euler scheduler — use Steps=4 for speed, 25 for quality)",
+                    value=False,
+                )
                 lightning_steps = gr.Radio(
-                    choices=[2, 4, 8], value=4, label="Lightning steps (CPU only; Blackhole/sim use --steps above)",
-                    info="CPU Lightning only: step count must match the distilled checkpoint (4 recommended)",
+                    choices=[2, 4, 8], value=4,
+                    label="Lightning steps (CPU only)",
+                    info="CPU Lightning only: must match the distilled checkpoint (4 recommended)",
+                )
+
+            with gr.Accordion("Chain continuity (blackhole/sim only)", open=False):
+                gr.Markdown(
+                    "Thread visual DNA from one generation into the next. "
+                    "Save this run's final latents with **Chain save**, then load them in the next run with **Chain from**."
+                )
+                with gr.Row():
+                    chain_from_box = gr.Textbox(
+                        label="Chain from (path to .pt)", placeholder="chain.pt"
+                    )
+                    chain_save_box = gr.Textbox(
+                        label="Chain save (path to .pt)", placeholder="chain.pt"
+                    )
+                chain_alpha_slider = gr.Slider(
+                    0.0, 1.0, value=0.6, step=0.05,
+                    label="Chain alpha (0 = ignore, 1 = replace seed noise)",
                 )
 
             def _update_visibility(m):
-                return [
-                    gr.update(visible=(m == "sim")),
-                ]
+                return gr.update(visible=(m == "sim"))
 
-            mode.change(
-                fn=_update_visibility,
-                inputs=mode,
-                outputs=[sim_path],
-            )
+            mode.change(fn=_update_visibility, inputs=mode, outputs=[sim_path])
             run_btn = gr.Button("Generate", variant="primary")
 
         with gr.Column(scale=1):
-            output_gif = gr.Image(label="Output GIF", type="filepath")
+            output_gif = gr.Image(label="Output (streaming preview → final GIF)", type="filepath")
 
     run_btn.click(
         fn=generate,
-        inputs=[mode, prompt, negative_prompt, frames, steps, seed, temporal_alpha,
-                sim_path, lightning, lightning_steps],
+        inputs=[
+            mode, prompt, negative_prompt,
+            frames_slider, steps_slider, seed_num, temporal_alpha_slider,
+            sim_path, lightning, lightning_steps,
+            chain_from_box, chain_save_box, chain_alpha_slider,
+        ],
         outputs=output_gif,
     )
 
