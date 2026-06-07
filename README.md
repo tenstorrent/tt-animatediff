@@ -295,7 +295,7 @@ flowchart TD
 
     MODE -->|cpu| CPU_SCHED["PNDMScheduler\nor EulerDiscreteScheduler\n(Lightning)"]
     CPU_SCHED --> CPU_UNET["diffusers UNet2DConditionModel\n+ MotionAdapter\n(CPU — full temporal attention)"]
-    CPU_UNET --> CPU_VAE["VAE decode (CPU)"]
+    CPU_UNET --> CPU_VAE["VAE decode (CPU — diffusers)"]
     CPU_VAE --> GIF([GIF])
 
     MODE -->|blackhole / sim| BH_SCHED["PNDMScheduler (standard)\nor EulerDiscreteScheduler (Lightning)\n— one per frame"]
@@ -306,7 +306,7 @@ flowchart TD
     STEP -->|Lightning: +latent blend| LAT["cross_frame_attention()\nprev_sample blended\nα × 0.4, cosine decay"]
     LAT --> LOOP
     STEP -->|PNDM| LOOP
-    LOOP -->|done| BH_VAE["VAE decode (CPU)\n— TTNN VAE conv_out OOMs"]
+    LOOP -->|done| BH_VAE["TTNN VAE decode\nBlackhole · L1 freed before decode"]
     BH_VAE --> GIF
 
     style BH_UNET fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
@@ -319,25 +319,19 @@ flowchart TD
 The original implementation used architecturally incompatible components:
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph WRONG["❌ Original — silent failure"]
-        direction TB
-        W1["SD 3.5 DiT\n2432-dim features"] -->|motion weights applied| W2["mm_sd_v15_v2.ckpt\ntrained for 320-dim UNet"]
-        W2 --> W3["No temporal attention\nactually applied\n(dimension mismatch)"]
+        W1["SD 3.5 DiT · 2432-dim features"] -->|motion weights injected| W2["mm_sd_v15_v2.ckpt\ntrained for SD 1.5 UNet · 320-dim"]
+        W2 --> W3["Dimension mismatch\nNo temporal attention actually applied"]
     end
 
-    subgraph RIGHT["✅ Current — correct"]
-        direction TB
-        R1["SD 1.4 UNet\n320-dim features"] -->|CPU path| R2["MotionAdapter\nTemporalTransformer\n320-dim ✓"]
-        R1 -->|Blackhole path| R3["TTNN UNet2D\ncross-frame blend\n(Phase 2.5)"]
-        R2 --> R4["Full AnimateDiff\ntemporal attention"]
-        R3 --> R5["Approximate temporal\nvia noise-pred blending"]
+    subgraph RIGHT["✅ Current"]
+        R1["SD 1.4 UNet · 320-dim — matching architecture"]
+        R1 -->|CPU| R2["MotionAdapter TemporalTransformer\nFull AnimateDiff ✓"]
+        R1 -->|Blackhole| R3["TTNN UNet2D\nCross-frame attention blend · Phase 2.5"]
     end
 
-    WRONG -.->|fix: use SD 1.4| RIGHT
-
-    style WRONG fill:#2d0f0f,stroke:#ff6b6b,color:#e8f0f2
-    style RIGHT fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
+    WRONG -.->|"fix: use matching architecture"| RIGHT
 ```
 
 Full AnimateDiff on Blackhole (Phase 3) requires TemporalTransformer layers

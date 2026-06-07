@@ -34,7 +34,7 @@ NEG_DEFAULT = "blurry, low quality, distorted, text, people, faces, modern build
 
 _cpu_pipes: dict = {}  # keyed by (lightning: bool, lightning_steps: int)
 _bh_device = None      # cached Blackhole/sim MeshDevice
-_bh_models = None      # cached (ttnn_model, torch_vae, config, torch_time_proj)
+_bh_models = None      # cached (ttnn_model, ttnn_vae, config, torch_time_proj)
 
 
 def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
@@ -136,12 +136,12 @@ def generate(
         from animatediff_ttnn.temporal_attention import generate_frames_temporal
         from animatediff_ttnn.pipeline import export_gif
 
-        device, (ttnn_model, torch_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
+        device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
         text_embeddings = encode_prompt(prompt, negative_prompt)
         frames_list = generate_frames_temporal(
             device=device,
             ttnn_model=ttnn_model,
-            torch_vae=torch_vae,
+            ttnn_vae=ttnn_vae,
             config=config,
             torch_time_proj=torch_time_proj,
             text_embeddings=text_embeddings,

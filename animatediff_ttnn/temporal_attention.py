@@ -99,7 +99,7 @@ def _cosine_alpha(step_idx: int, num_steps: int, alpha_max: float, alpha_min_fra
 def generate_frames_temporal(
     device,
     ttnn_model,
-    torch_vae,
+    ttnn_vae,
     config,
     torch_time_proj,
     text_embeddings: torch.Tensor,
@@ -122,7 +122,9 @@ def generate_frames_temporal(
     Args:
         device: TTNN Blackhole device from setup_blackhole()
         ttnn_model: Loaded TTNN UNet2D model (from preprocess_model_parameters)
-        torch_vae: CPU PyTorch AutoencoderKL for latent → pixel decode
+        ttnn_vae: TTNN Vae decoder (from load_sd14_ttnn). Runs on Blackhole.
+                  All UNet L1 tensors are explicitly deallocated before decoding
+                  so the VAE has sufficient L1 headroom.
         config: unet.config from PyTorch UNet2DConditionModel
         torch_time_proj: unet.time_proj, used by build_tlist for timestep embeddings
         text_embeddings: Shape (2, 96, 768) — [uncond, cond] concatenated,
@@ -221,6 +223,14 @@ def generate_frames_temporal(
     # single batched call. For now, use a single-chip MeshDevice (1×1) on QB2.
     num_steps_actual = len(timesteps)
 
+    # last_lat_input / last_ttnn_out / last_guided: track the most-recent device
+    # tensors from the UNet call so we can deallocate them before VAE decode.
+    # The UNet internally may reuse L1 across calls, but the output tensors from
+    # tt_guide and lat_input linger until explicitly freed.
+    last_lat_input = None
+    last_ttnn_out = None
+    last_guided = None
+
     for step_idx, t in enumerate(timesteps):
         # Collect TTNN noise predictions for all frames at timestep t
         noise_preds = []
@@ -236,6 +246,7 @@ def generate_frames_temporal(
             )
             # TTNN UNet expects batch=2 for CFG (unconditional + conditional)
             lat_input = ttnn.concat([lat, lat], dim=0)
+            lat.deallocate(True)  # concat made a copy; original slab no longer needed
             ttnn_out = ttnn_model(
                 lat_input,
                 timestep=_tlist[step_idx],
@@ -248,6 +259,12 @@ def generate_frames_temporal(
             )
             guided = tt_guide(ttnn_out, guidance_scale)
             noise_preds.append(from_device(guided, device).to(torch.float32))
+            # Keep references to the last set of live device tensors for cleanup
+            # before VAE. Earlier iterations' tensors were already pulled to CPU
+            # by from_device, but the device buffers may not be freed until GC.
+            last_lat_input = lat_input
+            last_ttnn_out = ttnn_out
+            last_guided = guided
 
         if use_lightning:
             # Lightning two-point blend with cosine-decay alpha:
@@ -294,12 +311,36 @@ def generate_frames_temporal(
 
     print()
 
-    # Decode all latents with CPU VAE (TTNN VAE conv_out OOMs on Blackhole)
+    # Deallocate all live UNet device tensors before VAE decode.
+    # The TTNN VAE needs substantial L1 for its conv layers; if the UNet's
+    # output tensors are still occupying L1 the VAE conv_out will OOM.
+    # Pattern matches sd_helper_funcs.py::run() from tt-metal SD demo.
+    if last_lat_input is not None:
+        last_lat_input.deallocate(True)
+    if last_ttnn_out is not None:
+        last_ttnn_out.deallocate(True)
+    if last_guided is not None:
+        last_guided.deallocate(True)
+    ttnn_text_emb.deallocate(True)
+    for t_tensor in _tlist:
+        t_tensor.deallocate(True)
+
+    # Decode all latents with TTNN VAE on Blackhole.
+    # Input: (1, 4, lh, lw) CPU tensor → permute to NHWC for TTNN conv layout.
+    # Output: (1, H, W, 3) TTNN tensor → permute back to NCHW → to torch.
     frames = []
     for i, latent in enumerate(frame_latents):
-        latent_scaled = latent / 0.18215
-        with torch.no_grad():
-            decoded = torch_vae.decode(latent_scaled).sample  # (1, 3, H, W) in [-1, 1]
+        latent_scaled = latent / 0.18215  # VAE scaling factor
+        ttnn_lat = to_device(
+            latent_scaled.permute(0, 2, 3, 1),  # NCHW → NHWC for TTNN conv
+            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+        ttnn_lat.deallocate(True)
+        # Reshape to (1, H, W, 3) then permute to (1, 3, H, W)
+        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
+        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2]))
+        ttnn_decoded.deallocate(True)
         img = (decoded / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
         frames.append(Image.fromarray(img))

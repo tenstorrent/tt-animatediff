@@ -10,10 +10,15 @@ import torch
 
 
 def load_sd14_ttnn(device):
-    """Load SD 1.4 TTNN UNet onto device; return (ttnn_model, torch_vae, config, time_proj).
+    """Load SD 1.4 TTNN UNet and TTNN VAE onto device.
 
-    VAE stays on CPU — TTNN VAE conv_out OOMs on Blackhole's L1 grid
-    (Wormhole-targeted kernel; no Blackhole-native VAE decoder yet).
+    Returns (ttnn_model, ttnn_vae, config, time_proj).
+
+    The TTNN VAE runs on Blackhole — the OOM that previously forced CPU fallback
+    was caused by L1 exhaustion from live UNet tensors, not a BH incompatibility.
+    The fix: deallocate UNet L1 tensors before invoking the VAE (see
+    generate_frames_temporal). The Vae object only allocates L1 during decode(),
+    so it is safe to initialise here alongside the UNet.
     """
     from diffusers import AutoencoderKL, UNet2DConditionModel
     from ttnn.model_preprocessing import preprocess_model_parameters
@@ -21,10 +26,14 @@ def load_sd14_ttnn(device):
     from models.demos.vision.generative.stable_diffusion.wormhole.tt.ttnn_functional_unet_2d_condition_model_new_conv import (
         UNet2DConditionModel as UNet2D,
     )
+    from models.demos.vision.generative.stable_diffusion.wormhole.tt.vae.ttnn_vae import Vae
 
-    print("  Loading PyTorch VAE (CPU decode)...")
+    print("  Loading PyTorch VAE weights...")
     torch_vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
     torch_vae.eval()
+
+    print("  Initialising TTNN VAE decoder (weights prepared, kernels compiled on first decode)...")
+    ttnn_vae = Vae(torch_vae=torch_vae, device=device)
 
     print("  Loading PyTorch UNet (config + time_proj)...")
     torch_unet = UNet2DConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="unet")
@@ -36,7 +45,7 @@ def load_sd14_ttnn(device):
         device=device,
     )
     ttnn_model = UNet2D(device, parameters, 2, 64, 64)
-    return ttnn_model, torch_vae, torch_unet.config, torch_unet.time_proj
+    return ttnn_model, ttnn_vae, torch_unet.config, torch_unet.time_proj
 
 
 def encode_prompt(prompt: str, negative_prompt: str = "") -> torch.Tensor:

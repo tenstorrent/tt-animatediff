@@ -303,7 +303,7 @@ def run_ttnn():
     try:
         print("Loading SD 1.4 models...")
         t0 = time.time()
-        ttnn_model, torch_vae, config, torch_time_proj = load_sd14_ttnn(device)
+        ttnn_model, ttnn_vae, config, torch_time_proj = load_sd14_ttnn(device)
         print(f"  Loaded in {time.time() - t0:.1f}s\n")
 
         print("Encoding prompts with CLIP...")
@@ -315,7 +315,7 @@ def run_ttnn():
         frames = generate_frames_temporal(
             device=device,
             ttnn_model=ttnn_model,
-            torch_vae=torch_vae,
+            ttnn_vae=ttnn_vae,
             config=config,
             torch_time_proj=torch_time_proj,
             text_embeddings=text_embeddings,
@@ -339,7 +339,7 @@ def run_ttnn():
     print(f"         Cross-frame temporal attention (alpha={args.temporal_alpha}): CPU")
     if args.lightning:
         print(f"         Scheduler: EulerDiscrete (trailing, linear) — base TTNN UNet, CFG=7.5")
-    print(f"         VAE decode: CPU (TTNN VAE conv_out OOMs on Blackhole)")
+    print(f"         VAE decode: Blackhole TTNN VAE")
 
 
 # ══════════════════════════════════════════════════════════════════════════
