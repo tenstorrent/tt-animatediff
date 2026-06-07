@@ -111,9 +111,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--lightning",
         action="store_true",
         help=(
-            "Use AnimateDiff-Lightning distilled weights (~6× faster, comparable quality). "
-            "Supported in cpu, blackhole, and sim modes. "
-            "Sets CFG=1.0 and switches to EulerDiscreteScheduler automatically."
+            "Use EulerDiscreteScheduler instead of PNDM — different solver, same CFG=7.5. "
+            "In cpu mode also loads AnimateDiff-Lightning distilled weights (requires CFG=1.0). "
+            "In blackhole/sim modes the base SD 1.4 TTNN UNet is used regardless."
         ),
     )
     parser.add_argument(
@@ -205,7 +205,8 @@ def run_cpu():
 
     if args.lightning:
         label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster) — CPU"
-        guidance = 1.0  # Lightning requires CFG=1.0
+        # Real distilled adapter: guidance is baked in, CFG=1.0 required
+        guidance = 1.0
     else:
         label = "AnimateDiff — CPU mode (diffusers AnimateDiffPipeline + MotionAdapter)"
         guidance = 7.5
@@ -282,15 +283,15 @@ def run_ttnn():
     print(f"  Frames         : {args.frames}  Steps: {args.steps}  Seed: {args.seed}")
     print(f"  Temporal alpha : {args.temporal_alpha}")
     if args.lightning:
-        print(f"  Scheduler      : EulerDiscrete (trailing, linear) — Lightning required")
-        print(f"  CFG            : 1.0 (Lightning distillation bakes in classifier-free guidance)")
+        print(f"  Scheduler      : EulerDiscrete (trailing, linear)")
+        print(f"  CFG            : 7.5 (TTNN path uses base SD 1.4 UNet, not distilled adapter)")
     else:
         print(f"  Scheduler      : PNDM (scaled_linear, skip_prk)")
     if args.mode == "sim":
         print(f"\n  Note: ttsim is 10–100× slower than silicon.")
     print()
 
-    guidance = 1.0 if args.lightning else 7.5
+    guidance = 7.5
 
     print(f"Opening {'simulated ' if args.mode == 'sim' else ''}Blackhole device...")
     device = _open_device()

@@ -27,13 +27,14 @@ Phase 2.5 vs Phase 1 (MotionAdapter):
 
 Lightning mode (use_lightning=True):
     Uses EulerDiscreteScheduler with timestep_spacing="trailing" and
-    beta_schedule="linear" — the scheduler Lightning was distilled for.
-    CFG must be disabled (guidance_scale=1.0). Same Blackhole TTNN UNet
-    acceleration, ~6× fewer steps. Cross-frame attention applied at two
-    points per step: (1) blend noise_preds before scheduler.step(), and
-    (2) blend prev_sample latents after step() with 0.4× lower alpha.
-    Both use cosine-decay alpha to prioritise coarse structure early and
-    preserve per-frame variety in fine details late.
+    beta_schedule="linear". CFG=7.5 is retained — the "CFG=1.0 required"
+    constraint applies only to real AnimateDiff-Lightning distilled adapter
+    weights (ByteDance); our TTNN path uses the base SD 1.4 UNet, which
+    benefits fully from guidance amplification. Cross-frame attention
+    applied at two points per step: (1) blend noise_preds before
+    scheduler.step(), and (2) blend prev_sample latents after step()
+    with 0.4× lower alpha. Both use cosine-decay alpha to prioritise
+    coarse structure early and preserve per-frame variety late.
 """
 
 import math
@@ -127,13 +128,13 @@ def generate_frames_temporal(
         num_frames: Number of frames to generate
         num_steps: Denoising steps (25 recommended for both Lightning and standard;
                    Lightning with fewer steps is faster but lower quality)
-        guidance_scale: CFG scale. Must be 1.0 when use_lightning=True.
+        guidance_scale: CFG scale. Use 7.5 for both standard and Lightning on TTNN.
         seed: RNG seed — shared base noise + per-frame perturbation
         height, width: Output size in pixels (512 × 512 recommended)
         temporal_alpha: Cross-frame attention blend (0 → Phase 2 shared noise,
                         1 → full attention; default 0.35)
-        use_lightning: If True, use EulerDiscreteScheduler (Lightning-compatible)
-                       instead of PNDM. Requires guidance_scale=1.0.
+        use_lightning: If True, use EulerDiscreteScheduler instead of PNDM.
+                       CFG=7.5 still applies (base UNet, no distilled adapter).
 
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
