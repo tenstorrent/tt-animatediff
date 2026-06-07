@@ -80,8 +80,8 @@ GIFS = [
          prompt="cave paintings of animals slowly morphing into circuit traces, orange firelight to teal digital glow"),
     dict(name="p3-standing-stones", row=5, col=9, phase=3, alpha=0.4, seed=42,
          prompt="stone circle at dawn with aurora, ancient megaliths glowing with interior light, cosmic sky"),
-    dict(name="p3-crystal-data",  row=6, col=1,  phase=3, alpha=0.4, seed=42,
-         prompt="crystal mountain formation with streams of data flowing through it, organic meets digital, cinematic"),
+    dict(name="p3-crystal-data",  row=6, col=1,  phase=3, alpha=0.4, seed=42, lightning=True,
+         prompt="amethyst and rose quartz crystal formations fused with glowing circuit traces, violet light refracting through silicon faces, pink data streams flowing along crystal edges, macro crystallography, deep dark background, cinematic 4K"),
     dict(name="p3-ley-fiber",     row=6, col=5,  phase=3, alpha=0.4, seed=42,
          prompt="ancient ley lines across landscape glowing gold, slowly becoming fiber optic cables, aerial view"),
     dict(name="p3-mayan-grid",    row=6, col=10, phase=3, alpha=0.4, seed=42,
@@ -89,14 +89,14 @@ GIFS = [
     # Phase 4 — Tech emergence (green, alpha 0.45)
     dict(name="p4-circuit-moss",  row=7, col=0,  phase=4, alpha=0.45, seed=42,
          prompt="circuit board growing like moss and lichen, organic circuitry, green teal glow, macro, cinematic"),
-    dict(name="p4-silicon",       row=7, col=4,  phase=4, alpha=0.45, seed=42,
-         prompt="silicon crystal lattice glowing in cosmic light, atomic structure visible, teal and gold, cinematic"),
-    dict(name="p4-neural-const",  row=7, col=8,  phase=4, alpha=0.45, seed=42,
-         prompt="neural network nodes arranged as constellation, synapses firing like shooting stars, dark space"),
+    dict(name="p4-silicon",       row=7, col=4,  phase=4, alpha=0.45, seed=42, lightning=True,
+         prompt="Tensix compute core dissolving into visible logic: rippling pink and violet waveforms cascading across a dark wafer, each wave a matrix multiply completing, the arithmetic made visible as color, macro semiconductor photography"),
+    dict(name="p4-neural-const",  row=7, col=8,  phase=4, alpha=0.45, seed=42, lightning=True,
+         prompt="swarm of luminous butterflies emerging from a circuit board, each wing printed with logic gates, fuchsia and magenta iridescence, dissolving back into silicon at the edges, macro nature photography, dark background"),
     dict(name="p4-server-aurora", row=8, col=2,  phase=4, alpha=0.45, seed=42,
          prompt="server room bathed in aurora borealis light through glass ceiling, racks of machines, cinematic"),
-    dict(name="p4-chip-city",     row=8, col=7,  phase=4, alpha=0.45, seed=42,
-         prompt="semiconductor chip die seen as aerial city at night, nanoscale streets glowing teal, cinematic 4K"),
+    dict(name="p4-chip-city",     row=8, col=7,  phase=4, alpha=0.45, seed=42, lightning=True,
+         prompt="aerial view of a glowing city at night where every street is a data bus and every building is a compute tile, purple and magenta neon, tight urban grid with Tensix-style hexagonal districts, cinematic 4K overhead shot"),
     # Phase 5 — Full integration (bright teal, alpha 0.5)
     dict(name="p5-chip-cosmos",   row=9, col=0,  phase=5, alpha=0.5, seed=42,
          prompt="Tenstorrent Blackhole chip glowing with embedded cosmos, galaxies visible inside the die, cinematic"),
@@ -125,8 +125,9 @@ def gif_done(name, manifest):
 def run_gif(g, manifest, index, total):
     name = g["name"]
     out = OUT_DIR / f"{name}.gif"
+    lt = " ⚡ lightning" if g.get("lightning") else ""
     print(f"\n{'='*60}")
-    print(f"  [{index}/{total}] {name}")
+    print(f"  [{index}/{total}] {name}{lt}")
     print(f"  phase={g['phase']}  alpha={g['alpha']}  seed={g['seed']}")
     print(f"  {g['prompt'][:80]}...")
     print(f"{'='*60}")
@@ -146,6 +147,8 @@ def run_gif(g, manifest, index, total):
         "--temporal-alpha", str(g["alpha"]),
         "--output", str(out),
     ]
+    if g.get("lightning"):
+        cmd.append("--lightning")
     t0 = time.time()
     result = subprocess.run(cmd, cwd=str(REPO_ROOT))
     elapsed = time.time() - t0

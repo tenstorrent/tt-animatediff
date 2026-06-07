@@ -51,6 +51,8 @@
     .node.phase-3 { border-color: rgba(244,196,113,.4); }
     .node.phase-4 { border-color: rgba(39,174,96,.4); }
     .node.phase-5 { border-color: rgba(129,230,217,.6); }
+    .node.lightning { border-color: rgba(236,150,184,.75); box-shadow: 0 0 6px rgba(236,150,184,.35); }
+    .node.lightning::after { content: "⚡"; position: absolute; top: 2px; right: 3px; font-size: 8px; line-height: 1; pointer-events: none; }
     .node-tip { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(8,15,20,.92); color: var(--text2); font-size: .38rem; padding: 2px 3px; line-height: 1.3; opacity: 0; transition: opacity .2s; pointer-events: none; text-align: center; }
     .node:hover .node-tip { opacity: 1; }
 
@@ -427,14 +429,14 @@ const GIFS = [
   {name:"p3-temple",        row:5, col:2,  phase:3, prompt:"Mayan temple under shifting cosmos"},
   {name:"p3-cave-circuit",  row:5, col:6,  phase:3, prompt:"cave paintings morphing to circuit traces"},
   {name:"p3-standing-stones",row:5,col:9,  phase:3, prompt:"stone circle with aurora"},
-  {name:"p3-crystal-data",  row:6, col:1,  phase:3, prompt:"crystal mountain with data streams"},
+  {name:"p3-crystal-data",  row:6, col:1,  phase:3, lightning:true, prompt:"amethyst crystal fused with circuit traces, violet data streams"},
   {name:"p3-ley-fiber",     row:6, col:5,  phase:3, prompt:"ley lines becoming fiber optic"},
   {name:"p3-mayan-grid",    row:6, col:10, phase:3, prompt:"Mayan calendar dissolving to grid"},
   {name:"p4-circuit-moss",  row:7, col:0,  phase:4, prompt:"circuit board growing like moss"},
-  {name:"p4-silicon",       row:7, col:4,  phase:4, prompt:"silicon crystal lattice, cosmic light"},
-  {name:"p4-neural-const",  row:7, col:8,  phase:4, prompt:"neural network as constellation"},
+  {name:"p4-silicon",       row:7, col:4,  phase:4, lightning:true, prompt:"Tensix core: pink waveforms cascading as matrix multiply completes"},
+  {name:"p4-neural-const",  row:7, col:8,  phase:4, lightning:true, prompt:"butterflies emerging from circuit board, wings printed with logic gates, fuchsia"},
   {name:"p4-server-aurora", row:8, col:2,  phase:4, prompt:"server room bathed in aurora"},
-  {name:"p4-chip-city",     row:8, col:7,  phase:4, prompt:"chip die as aerial city at night"},
+  {name:"p4-chip-city",     row:8, col:7,  phase:4, lightning:true, prompt:"aerial city at night where streets are data buses, hexagonal Tensix districts, purple neon"},
   {name:"p5-chip-cosmos",   row:9, col:0,  phase:5, prompt:"Blackhole chip glowing with cosmos"},
   {name:"p5-hand-galaxy",   row:9, col:5,  phase:5, prompt:"hand touching circuit blooms to galaxy"},
   {name:"p5-grid-is-all",   row:9, col:10, phase:5, prompt:"grid revealed as fabric of universe"},
@@ -450,6 +452,7 @@ for (let i = 0; i < 110; i++) {
   if (gifMap.has(i)) {
     const g = gifMap.get(i);
     div.classList.add(`phase-${g.phase}`);
+    if (g.lightning) div.classList.add('lightning');
     const img = document.createElement('img');
     img.src = `assets/study/${g.name}.gif`;
     img.alt = g.prompt;
