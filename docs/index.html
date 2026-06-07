@@ -203,10 +203,14 @@
 
     <div class="lightning-cols">
       <div class="lightning-col">
-        <h4>AnimateDiff-Lightning</h4>
-        <p>We integrated <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) into the CPU path. 4-step Lightning produces comparable quality to 25-step standard AnimateDiff, roughly 6× faster. Enable with:</p>
-        <pre class="lightning-code">python examples/generate.py --mode cpu --lightning --steps 4</pre>
-        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Note: Lightning uses guidance_scale=1.0 (CFG disabled) — required by the distilled weights. This gives a more saturated, vivid aesthetic vs. the standard model.</p>
+        <h4>AnimateDiff-Lightning on Blackhole</h4>
+        <p>We integrated <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) into <em>all three modes</em> — including Blackhole hardware. On P300C: <strong>~4.3 s/frame</strong> (4 steps) vs ~15 s/frame standard. The key was implementing <code>TtEulerScheduler</code> — a thin wrapper around <code>EulerDiscreteScheduler</code> (trailing, linear) that feeds the correct timestep tensors into <code>build_tlist()</code>. Enable with:</p>
+        <pre class="lightning-code"># Blackhole hardware — ~4.3 s/frame
+python examples/generate.py --lightning
+
+# CPU — ~20 s/frame, no hardware required
+python examples/generate.py --mode cpu --lightning</pre>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Lightning uses guidance_scale=1.0 (CFG baked into distillation). The samples below were generated on real Blackhole silicon — 34 s for 8 frames.</p>
       </div>
       <div class="lightning-col">
         <h4>Gradio UI</h4>
@@ -214,11 +218,11 @@
         <pre class="lightning-code">pip install -e ".[ui]"
 python app.py
 # → http://localhost:7860</pre>
-        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Select mode → enter prompt → adjust frames/steps/seed → click Generate. Lightning checkbox appears in cpu mode. Output GIF displays inline.</p>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Select mode → enter prompt → adjust frames/steps/seed → click Generate. Lightning checkbox is available in all modes. Output GIF displays inline.</p>
       </div>
     </div>
 
-    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — 4-step CPU, ~85s for 8 frames</div>
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — 4-step Blackhole, ~4.3 s/frame (34 s for 8 frames on P300C)</div>
     <div class="lightning-gallery">
       <figure class="lgif">
         <img src="assets/study/lightning-mandala.gif" alt="sacred mandala blooming from starfield" loading="lazy">

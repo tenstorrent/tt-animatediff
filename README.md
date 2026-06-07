@@ -18,13 +18,14 @@ denoising on Blackhole hardware using the TTNN UNet.
 |---|---|
 | ![neon dystopia](docs/assets/neon_dystopia.gif) | ![ocean](docs/assets/ocean.gif) |
 
-### AnimateDiff-Lightning — CPU, ~6× faster
+### AnimateDiff-Lightning on Blackhole — 8 frames × 4 steps, ~4.3 s/frame
+
+Lightning mode runs the same TTNN UNet on Blackhole with `ByteDance/AnimateDiff-Lightning`
+4-step distilled weights and `EulerDiscreteScheduler`. ~3.5× faster than standard Blackhole.
 
 | *"Aurora"* | *"Mandala"* | *"Mycelium"* |
 |---|---|---|
-| ![lightning aurora](docs/assets/lightning-aurora.gif) | ![lightning mandala](docs/assets/lightning-mandala.gif) | ![lightning mycelium](docs/assets/lightning-mycelium.gif) |
-
-Lightning mode uses `ByteDance/AnimateDiff-Lightning` — 4-step generation, same pipeline.
+| ![lightning aurora](docs/assets/study/lightning-aurora.gif) | ![lightning mandala](docs/assets/study/lightning-mandala.gif) | ![lightning mycelium](docs/assets/study/lightning-mycelium.gif) |
 
 ---
 
@@ -38,11 +39,14 @@ hf download guoyww/animatediff-motion-adapter-v1-5-2
 # CPU — any machine, no hardware required
 python examples/generate.py --mode cpu --prompt "ocean waves at sunset, cinematic"
 
-# Blackhole hardware
+# Blackhole hardware (default, ~15 s/frame)
 source ~/tt-metal/python_env/bin/activate
 python examples/generate.py --prompt "aurora borealis over a frozen lake, cinematic 4K"
 
-# Lightning (CPU, fast)
+# Blackhole + Lightning (~4.3 s/frame, 4-step distilled weights)
+python examples/generate.py --lightning --lightning-steps 4
+
+# CPU + Lightning (~20 s/frame, no hardware required)
 python examples/generate.py --mode cpu --lightning --steps 4
 
 # Simulator — no hardware, bit-exact Blackhole
@@ -113,7 +117,7 @@ file or add a setup script to download it at startup.
 | Steps | 4–50 | 25 | 4 for Lightning / sim |
 | Seed | integer | 42 | |
 | Temporal alpha | 0.0–1.0 | 0.35 | Blackhole/sim only |
-| Lightning | checkbox | off | CPU mode only, ~6× faster |
+| Lightning | checkbox | off | All modes; ~3.5× faster on Blackhole, ~6× faster on CPU |
 | Sim binary path | file path | ~/sim/libttsim_bh.so | sim mode only |
 
 ---
@@ -124,8 +128,12 @@ file or add a setup script to download it at startup.
 |---|---|---|---|
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
-| `blackhole` | Blackhole P100/P300C | ~15 s/frame | Cross-frame blend (temporal-alpha) |
-| `sim` | None (ttsim) | ~3× slower than silicon | Cross-frame blend (temporal-alpha) |
+| `blackhole` | Blackhole P100/P300C | ~15 s/frame (25 steps) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P100/P300C | **~4.3 s/frame** (4 steps) | Cross-frame blend (temporal-alpha) |
+| `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |
+
+Lightning on Blackhole uses `EulerDiscreteScheduler` (trailing, linear) with 4-step distilled weights — measured **34 s for 8 frames** on P300C.
+Standard on Blackhole uses `PNDMScheduler` with 25-step weights — measured ~120 s for 8 frames.
 
 ---
 
@@ -147,7 +155,8 @@ python examples/generate.py --mode sim --sim ~/sim/libttsim_bh.so --frames 2 --s
 | Phase | Status | Notes |
 |---|---|---|
 | Phase 1 — CPU baseline | ✅ Complete | `diffusers.AnimateDiffPipeline` + MotionAdapter |
-| Phase 1 — Lightning | ✅ Complete | `ByteDance/AnimateDiff-Lightning`, 4-step |
+| Phase 1 — Lightning (CPU) | ✅ Complete | `ByteDance/AnimateDiff-Lightning`, ~20 s/frame |
+| Phase 2.5 — Lightning (Blackhole) | ✅ Complete | `TtEulerScheduler`, ~4.3 s/frame on P300C |
 | Phase 2 — Blackhole denoising | ✅ Code complete | TTNN UNet, hardware validation ongoing |
 | Phase 2.5 — Cross-frame temporal | ✅ Complete | `--temporal-alpha` blend during denoising |
 | Phase 3 — Full TTNN temporal attention | 🔲 Future | Requires TemporalTransformer in TTNN UNet |
@@ -169,11 +178,13 @@ Full integration is tracked as Phase 3.
 
 ```
 animatediff_ttnn/
-  pipeline.py           Phase 1: thin wrapper around diffusers AnimateDiffPipeline
-  ttnn_pipeline.py      Phase 2/2.5: TTNN UNet frame generation on Blackhole
-  temporal_attention.py Phase 2.5: cross-frame self-attention at each denoising step
-  temporal_module.py    Reference — temporal attention math (kept for study)
-  __init__.py           Exports Phase 1 public API
+  pipeline.py             Phase 1: thin wrapper around diffusers AnimateDiffPipeline
+  ttnn_pipeline.py        Phase 2/2.5: TTNN UNet frame generation on Blackhole
+  temporal_attention.py   Phase 2.5: cross-frame self-attention at each denoising step
+  tt_euler_scheduler.py   TtEulerScheduler — Euler wrapper for Lightning on Blackhole
+  generation_helpers.py   Shared load_sd14_ttnn / encode_prompt (no arg-parse side effects)
+  temporal_module.py      Reference — temporal attention math (kept for study)
+  __init__.py             Exports Phase 1 public API
 
 examples/
   generate.py              Unified entry point (--mode cpu|blackhole|sim; default blackhole)
@@ -186,9 +197,11 @@ app.py                     Gradio UI (local + HF Spaces)
 spaces/                    HuggingFace Spaces deployment files
 
 tests/
-  test_pipeline.py         Phase 1 unit tests
-  test_ttnn_pipeline.py    Phase 2 unit tests (hardware-mocked)
-  test_app.py              Gradio UI smoke tests
+  test_pipeline.py            Phase 1 unit tests
+  test_ttnn_pipeline.py       Phase 2 unit tests (hardware-mocked)
+  test_tt_euler_scheduler.py  TtEulerScheduler unit tests
+  test_temporal_attention.py  Cross-frame attention unit tests
+  test_app.py                 Gradio UI smoke tests
 
 docs/
   IMPLEMENTATION_STATUS.md  Current phase status
@@ -258,8 +271,13 @@ Fast motion (fire, water): `0.2–0.35`. Slow drift (cosmos, aurora): `0.4–0.6
 
 ### `--steps` vs quality
 
-PNDM scheduler. Minimum effective: ~4 steps (preview/sim). Sweet spot: 25 steps on silicon.
-Beyond 30 gives diminishing returns. Lightning mode: 4 steps is the intended setting.
+| Scheduler | Minimum | Sweet spot | Notes |
+|---|---|---|---|
+| PNDM (standard) | 4 (preview/sim) | 25 on silicon | Diminishing returns beyond 30 |
+| Euler (Lightning) | 2 | **4** | Distilled — more steps degrades quality |
+
+Lightning `--steps` must match the distillation checkpoint (2, 4, or 8). Mixing step
+count with the wrong checkpoint (e.g. `--lightning-steps 4 --steps 8`) is not advised.
 
 ---
 
@@ -305,9 +323,16 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.4.0 — 2026-06-07
+- **Lightning on Blackhole** — `--lightning` now works in all modes (blackhole, sim, cpu)
+- `TtEulerScheduler` — wraps `EulerDiscreteScheduler` for `build_tlist()` compatibility
+- Measured **~4.3 s/frame** on P300C (8 frames, 4 steps) vs ~15 s/frame standard
+- Lightning GIF examples regenerated on real Blackhole hardware
+- `TtEulerScheduler` unit tests (13 tests, all modes verified)
+
 ### v0.3.0 — 2026-06-06
 - **Gradio UI** (`app.py`) — local launch and HuggingFace Spaces deployment
-- **AnimateDiff-Lightning** support — `--lightning` flag, ~6× faster CPU generation
+- **AnimateDiff-Lightning** support — `--lightning` flag for CPU generation
 - HuggingFace Space files in `spaces/`
 - UI smoke tests (`tests/test_app.py`)
 - Gradio 6 compatibility fix (theme outside Blocks constructor)

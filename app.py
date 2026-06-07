@@ -147,8 +147,10 @@ def generate(
             text_embeddings=text_embeddings,
             num_frames=frames,
             num_steps=steps,
+            guidance_scale=1.0 if lightning else 7.5,
             seed=seed,
             temporal_alpha=temporal_alpha,
+            use_lightning=lightning,
         )
         export_gif(frames_list, out_path)
 
@@ -200,7 +202,7 @@ with gr.Blocks(title="tt-animatediff") as demo:
                 placeholder="~/sim/libttsim_bh.so",
                 visible=False,
             )
-            with gr.Row(visible=False) as lightning_row:
+                    with gr.Row() as lightning_row:
                 lightning = gr.Checkbox(label="⚡ Lightning mode (~6× faster, comparable quality)", value=False)
                 lightning_steps = gr.Radio(
                     choices=[2, 4, 8], value=4, label="Lightning steps",
@@ -210,13 +212,12 @@ with gr.Blocks(title="tt-animatediff") as demo:
             def _update_visibility(m):
                 return [
                     gr.update(visible=(m == "sim")),
-                    gr.update(visible=(m == "cpu")),
                 ]
 
             mode.change(
                 fn=_update_visibility,
                 inputs=mode,
-                outputs=[sim_path, lightning_row],
+                outputs=[sim_path],
             )
             run_btn = gr.Button("Generate", variant="primary")
 

@@ -106,7 +106,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lightning",
         action="store_true",
-        help="Use AnimateDiff-Lightning distilled weights for cpu mode (~6× faster, comparable quality)",
+        help=(
+            "Use AnimateDiff-Lightning distilled weights (~6× faster, comparable quality). "
+            "Supported in cpu, blackhole, and sim modes. "
+            "Sets CFG=1.0 and switches to EulerDiscreteScheduler automatically."
+        ),
     )
     parser.add_argument(
         "--lightning-steps",
@@ -124,13 +128,16 @@ args = _build_parser().parse_args()
 if args.frames is None:
     args.frames = 16 if args.mode == "cpu" else 8
 if args.steps is None:
-    args.steps = 4 if args.mode == "sim" else 25
+    if args.mode == "sim":
+        args.steps = 4
+    elif args.lightning:
+        args.steps = args.lightning_steps  # match the distillation step count
+    else:
+        args.steps = 25
 if args.output is None:
     args.output = f"output/{args.mode}.gif"
 if not 0.0 <= args.temporal_alpha <= 1.0:
     _build_parser().error(f"--temporal-alpha must be in [0, 1], got {args.temporal_alpha}")
-if args.lightning and args.mode != "cpu":
-    _build_parser().error(f"--lightning is only supported with --mode cpu (got --mode {args.mode})")
 
 # ── sim: resolve ttsim path and configure env before tt-metal loads ────────
 if args.mode == "sim":
@@ -193,7 +200,7 @@ def run_cpu():
     )
 
     if args.lightning:
-        label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster)"
+        label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster) — CPU"
         guidance = 1.0  # Lightning requires CFG=1.0
     else:
         label = "AnimateDiff — CPU mode (diffusers AnimateDiffPipeline + MotionAdapter)"
@@ -263,15 +270,23 @@ def run_ttnn():
     from animatediff_ttnn.pipeline import export_gif
 
     backend = "ttsim simulator" if args.mode == "sim" else "Blackhole hardware"
-    print(f"AnimateDiff — {backend} (TTNN UNet + cross-frame temporal attention)")
+    lightning_tag = f" ⚡ Lightning ({args.lightning_steps}-step)" if args.lightning else ""
+    print(f"AnimateDiff{lightning_tag} — {backend} (TTNN UNet + cross-frame temporal attention)")
     if args.mode == "sim":
         print(f"  Simulator      : {os.environ.get('TT_METAL_SIMULATOR', '?')}")
     print(f"  Prompt         : {args.prompt}")
     print(f"  Frames         : {args.frames}  Steps: {args.steps}  Seed: {args.seed}")
     print(f"  Temporal alpha : {args.temporal_alpha}")
+    if args.lightning:
+        print(f"  Scheduler      : EulerDiscrete (trailing, linear) — Lightning required")
+        print(f"  CFG            : 1.0 (Lightning distillation bakes in classifier-free guidance)")
+    else:
+        print(f"  Scheduler      : PNDM (scaled_linear, skip_prk)")
     if args.mode == "sim":
         print(f"\n  Note: ttsim is 10–100× slower than silicon.")
     print()
+
+    guidance = 1.0 if args.lightning else 7.5
 
     print(f"Opening {'simulated ' if args.mode == 'sim' else ''}Blackhole device...")
     device = _open_device()
@@ -298,8 +313,10 @@ def run_ttnn():
             text_embeddings=text_embeddings,
             num_frames=args.frames,
             num_steps=args.steps,
+            guidance_scale=guidance,
             seed=args.seed,
             temporal_alpha=args.temporal_alpha,
+            use_lightning=args.lightning,
         )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
@@ -312,6 +329,8 @@ def run_ttnn():
     print(f"Saved {len(frames)} frame(s) → {args.output}")
     print(f"\nBackend: TTNN UNet spatial denoising on {backend}")
     print(f"         Cross-frame temporal attention (alpha={args.temporal_alpha}): CPU")
+    if args.lightning:
+        print(f"         Scheduler: EulerDiscrete (Lightning {args.lightning_steps}-step distilled)")
     print(f"         VAE decode: CPU (TTNN VAE conv_out OOMs on Blackhole)")
 
 

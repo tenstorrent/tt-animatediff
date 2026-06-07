@@ -24,6 +24,13 @@ Phase 2.5 vs Phase 1 (MotionAdapter):
     Phase 1 temporal attention runs INSIDE UNet blocks on 320-dim features —
     full AnimateDiff but CPU-only. Phase 2.5 attention runs at the 4-dim
     noise-prediction level — approximate but Blackhole-accelerated.
+
+Lightning mode (use_lightning=True):
+    Loads AnimateDiff-Lightning motion adapter weights (ByteDance, 4-step
+    distilled). Replaces TtPNDMScheduler with TtEulerScheduler — Lightning
+    was distilled for EulerDiscreteScheduler with timestep_spacing="trailing"
+    and beta_schedule="linear". CFG must be disabled (guidance_scale=1.0).
+    Result: same Blackhole TTNN UNet acceleration, ~6× fewer steps.
 """
 
 import sys
@@ -80,6 +87,7 @@ def generate_frames_temporal(
     height: int = 512,
     width: int = 512,
     temporal_alpha: float = 0.35,
+    use_lightning: bool = False,
 ) -> List:
     """Generate temporally-coherent frames on Blackhole with cross-frame attention.
 
@@ -97,37 +105,64 @@ def generate_frames_temporal(
         text_embeddings: Shape (2, 96, 768) — [uncond, cond] concatenated,
                          padded from 77 to 96 tokens
         num_frames: Number of frames to generate
-        num_steps: PNDM denoising steps (min 4)
-        guidance_scale: CFG scale (7.5 standard)
+        num_steps: Denoising steps (min 4; 4 recommended for Lightning, 25 standard)
+        guidance_scale: CFG scale. Must be 1.0 when use_lightning=True.
         seed: RNG seed — shared base noise + per-frame perturbation
         height, width: Output size in pixels (512 × 512 recommended)
         temporal_alpha: Cross-frame attention blend (0 → Phase 2 shared noise,
                         1 → full attention; default 0.35)
+        use_lightning: If True, use EulerDiscreteScheduler (Lightning-compatible)
+                       instead of PNDM. Requires guidance_scale=1.0.
 
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
     """
     import ttnn
-    from diffusers import PNDMScheduler
     from PIL import Image
     from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
     from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
-    from models.demos.vision.generative.stable_diffusion.wormhole.sd_pndm_scheduler import TtPNDMScheduler
 
     lh, lw = height // 8, width // 8
 
-    # One diffusers PNDMScheduler per frame — independent state, same timesteps
-    sched_kwargs = dict(
-        beta_start=0.00085,
-        beta_end=0.012,
-        beta_schedule="scaled_linear",
-        num_train_timesteps=1000,
-        skip_prk_steps=True,
-        steps_offset=1,
-    )
-    schedulers = [PNDMScheduler(**sched_kwargs) for _ in range(num_frames)]
-    for s in schedulers:
-        s.set_timesteps(num_steps)
+    if use_lightning:
+        # Lightning: EulerDiscreteScheduler with trailing timesteps, linear betas.
+        # One scheduler per frame — each maintains independent step-index state.
+        from diffusers import EulerDiscreteScheduler
+        from animatediff_ttnn.tt_euler_scheduler import TtEulerScheduler
+
+        euler_kwargs = dict(
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule="linear",
+            timestep_spacing="trailing",
+        )
+        schedulers = [
+            EulerDiscreteScheduler(**euler_kwargs) for _ in range(num_frames)
+        ]
+        for s in schedulers:
+            s.set_timesteps(num_steps)
+
+        # TtEulerScheduler only used to build _tlist — same timesteps as CPU schedulers
+        _tt_sched = TtEulerScheduler(**euler_kwargs)
+        _tt_sched.set_timesteps(num_steps)
+    else:
+        from diffusers import PNDMScheduler
+        from models.demos.vision.generative.stable_diffusion.wormhole.sd_pndm_scheduler import TtPNDMScheduler
+
+        pndm_kwargs = dict(
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule="scaled_linear",
+            num_train_timesteps=1000,
+            skip_prk_steps=True,
+            steps_offset=1,
+        )
+        schedulers = [PNDMScheduler(**pndm_kwargs) for _ in range(num_frames)]
+        for s in schedulers:
+            s.set_timesteps(num_steps)
+
+        _tt_sched = TtPNDMScheduler(device=device, **pndm_kwargs)
+        _tt_sched.set_timesteps(num_steps)
 
     timesteps = schedulers[0].timesteps
     init_noise_sigma = float(schedulers[0].init_noise_sigma)
@@ -141,9 +176,7 @@ def generate_frames_temporal(
         perturbed = base_noise + 0.05 * torch.randn(base_noise.shape, generator=generator)
         frame_latents.append(perturbed * init_noise_sigma)
 
-    # Build TTNN time embeddings — needs a TtPNDMScheduler for timestep tensors
-    _tt_sched = TtPNDMScheduler(device=device, **sched_kwargs)
-    _tt_sched.set_timesteps(num_steps)
+    # Build TTNN time embeddings once — timesteps are identical across all frames
     _tlist = build_tlist(_tt_sched, torch_time_proj, device, lh, lw)
 
     # Text embeddings to device — same tensor reused for every frame at every step
