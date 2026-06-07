@@ -95,7 +95,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.35,
         dest="temporal_alpha",
-        help="Cross-frame attention blend 0–1 (blackhole/sim only; default 0.35)",
+        help=(
+            "Cross-frame attention blend 0–1 (blackhole/sim only; default 0.35). "
+            "In Lightning mode a cosine decay schedule is applied automatically: "
+            "alpha decays from this value to ~15%% of it across the denoising steps."
+        ),
     )
     parser.add_argument(
         "--sim",

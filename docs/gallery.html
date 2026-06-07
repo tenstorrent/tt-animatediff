@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gallery — tt-animatediff</title>
+<style>
+  :root {
+    --teal:    #4FD1C5;
+    --teal2:   #81E6D9;
+    --pink:    #EC96B8;
+    --gold:    #F4C471;
+    --bg0:     #0F2A35;
+    --bg1:     #1A3C47;
+    --bg2:     #2D3142;
+    --text:    #E8F0F2;
+    --text2:   #B0C4DE;
+    --muted:   #607D8B;
+    --border:  rgba(79,209,197,.18);
+    --radius:  8px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg0);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── nav ── */
+  nav {
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    padding: .75rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  nav a { color: var(--teal); text-decoration: none; font-size: .85rem; }
+  nav a:hover { color: var(--teal2); }
+  nav .sep { color: var(--muted); }
+  nav .brand { font-weight: 700; font-size: .95rem; color: var(--text); }
+
+  /* ── hero ── */
+  .hero {
+    background: linear-gradient(160deg, var(--bg1) 0%, var(--bg0) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 3.5rem 2rem 2.5rem;
+    text-align: center;
+  }
+  .hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); font-weight: 800; color: var(--text); margin-bottom: .6rem; }
+  .hero h1 span { color: var(--teal); }
+  .hero p { font-size: .95rem; color: var(--text2); max-width: 640px; margin: 0 auto .5rem; line-height: 1.65; }
+  .hero .sub { font-size: .8rem; color: var(--muted); }
+
+  /* ── key ── */
+  .key {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    padding: 1.25rem 2rem;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .key-item { display: flex; align-items: center; gap: .45rem; font-size: .8rem; color: var(--text2); }
+  .badge {
+    display: inline-block;
+    padding: .15rem .45rem;
+    border-radius: 4px;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .badge-std  { background: rgba(79,209,197,.15); color: var(--teal);  border: 1px solid rgba(79,209,197,.35); }
+  .badge-lt   { background: rgba(244,196,113,.15); color: var(--gold); border: 1px solid rgba(244,196,113,.35); }
+
+  /* ── pairs grid ── */
+  .pairs { max-width: 1100px; margin: 0 auto; padding: 3rem 1.5rem; }
+
+  .pair {
+    margin-bottom: 4rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg1);
+  }
+
+  .pair-header {
+    padding: 1rem 1.25rem .75rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+  .pair-num { font-size: .7rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  .pair-title { font-size: 1rem; font-weight: 700; color: var(--text); flex: 1; }
+  .pair-prompt {
+    width: 100%;
+    font-size: .78rem;
+    color: var(--text2);
+    font-style: italic;
+    line-height: 1.55;
+    margin-top: .3rem;
+  }
+  .pair-prompt strong { color: var(--muted); font-style: normal; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; }
+
+  .pair-gifs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gif-panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .gif-panel + .gif-panel {
+    border-left: 1px solid var(--border);
+  }
+
+  .gif-label {
+    padding: .5rem .9rem;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    background: var(--bg2);
+  }
+  .gif-label.std  { color: var(--teal); }
+  .gif-label.lt   { color: var(--gold); }
+  .gif-label .timing { margin-left: auto; color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+  .gif-panel img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: var(--bg2);
+  }
+
+  /* ── footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem;
+    text-align: center;
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  footer a { color: var(--teal); text-decoration: none; }
+  footer a:hover { color: var(--teal2); }
+
+  /* ── responsive ── */
+  @media (max-width: 600px) {
+    .pair-gifs { grid-template-columns: 1fr; }
+    .gif-panel + .gif-panel { border-left: none; border-top: 1px solid var(--border); }
+    .pairs { padding: 1.5rem .75rem; }
+    nav { padding: .6rem 1rem; gap: 1rem; }
+    .hero { padding: 2rem 1rem 1.5rem; }
+    .key { gap: 1rem; padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">tt-animatediff</span>
+  <span class="sep">·</span>
+  <a href="index.html">Chip Study</a>
+  <span class="sep">·</span>
+  <a href="gallery.html" aria-current="page" style="color:var(--text)">Gallery</a>
+  <span class="sep">·</span>
+  <a href="https://github.com/tenstorrent/tt-animatediff" target="_blank" rel="noopener noreferrer">GitHub</a>
+</nav>
+
+<header class="hero">
+  <h1>Generation <span>Gallery</span></h1>
+  <p>10 prompts, each generated twice — standard PNDM (25 steps, ~15 s/frame) and
+     Euler scheduler with CFG=1.0 (25 steps, same count, different solver). All runs
+     on a single Tenstorrent Blackhole P300C using the TTNN UNet.</p>
+  <p class="sub">16 frames · 512 × 512 · temporal-alpha 0.35 · SD 1.4 base</p>
+</header>
+
+<div class="key">
+  <div class="key-item"><span class="badge badge-std">Standard</span> PNDM · 25 steps · ~240 s / 16 frames</div>
+  <div class="key-item"><span class="badge badge-lt">⚡ Lightning</span> Euler · 25 steps · CFG=1.0 · ~240 s / 16 frames</div>
+  <div class="key-item" style="color:var(--muted)">Same prompt · same seed · different scheduler</div>
+</div>
+
+<main class="pairs">
+
+  <!-- 1 -->
+  <article class="pair" id="desert-storm">
+    <div class="pair-header">
+      <span class="pair-num">01</span>
+      <span class="pair-title">Desert Storm</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> sweeping desert sandstorm at sunset, dunes and swirling ochre dust, Sahara, golden hour, cinematic 4K<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces &nbsp;·&nbsp; <strong>Seed</strong> 101
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/desert-storm-standard.gif" alt="desert storm standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/desert-storm-lightning.gif" alt="desert storm lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 2 -->
+  <article class="pair" id="lava-flow">
+    <div class="pair-header">
+      <span class="pair-num">02</span>
+      <span class="pair-title">Lava Flow</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> molten lava flowing into the ocean at night, glowing orange cracks, steam explosions, dramatic macro photography<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces &nbsp;·&nbsp; <strong>Seed</strong> 202
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/lava-flow-standard.gif" alt="lava flow standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/lava-flow-lightning.gif" alt="lava flow lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 3 -->
+  <article class="pair" id="japanese-garden">
+    <div class="pair-header">
+      <span class="pair-num">03</span>
+      <span class="pair-title">Japanese Garden</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> cherry blossom petals falling over a Japanese zen garden, koi pond reflections, soft spring light, watercolor painting<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces, modern buildings &nbsp;·&nbsp; <strong>Seed</strong> 303
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/japanese-garden-standard.gif" alt="japanese garden standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/japanese-garden-lightning.gif" alt="japanese garden lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 4 -->
+  <article class="pair" id="deep-sea">
+    <div class="pair-header">
+      <span class="pair-num">04</span>
+      <span class="pair-title">Deep Sea Vent</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> deep sea hydrothermal vent, alien bioluminescent ecosystem, creatures drifting in darkness, BBC nature documentary<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces, bright light &nbsp;·&nbsp; <strong>Seed</strong> 404
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/deep-sea-standard.gif" alt="deep sea vent standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/deep-sea-lightning.gif" alt="deep sea vent lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 5 -->
+  <article class="pair" id="cathedral">
+    <div class="pair-header">
+      <span class="pair-num">05</span>
+      <span class="pair-title">Cathedral Light</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> stained glass light flooding a Gothic cathedral nave, dust motes floating, volumetric light beams, oil painting style<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces, modern &nbsp;·&nbsp; <strong>Seed</strong> 505
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/cathedral-standard.gif" alt="cathedral light standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/cathedral-lightning.gif" alt="cathedral light lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 6 -->
+  <article class="pair" id="supernova">
+    <div class="pair-header">
+      <span class="pair-num">06</span>
+      <span class="pair-title">Supernova</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> supernova explosion in deep space, shockwave rippling through nebula, purple and orange gas clouds, Hubble telescope<br>
+        <strong>Negative</strong> blurry, low quality, text, planets, stars too sharp &nbsp;·&nbsp; <strong>Seed</strong> 606
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/supernova-standard.gif" alt="supernova standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/supernova-lightning.gif" alt="supernova lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 7 -->
+  <article class="pair" id="crystal-cave">
+    <div class="pair-header">
+      <span class="pair-num">07</span>
+      <span class="pair-title">Crystal Cave</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> crystal cave interior, hexagonal amethyst and quartz formations, shimmering light refractions, macro photography<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces &nbsp;·&nbsp; <strong>Seed</strong> 707
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/crystal-cave-standard.gif" alt="crystal cave standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/crystal-cave-lightning.gif" alt="crystal cave lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 8 -->
+  <article class="pair" id="silk-road">
+    <div class="pair-header">
+      <span class="pair-num">08</span>
+      <span class="pair-title">Silk Road Caravan</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> merchant caravan crossing the Silk Road through dramatic mountain passes, storm clouds gathering, cinematic dusk, oil painting<br>
+        <strong>Negative</strong> blurry, low quality, text, modern vehicles, people closeup &nbsp;·&nbsp; <strong>Seed</strong> 808
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/silk-road-standard.gif" alt="silk road caravan standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/silk-road-lightning.gif" alt="silk road caravan lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 9 -->
+  <article class="pair" id="clockwork">
+    <div class="pair-header">
+      <span class="pair-num">09</span>
+      <span class="pair-title">Clockwork Mechanism</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> intricate clockwork mechanism close-up, brass gears and cogs turning, steam engine aesthetic, steampunk macro, warm amber light<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces, plastic &nbsp;·&nbsp; <strong>Seed</strong> 909
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/clockwork-standard.gif" alt="clockwork standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/clockwork-lightning.gif" alt="clockwork lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+  <!-- 10 -->
+  <article class="pair" id="arctic-wave">
+    <div class="pair-header">
+      <span class="pair-num">10</span>
+      <span class="pair-title">Arctic Wave</span>
+      <span class="pair-prompt">
+        <strong>Prompt</strong> massive arctic wave cresting, translucent blue-green glacial ice, spray catching low winter sun, cinematic slow motion<br>
+        <strong>Negative</strong> blurry, low quality, text, people, faces, tropical &nbsp;·&nbsp; <strong>Seed</strong> 1010
+      </span>
+    </div>
+    <div class="pair-gifs">
+      <div class="gif-panel">
+        <div class="gif-label std"><span class="badge badge-std">Standard</span> 25 steps · PNDM <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/arctic-wave-standard.gif" alt="arctic wave standard" loading="lazy">
+      </div>
+      <div class="gif-panel">
+        <div class="gif-label lt"><span class="badge badge-lt">⚡ Lightning</span> 25 steps · Euler · CFG=1.0 <span class="timing">~240 s</span></div>
+        <img src="assets/gallery/arctic-wave-lightning.gif" alt="arctic wave lightning" loading="lazy">
+      </div>
+    </div>
+  </article>
+
+</main>
+
+<footer>
+  Generated on <a href="https://tenstorrent.com" target="_blank" rel="noopener noreferrer">Tenstorrent Blackhole P300C</a> ·
+  <a href="https://github.com/tenstorrent/tt-animatediff" target="_blank" rel="noopener noreferrer">tt-animatediff</a> ·
+  SD 1.4 TTNN UNet · <a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">AnimateDiff-Lightning</a>
+</footer>
+
+</body>
+</html>

@@ -26,13 +26,17 @@ Phase 2.5 vs Phase 1 (MotionAdapter):
     noise-prediction level — approximate but Blackhole-accelerated.
 
 Lightning mode (use_lightning=True):
-    Loads AnimateDiff-Lightning motion adapter weights (ByteDance, 4-step
-    distilled). Replaces TtPNDMScheduler with TtEulerScheduler — Lightning
-    was distilled for EulerDiscreteScheduler with timestep_spacing="trailing"
-    and beta_schedule="linear". CFG must be disabled (guidance_scale=1.0).
-    Result: same Blackhole TTNN UNet acceleration, ~6× fewer steps.
+    Uses EulerDiscreteScheduler with timestep_spacing="trailing" and
+    beta_schedule="linear" — the scheduler Lightning was distilled for.
+    CFG must be disabled (guidance_scale=1.0). Same Blackhole TTNN UNet
+    acceleration, ~6× fewer steps. Cross-frame attention applied at two
+    points per step: (1) blend noise_preds before scheduler.step(), and
+    (2) blend prev_sample latents after step() with 0.4× lower alpha.
+    Both use cosine-decay alpha to prioritise coarse structure early and
+    preserve per-frame variety in fine details late.
 """
 
+import math
 import sys
 from pathlib import Path
 from typing import List
@@ -42,25 +46,26 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-def cross_frame_attention(noise_preds: torch.Tensor, alpha: float = 0.35) -> torch.Tensor:
-    """Self-attention across frames on stacked noise predictions.
+def cross_frame_attention(tensors: torch.Tensor, alpha: float = 0.35) -> torch.Tensor:
+    """Self-attention across frames on stacked latent tensors.
 
-    Reshapes [N, 4, H, W] to [H*W, N, C] so each spatial position attends
-    across the N frame predictions, then blends attended and original.
+    Reshapes [N, C, H, W] to [H*W, N, C] so each spatial position attends
+    across all N frames, then blends attended and original.
 
     Args:
-        noise_preds: Shape [N, C, H, W] — stacked noise preds for all frames
-        alpha: Blend weight (0 = no effect, 1 = full attention). 0.35 gives
-               strong coherence while preserving frame-to-frame variety.
+        tensors: Shape [N, C, H, W] — stacked tensors for all frames.
+                 For PNDM: noise predictions before scheduler step.
+                 For Lightning/Euler: prev_sample latents after scheduler step.
+        alpha: Blend weight (0 = no effect, 1 = full attention).
 
     Returns:
         Blended tensor of same shape [N, C, H, W]
     """
-    N, C, H, W = noise_preds.shape
+    N, C, H, W = tensors.shape
     if N == 1:
-        return noise_preds
+        return tensors
 
-    x = noise_preds.permute(2, 3, 0, 1).reshape(H * W, N, C).float()
+    x = tensors.permute(2, 3, 0, 1).reshape(H * W, N, C).float()
 
     # Scaled dot-product self-attention (Q = K = V = x)
     scale = C ** -0.5
@@ -69,8 +74,23 @@ def cross_frame_attention(noise_preds: torch.Tensor, alpha: float = 0.35) -> tor
     attended = torch.bmm(attn, x)                      # [H*W, N, C]
 
     attended = attended.reshape(H, W, N, C).permute(2, 3, 0, 1)
-    blended = (1.0 - alpha) * noise_preds + alpha * attended
-    return blended.to(noise_preds.dtype)
+    blended = (1.0 - alpha) * tensors + alpha * attended
+    return blended.to(tensors.dtype)
+
+
+def _cosine_alpha(step_idx: int, num_steps: int, alpha_max: float, alpha_min_frac: float = 0.15) -> float:
+    """Cosine decay schedule for temporal alpha over denoising steps.
+
+    Starts at alpha_max (early steps: coarse structure, where cross-frame
+    agreement matters most) and decays to alpha_max * alpha_min_frac
+    (late steps: fine detail, where variety should be preserved).
+
+    Used for Lightning/Euler where few large steps each carry huge structural
+    weight — a constant alpha at the wrong magnitude destroys the trajectory.
+    """
+    t = step_idx / max(num_steps - 1, 1)  # 0.0 → 1.0
+    cosine = 0.5 * (1.0 + math.cos(math.pi * t))  # 1.0 → 0.0
+    return alpha_max * (alpha_min_frac + (1.0 - alpha_min_frac) * cosine)
 
 
 def generate_frames_temporal(
@@ -105,7 +125,8 @@ def generate_frames_temporal(
         text_embeddings: Shape (2, 96, 768) — [uncond, cond] concatenated,
                          padded from 77 to 96 tokens
         num_frames: Number of frames to generate
-        num_steps: Denoising steps (min 4; 4 recommended for Lightning, 25 standard)
+        num_steps: Denoising steps (25 recommended for both Lightning and standard;
+                   Lightning with fewer steps is faster but lower quality)
         guidance_scale: CFG scale. Must be 1.0 when use_lightning=True.
         seed: RNG seed — shared base noise + per-frame perturbation
         height, width: Output size in pixels (512 × 512 recommended)
@@ -167,13 +188,17 @@ def generate_frames_temporal(
     timesteps = schedulers[0].timesteps
     init_noise_sigma = float(schedulers[0].init_noise_sigma)
 
-    # Shared base noise — same starting point for all frames
+    # Shared base noise — same starting point for all frames.
+    # Lightning uses tighter per-frame perturbation (0.02 vs 0.05): with only
+    # 4 Euler steps, frames have less time to diverge from their start point,
+    # so tighter initial correlation translates more directly into coherence.
     generator = torch.Generator().manual_seed(seed)
     base_noise = torch.randn(1, 4, lh, lw, generator=generator)
+    noise_perturb = 0.02 if use_lightning else 0.05
 
     frame_latents = []
     for _ in range(num_frames):
-        perturbed = base_noise + 0.05 * torch.randn(base_noise.shape, generator=generator)
+        perturbed = base_noise + noise_perturb * torch.randn(base_noise.shape, generator=generator)
         frame_latents.append(perturbed * init_noise_sigma)
 
     # Build TTNN time embeddings once — timesteps are identical across all frames
@@ -191,6 +216,8 @@ def generate_frames_temporal(
     # cost without contributing throughput. Phase 3 will replace this with a
     # ShardTensorToMesh mapper that dispatches N distinct frames to N chips in a
     # single batched call. For now, use a single-chip MeshDevice (1×1) on QB2.
+    num_steps_actual = len(timesteps)
+
     for step_idx, t in enumerate(timesteps):
         # Collect TTNN noise predictions for all frames at timestep t
         noise_preds = []
@@ -219,17 +246,48 @@ def generate_frames_temporal(
             guided = tt_guide(ttnn_out, guidance_scale)
             noise_preds.append(from_device(guided, device).to(torch.float32))
 
-        # Cross-frame attention — [N, 4, H, W]
-        stacked = torch.cat(noise_preds, dim=0)
-        attended = cross_frame_attention(stacked, alpha=temporal_alpha)
+        if use_lightning:
+            # Lightning two-point blend with cosine-decay alpha:
+            #
+            # Point 1: blend noise_preds before stepping. All preds at the same
+            # timestep are in the same space — no normalisation needed. High alpha
+            # early drives coarse structural agreement; cosine decay to low alpha
+            # late preserves per-frame variety in fine detail.
+            #
+            # Point 2: blend prev_sample latents after stepping. Catches structural
+            # drift that escaped the noise_pred blend. Lower alpha (0.4×) so it's
+            # a gentle correction, not a second full alignment pass.
+            step_alpha = _cosine_alpha(step_idx, num_steps_actual, temporal_alpha)
 
-        # Scheduler step for each frame with the temporally-attended noise_pred
-        for i in range(num_frames):
-            frame_latents[i] = schedulers[i].step(
-                attended[i : i + 1], t, frame_latents[i]
-            ).prev_sample
+            # Point 1: noise_pred blend
+            stacked_preds = torch.cat(noise_preds, dim=0)
+            blended_preds_t = cross_frame_attention(stacked_preds, alpha=step_alpha)
+            blended_preds = [blended_preds_t[i : i + 1] for i in range(num_frames)]
 
-        print(f"  Step {step_idx + 1}/{len(timesteps)}", end="\r", flush=True)
+            # Step each frame with the blended noise_pred
+            next_latents = []
+            for i in range(num_frames):
+                next_latents.append(
+                    schedulers[i].step(blended_preds[i], t, frame_latents[i]).prev_sample
+                )
+
+            # Point 2: latent-space blend after stepping (gentler — 0.4× alpha)
+            stacked_lat = torch.cat(next_latents, dim=0)
+            attended_lat = cross_frame_attention(stacked_lat, alpha=step_alpha * 0.4)
+            for i in range(num_frames):
+                frame_latents[i] = attended_lat[i : i + 1]
+        else:
+            # PNDM: attend on noise_preds before stepping. PNDM uses a multi-step
+            # error accumulation buffer (ets) that would desync if we modified
+            # latents after stepping — so we blend preds then step as before.
+            stacked = torch.cat(noise_preds, dim=0)
+            attended = cross_frame_attention(stacked, alpha=temporal_alpha)
+            for i in range(num_frames):
+                frame_latents[i] = schedulers[i].step(
+                    attended[i : i + 1], t, frame_latents[i]
+                ).prev_sample
+
+        print(f"  Step {step_idx + 1}/{num_steps_actual}", end="\r", flush=True)
 
     print()
 
