@@ -134,8 +134,11 @@ if args.frames is None:
 if args.steps is None:
     if args.mode == "sim":
         args.steps = 4
-    elif args.lightning:
-        args.steps = args.lightning_steps  # match the distillation step count
+    elif args.lightning and args.mode == "cpu":
+        # CPU Lightning uses real distilled adapter — step count must match the
+        # checkpoint (2, 4, or 8). Blackhole/sim Lightning uses base TTNN UNet;
+        # 25 steps is correct there (no distillation constraint).
+        args.steps = args.lightning_steps
     else:
         args.steps = 25
 if args.output is None:
@@ -275,7 +278,7 @@ def run_ttnn():
     from animatediff_ttnn.pipeline import export_gif
 
     backend = "ttsim simulator" if args.mode == "sim" else "Blackhole hardware"
-    lightning_tag = f" ⚡ Lightning ({args.lightning_steps}-step)" if args.lightning else ""
+    lightning_tag = " ⚡ Lightning (Euler)" if args.lightning else ""
     print(f"AnimateDiff{lightning_tag} — {backend} (TTNN UNet + cross-frame temporal attention)")
     if args.mode == "sim":
         print(f"  Simulator      : {os.environ.get('TT_METAL_SIMULATOR', '?')}")
@@ -335,7 +338,7 @@ def run_ttnn():
     print(f"\nBackend: TTNN UNet spatial denoising on {backend}")
     print(f"         Cross-frame temporal attention (alpha={args.temporal_alpha}): CPU")
     if args.lightning:
-        print(f"         Scheduler: EulerDiscrete (Lightning {args.lightning_steps}-step distilled)")
+        print(f"         Scheduler: EulerDiscrete (trailing, linear) — base TTNN UNet, CFG=7.5")
     print(f"         VAE decode: CPU (TTNN VAE conv_out OOMs on Blackhole)")
 
 

@@ -147,7 +147,7 @@ def generate(
             text_embeddings=text_embeddings,
             num_frames=frames,
             num_steps=steps,
-            guidance_scale=1.0 if lightning else 7.5,
+            guidance_scale=7.5,  # base SD 1.4 UNet always uses CFG=7.5; CFG=1.0 only for real distilled adapter on CPU
             seed=seed,
             temporal_alpha=temporal_alpha,
             use_lightning=lightning,
@@ -202,11 +202,11 @@ with gr.Blocks(title="tt-animatediff") as demo:
                 placeholder="~/sim/libttsim_bh.so",
                 visible=False,
             )
-                    with gr.Row() as lightning_row:
-                lightning = gr.Checkbox(label="⚡ Lightning mode (~6× faster, comparable quality)", value=False)
+            with gr.Row():
+                lightning = gr.Checkbox(label="⚡ Lightning (Euler scheduler; ~6× faster on CPU, same speed on Blackhole)", value=False)
                 lightning_steps = gr.Radio(
-                    choices=[2, 4, 8], value=4, label="Lightning steps",
-                    info="4 recommended; 2 for fastest, 8 for highest quality",
+                    choices=[2, 4, 8], value=4, label="Lightning steps (CPU only; Blackhole/sim use --steps above)",
+                    info="CPU Lightning only: step count must match the distilled checkpoint (4 recommended)",
                 )
 
             def _update_visibility(m):

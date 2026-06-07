@@ -211,7 +211,7 @@ python examples/generate.py --lightning
 
 # CPU — ~20 s/frame, no hardware required
 python examples/generate.py --mode cpu --lightning</pre>
-        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Lightning uses guidance_scale=1.0 (CFG baked into distillation). The samples below were generated on real Blackhole silicon — 34 s for 8 frames.</p>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">On Blackhole/sim the base SD 1.4 TTNN UNet is used — CFG=7.5 retained for full guidance. CPU Lightning uses the real distilled adapter (CFG=1.0 baked in). Blackhole samples run 25 steps · Euler · ~15 s/frame; full 10-prompt comparison in the <a href="gallery.html">gallery</a>.</p>
       </div>
       <div class="lightning-col">
         <h4>Gradio UI</h4>
@@ -223,7 +223,7 @@ python app.py
       </div>
     </div>
 
-    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — 4-step Blackhole, ~4.3 s/frame (34 s for 8 frames on P300C)</div>
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~15 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
     <div class="lightning-gallery">
       <figure class="lgif">
         <img src="assets/study/lightning-mandala.gif" alt="sacred mandala blooming from starfield" loading="lazy">

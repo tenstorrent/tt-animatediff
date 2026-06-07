@@ -3,8 +3,9 @@
 # SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 """Gallery generation script — 10 prompts × 2 modes (standard + Lightning).
 
-Runs on Blackhole hardware. Standard: 16 frames, 25 steps, alpha=0.35.
-Lightning: 16 frames, 4 steps, alpha=0.35.
+Runs on Blackhole hardware. Both modes: 16 frames, 25 steps, alpha=0.35.
+Standard uses PNDMScheduler; Lightning uses EulerDiscreteScheduler (trailing, linear).
+Both run base SD 1.4 TTNN UNet with CFG=7.5 — Lightning is a different solver, not distilled.
 
 Usage:
     source ~/tt-metal/python_env/bin/activate
@@ -112,9 +113,9 @@ def run_one(slug, prompt, negative, seed, lightning, frames=16):
         "--output", str(out_path),
     ]
     if lightning:
-        # 25 Euler steps — same count as standard PNDM for apples-to-apples quality.
-        # Our TTNN path doesn't use Lightning's motion adapter, so any step count is
-        # valid; we keep --lightning for the Euler scheduler + CFG=1.0 behaviour.
+        # 25 Euler steps — same count as standard PNDM for apples-to-apples comparison.
+        # Our TTNN path doesn't use the distilled adapter; --lightning switches the
+        # solver to EulerDiscreteScheduler (trailing, linear) with CFG=7.5 retained.
         cmd += ["--lightning", "--steps", "25"]
     else:
         cmd += ["--steps", "25"]

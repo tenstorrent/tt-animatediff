@@ -64,4 +64,6 @@ Space file or add a setup script to download it at startup.
 | Steps | 4–50 | 25 | 4 recommended for sim |
 | Seed | integer | 42 | -1 not supported; use any integer |
 | Temporal alpha | 0.0–1.0 | 0.35 | Ignored in cpu mode |
+| Lightning | checkbox | off | Switches to Euler solver; ~6× faster on CPU, same step count on Blackhole/sim |
+| Lightning steps | 2 / 4 / 8 | 4 | CPU only — must match the distilled adapter checkpoint; Blackhole/sim ignores this |
 | Sim binary path | file path | ~/sim/libttsim_bh.so | sim mode only |

@@ -18,10 +18,13 @@ denoising on Blackhole hardware using the TTNN UNet.
 |---|---|
 | ![neon dystopia](docs/assets/neon_dystopia.gif) | ![ocean](docs/assets/ocean.gif) |
 
-### AnimateDiff-Lightning on Blackhole — 8 frames × 4 steps, ~4.3 s/frame
+### AnimateDiff-Lightning on Blackhole — 8 frames × 25 steps, Euler · CFG=7.5
 
-Lightning mode runs the same TTNN UNet on Blackhole with `ByteDance/AnimateDiff-Lightning`
-4-step distilled weights and `EulerDiscreteScheduler`. ~3.5× faster than standard Blackhole.
+Lightning mode runs the TTNN UNet with `EulerDiscreteScheduler` (trailing, linear).
+On Blackhole the base SD 1.4 TTNN UNet is used — CFG=7.5 retained for full guidance.
+Same step count (25) as standard PNDM, different solver.
+
+See the [full 10-prompt gallery](https://tenstorrent.github.io/tt-animatediff/gallery.html) for standard vs Lightning side-by-side.
 
 | *"Aurora"* | *"Mandala"* | *"Mycelium"* |
 |---|---|---|
@@ -43,11 +46,11 @@ python examples/generate.py --mode cpu --prompt "ocean waves at sunset, cinemati
 source ~/tt-metal/python_env/bin/activate
 python examples/generate.py --prompt "aurora borealis over a frozen lake, cinematic 4K"
 
-# Blackhole + Lightning (~4.3 s/frame, 4-step distilled weights)
-python examples/generate.py --lightning --lightning-steps 4
+# Blackhole + Lightning (Euler scheduler, 25 steps, CFG=7.5)
+python examples/generate.py --lightning
 
-# CPU + Lightning (~20 s/frame, no hardware required)
-python examples/generate.py --mode cpu --lightning --steps 4
+# CPU + Lightning (~20 s/frame, 4-step distilled adapter, no hardware required)
+python examples/generate.py --mode cpu --lightning --lightning-steps 4
 
 # Simulator — no hardware, bit-exact Blackhole
 python examples/generate.py --mode sim --frames 2 --steps 4
@@ -117,7 +120,7 @@ file or add a setup script to download it at startup.
 | Steps | 4–50 | 25 | 4 for Lightning / sim |
 | Seed | integer | 42 | |
 | Temporal alpha | 0.0–1.0 | 0.35 | Blackhole/sim only |
-| Lightning | checkbox | off | All modes; ~3.5× faster on Blackhole, ~6× faster on CPU |
+| Lightning | checkbox | off | Euler solver on Blackhole/sim (same steps, different trajectory); ~6× faster on CPU |
 | Sim binary path | file path | ~/sim/libttsim_bh.so | sim mode only |
 
 ---
@@ -128,12 +131,13 @@ file or add a setup script to download it at startup.
 |---|---|---|---|
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
-| `blackhole` | Blackhole P100/P300C | ~15 s/frame (25 steps) | Cross-frame blend (temporal-alpha) |
-| `blackhole --lightning` | Blackhole P100/P300C | **~4.3 s/frame** (4 steps) | Cross-frame blend (temporal-alpha) |
+| `blackhole` | Blackhole P100/P300C | ~15 s/frame (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P100/P300C | ~15 s/frame (25 steps, Euler) | Cross-frame blend (temporal-alpha) |
 | `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |
 
-Lightning on Blackhole uses `EulerDiscreteScheduler` (trailing, linear) with 4-step distilled weights — measured **34 s for 8 frames** on P300C.
-Standard on Blackhole uses `PNDMScheduler` with 25-step weights — measured ~120 s for 8 frames.
+Both standard and Lightning on Blackhole use 25 steps and CFG=7.5 with the base SD 1.4 TTNN UNet.
+Lightning uses `EulerDiscreteScheduler` (trailing, linear) rather than `PNDMScheduler` — a different solver trajectory, not fewer steps.
+CPU Lightning (`--mode cpu --lightning`) uses the real 4-step distilled adapter (CFG=1.0 baked in) and is genuinely ~6× faster than CPU standard.
 
 ---
 
@@ -156,7 +160,7 @@ python examples/generate.py --mode sim --sim ~/sim/libttsim_bh.so --frames 2 --s
 |---|---|---|
 | Phase 1 — CPU baseline | ✅ Complete | `diffusers.AnimateDiffPipeline` + MotionAdapter |
 | Phase 1 — Lightning (CPU) | ✅ Complete | `ByteDance/AnimateDiff-Lightning`, ~20 s/frame |
-| Phase 2.5 — Lightning (Blackhole) | ✅ Complete | `TtEulerScheduler`, ~4.3 s/frame on P300C |
+| Phase 2.5 — Lightning (Blackhole) | ✅ Complete | `TtEulerScheduler`, Euler solver · 25 steps · CFG=7.5 |
 | Phase 2 — Blackhole denoising | ✅ Code complete | TTNN UNet, hardware validation ongoing |
 | Phase 2.5 — Cross-frame temporal | ✅ Complete | `--temporal-alpha` blend during denoising |
 | Phase 3 — Full TTNN temporal attention | 🔲 Future | Requires TemporalTransformer in TTNN UNet |
@@ -271,13 +275,14 @@ Fast motion (fire, water): `0.2–0.35`. Slow drift (cosmos, aurora): `0.4–0.6
 
 ### `--steps` vs quality
 
-| Scheduler | Minimum | Sweet spot | Notes |
+| Mode | Minimum | Sweet spot | Notes |
 |---|---|---|---|
-| PNDM (standard) | 4 (preview/sim) | 25 on silicon | Diminishing returns beyond 30 |
-| Euler (Lightning) | 2 | **4** | Distilled — more steps degrades quality |
+| PNDM (standard, blackhole/sim) | 4 (preview/sim) | 25 on silicon | Diminishing returns beyond 30 |
+| Euler (Lightning, blackhole/sim) | 4 (preview/sim) | **25** | Base TTNN UNet — same CFG=7.5, different solver |
+| Euler (Lightning, cpu) | 2 | **4** | Real distilled adapter — CFG=1.0 baked in; more steps degrades |
 
-Lightning `--steps` must match the distillation checkpoint (2, 4, or 8). Mixing step
-count with the wrong checkpoint (e.g. `--lightning-steps 4 --steps 8`) is not advised.
+CPU Lightning `--lightning-steps` must match the distillation checkpoint (2, 4, or 8).
+Blackhole/sim Lightning ignores `--lightning-steps` and uses `--steps` (default 25).
 
 ---
 
@@ -322,6 +327,12 @@ application plugin, or Python library — see
 ---
 
 ## Changelog
+
+### v0.5.0 — 2026-06-07
+- **Lightning CFG fix** — Blackhole/sim Lightning path now uses CFG=7.5 (was incorrectly 1.0); CFG=1.0 only applies to the real distilled CPU adapter
+- **10-prompt comparison gallery** — [gallery.html](https://tenstorrent.github.io/tt-animatediff/gallery.html): standard PNDM vs Euler Lightning, all prompts, 25 steps each
+- **`app.py` bug fix** — Gradio UI Blackhole/sim path now passes `guidance_scale=7.5` for Lightning
+- Gallery labels and README/index corrected throughout
 
 ### v0.4.0 — 2026-06-07
 - **Lightning on Blackhole** — `--lightning` now works in all modes (blackhole, sim, cpu)

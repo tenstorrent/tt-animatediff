@@ -55,8 +55,10 @@ def cross_frame_attention(tensors: torch.Tensor, alpha: float = 0.35) -> torch.T
 
     Args:
         tensors: Shape [N, C, H, W] — stacked tensors for all frames.
-                 For PNDM: noise predictions before scheduler step.
-                 For Lightning/Euler: prev_sample latents after scheduler step.
+                 Called at two points per Lightning step:
+                   Point 1 — stacked noise_preds before scheduler.step()
+                   Point 2 — stacked prev_sample latents after scheduler.step()
+                 Also called once per PNDM step on noise_preds.
         alpha: Blend weight (0 = no effect, 1 = full attention).
 
     Returns:
@@ -190,9 +192,9 @@ def generate_frames_temporal(
     init_noise_sigma = float(schedulers[0].init_noise_sigma)
 
     # Shared base noise — same starting point for all frames.
-    # Lightning uses tighter per-frame perturbation (0.02 vs 0.05): with only
-    # 4 Euler steps, frames have less time to diverge from their start point,
-    # so tighter initial correlation translates more directly into coherence.
+    # Lightning uses tighter per-frame perturbation (0.02 vs 0.05): each Euler
+    # step covers a larger sigma interval than PNDM, so the initial correlation
+    # has proportionally more leverage on the final structure.
     generator = torch.Generator().manual_seed(seed)
     base_noise = torch.randn(1, 4, lh, lw, generator=generator)
     noise_perturb = 0.02 if use_lightning else 0.05
