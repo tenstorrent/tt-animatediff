@@ -246,46 +246,41 @@ def generate_frames_temporal(
     base_noise = torch.randn(1, 4, lh, lw, generator=generator)
     noise_perturb = 0.02 if use_lightning else 0.05
 
-    # Chain continuity: blend previous run's final latents into this run's seed noise.
-    # We want coarse composition (glasses position, shape) to persist across scenes
-    # while fine detail and colour come entirely from the new prompt.  Two mechanisms:
+    # Chain continuity: blend a low-pass version of the previous run's latents into
+    # this run's seed noise, biasing the denoiser toward the same coarse composition
+    # (subject position, rough silhouette) while leaving colour, texture, and scene
+    # content entirely to the new prompt.
     #
-    # 1. Per-channel zero-mean normalisation: denoised latents carry per-channel DC
-    #    bias (e.g. a red scene leaves a red mean in ch0).  Subtracting the spatial
-    #    mean per channel strips colour direction so it can't accumulate each hop.
+    # Key invariant: the blended base_noise must remain unit-std so the scheduler's
+    # sigma scaling is correct.  We enforce this with a final re-normalisation.
     #
-    # 2. Gaussian low-pass before blending: at 64×64 latent resolution a ~9px kernel
-    #    (sigma≈3) retains only coarse layout (where the glasses are, rough silhouette)
-    #    and discards texture / fine detail.  This lets the denoiser honour the new
-    #    prompt for everything except the gross composition, so the sequence reads as
-    #    "same subject, different world" rather than "previous image slightly shifted".
+    # Low-pass kernel choice: 9px at 64×64 latent ≈ keeping structure at >~14px in
+    # pixel space — enough for silhouette, not enough for any recognisable detail.
+    # 19px (prev value) was too aggressive: the blurred map retained enough energy
+    # to override the prompt's colour guidance entirely.
     if chain_from is not None:
         from pathlib import Path as _Path
         import torch.nn.functional as _F
         chain_path = _Path(chain_from)
         if chain_path.exists():
-            prev = torch.load(chain_path, weights_only=True)  # (num_frames_prev, 4, lh, lw)
+            prev = torch.load(chain_path, weights_only=True)  # (F, 4, lh, lw)
             prev_mean = prev.mean(dim=0, keepdim=True).float()  # (1, 4, lh, lw)
-            # Per-channel zero-mean: remove colour DC bias.
-            ch_mean = prev_mean.mean(dim=(2, 3), keepdim=True)   # (1, 4, 1, 1)
+            # Per-channel zero-mean: remove colour DC so it can't accumulate.
+            ch_mean = prev_mean.mean(dim=(2, 3), keepdim=True)
             ch_std  = prev_mean.std(dim=(2, 3), keepdim=True).clamp(min=1e-6)
-            prev_norm = (prev_mean - ch_mean) / ch_std            # (1, 4, lh, lw)
-            # Low-pass: keep coarse layout only (kernel ~9px at 64×64, sigma=3.0).
-            # Processed channel-by-channel because avg_pool / conv expect 4-D input.
-            ksize = max(3, 2 * round(3.0 * 3.0) + 1)  # 19px; ensures coarse-only signal
-            ksize = ksize if ksize % 2 == 1 else ksize + 1
+            prev_norm = (prev_mean - ch_mean) / ch_std
+            # Low-pass at 9px: coarse layout only, no colour or texture bias.
+            ksize = 9
             prev_blurred = _F.avg_pool2d(
-                prev_norm,
-                kernel_size=ksize,
-                stride=1,
-                padding=ksize // 2,
-                count_include_pad=False,
+                prev_norm, kernel_size=ksize, stride=1,
+                padding=ksize // 2, count_include_pad=False,
             )
-            # Re-normalise after pooling (pooling compresses std).
-            bl_std = prev_blurred.std(dim=(2, 3), keepdim=True).clamp(min=1e-6)
-            prev_blurred = prev_blurred / bl_std
-            base_noise = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_blurred
-            print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha} (low-pass kernel={ksize})")
+            # Blend, then re-normalise the result to unit std so the scheduler
+            # sees the expected noise distribution at t=T.
+            mixed = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_blurred
+            mixed_std = mixed.std().clamp(min=1e-6)
+            base_noise = mixed / mixed_std
+            print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha} (ksize=9, renorm)")
         else:
             print(f"  Chain: warning — {chain_from} not found, ignoring")
 
