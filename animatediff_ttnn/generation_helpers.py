@@ -48,16 +48,32 @@ def load_sd14_ttnn(device):
     return ttnn_model, ttnn_vae, torch_unet.config, torch_unet.time_proj
 
 
+_clip_tokenizer = None
+_clip_text_encoder = None
+
+
 def encode_prompt(prompt: str, negative_prompt: str = "") -> torch.Tensor:
     """Encode text prompt pair to (2, 96, 768) CLIP embeddings.
 
     Pads 77 → 96 tokens to match TTNN UNet's expected sequence length.
+    Tokenizer and text encoder are cached after first call — loading from
+    HuggingFace Hub takes ~2s and is wasteful to repeat per generation.
     """
+    global _clip_tokenizer, _clip_text_encoder
     from transformers import CLIPTokenizer, CLIPTextModel
 
-    tokenizer = CLIPTokenizer.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="text_encoder")
-    text_encoder.eval()
+    if _clip_tokenizer is None:
+        _clip_tokenizer = CLIPTokenizer.from_pretrained(
+            "CompVis/stable-diffusion-v1-4", subfolder="tokenizer"
+        )
+    if _clip_text_encoder is None:
+        _clip_text_encoder = CLIPTextModel.from_pretrained(
+            "CompVis/stable-diffusion-v1-4", subfolder="text_encoder"
+        )
+        _clip_text_encoder.eval()
+
+    tokenizer = _clip_tokenizer
+    text_encoder = _clip_text_encoder
 
     def encode(text):
         tokens = tokenizer(

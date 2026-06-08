@@ -93,12 +93,6 @@ def _ensure_bh_device(mode: str, sim_path: str):
     return _bh_device, _bh_models
 
 
-def _save_preview_gif(frames, path: str) -> str:
-    """Save a list of PIL Images as an animated GIF and return the path."""
-    from animatediff_ttnn.pipeline import export_gif
-    export_gif(frames, path)
-    return path
-
 
 def generate(
     mode: str,
@@ -145,12 +139,15 @@ def generate(
         from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
         pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
         guidance = 1.0 if lightning else 7.5
+        # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
+        # ignore the general steps slider and use the lightning_steps value instead.
+        cpu_steps = lightning_steps if lightning else steps
         frames_list = cpu_generate(
             pipe, prompt,
             negative_prompt=negative_prompt,
             num_frames=frames,
             guidance_scale=guidance,
-            num_inference_steps=steps,
+            num_inference_steps=cpu_steps,
             seed=seed,
         )
         export_gif(frames_list, final_path)
@@ -177,13 +174,14 @@ def generate(
 
     height, width = 512, 512
 
+    preview_path = str(out_dir / "preview.gif")  # single file, overwritten each step
+
     def on_step(step_idx, num_steps, frame_latents):
         if step_idx % preview_every != 0 and step_idx != num_steps - 1:
             return
         preview_frames = _latent_preview(frame_latents, height, width)
-        p = str(out_dir / f"preview_{step_idx:03d}.gif")
-        export_gif(preview_frames, p)
-        step_q.put((p, None))
+        export_gif(preview_frames, preview_path)
+        step_q.put((preview_path, None))
 
     def worker():
         try:
@@ -286,7 +284,7 @@ with gr.Blocks(title="tt-animatediff") as demo:
 
             with gr.Row():
                 lightning = gr.Checkbox(
-                    label="⚡ Lightning (Euler scheduler — use Steps=4 for speed, 25 for quality)",
+                    label="⚡ Lightning (Euler scheduler — CPU: use Lightning Steps 2/4/8 only; BH/sim: any step count)",
                     value=False,
                 )
                 lightning_steps = gr.Radio(
