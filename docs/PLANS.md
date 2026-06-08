@@ -124,3 +124,82 @@ The Blackhole L1 residency is what makes it efficient at scale.
 - Step count target: 4-step for BH inference (matches ByteDance) vs 8-step (higher quality)
 - Whether Path C produces checkpoints that generalise beyond the chain-demo prompts or
   overfit to the training subject matter
+
+---
+
+## Persist Prompt Guidance to Chained Generations
+
+### Problem
+
+The `--chain` mechanism carries coarse composition (subject silhouette, layout) from the
+previous run's latents into the next run's seed noise. At `chain_alpha=0.20` with a 9px
+low-pass blur, hop 1→2 is visually convincing — the subject persists while the scene
+changes. Hops beyond 2 currently fail: the chained composition signal degrades each hop,
+and by hop 3 the prompt takes over without any recognisable continuity.
+
+Additionally, the prompts at hops 2+ are at a disadvantage: the composition bias from
+hop N-1 partially counteracts the text guidance, so distinct-world prompts (ocean, forest,
+circuit) converge toward a similar neutral-gray appearance rather than producing their
+intended colour palettes.
+
+### Root cause
+
+The chain blending operates only at the **noise seed** level, before any text conditioning.
+CLIP text embeddings are applied uniformly across all denoising steps — they have no way
+to "reinforce" themselves against the structural prior coming from the chained latent.
+By the middle of the diffusion trajectory the text guidance loses ground to the implicit
+layout prior, and by hop 3 the latent fingerprint has drifted far enough from the prompt
+that the two signals are incoherent.
+
+### Proposed approach: prompt-weighted chain injection
+
+Two complementary directions:
+
+#### A — Adaptive chain_alpha decay
+
+Use a per-hop decay: `effective_alpha = chain_alpha * decay^hop_index`. A 10% decay per
+hop (`decay=0.9`) would give alpha=0.20, 0.18, 0.16, … — the composition nudge weakens
+gracefully rather than staying constant while the accumulated drift grows.
+
+Implementation: thread `hop_index` through to `generate_frames_temporal`, compute
+`effective_alpha = chain_alpha * (decay ** hop_index)`, apply.
+
+#### B — Text embedding re-injection at mid-trajectory ("prompt anchoring")
+
+The standard pipeline applies text embeddings at every step but treats them as fixed.
+We can amplify them at specific steps where the structural prior is strongest:
+
+1. Identify the "transition steps" — the middle third of the PNDM/Euler schedule where
+   the image structure is being settled (roughly steps N//3 to 2*N//3).
+2. At those steps, scale the text embedding contribution up by a factor (e.g. ×1.5)
+   while scaling the unconditional embedding down correspondingly — effectively a
+   step-local CFG boost targeted at the compositional transition zone.
+3. This costs nothing at inference (no extra forward passes) and requires only a
+   modification to the guidance scaling in `generate_frames_temporal`'s denoising loop.
+
+#### C — Carry the prompt embedding, not just the latent
+
+Save the CLIP text embedding alongside the latent `.pt` file (`--chain-save` stores
+both). On the next hop, blend a small fraction (e.g. 5-10%) of the previous run's text
+embedding into the current run's — creating a "soft subject memory" at the conditioning
+level, not just the noise level.
+
+Risk: may cause text-embedding drift across many hops (same accumulation problem as the
+original latent approach). Needs per-channel normalisation of the embedding space, or a
+projection step that preserves the new prompt's direction while allowing a small pull
+toward the previous subject concept.
+
+### Recommended sequence
+
+1. **First**: implement A (adaptive alpha decay) — trivial change, immediate test.
+2. **Second**: implement B (mid-trajectory prompt anchoring) — high leverage, no extra
+   compute, should directly fix the "prompt ignored" symptom on hops 2+.
+3. **Third**: evaluate C (embedding carry) after B is validated — only needed if B alone
+   doesn't provide enough subject persistence across 4+ hops.
+
+### Success criteria
+
+- Hop 3 and beyond maintain visually distinct colour palettes per scene (ocean=turquoise,
+  forest=green, circuit=violet) rather than converging to neutral gray.
+- Subject silhouette remains recognisable across at least 4 consecutive hops.
+- The chain-demo script produces a compelling 6-scene sequence suitable for the website.

@@ -359,7 +359,7 @@ python app.py
   <div class="chain-inner">
     <span class="section-label">Stateful latent threading</span>
     <h3>🔗 Chain Continuity</h3>
-    <p class="chain-sub">Six independent prompts. One subject — retro 3D glasses — threaded through each by blending the previous run's final denoised latents into the next run's seed noise. No explicit conditioning, no fine-tuning. Just hardware-resident state.</p>
+    <p class="chain-sub">Two independent prompts. One subject — retro 3D glasses — threaded between them by blending the first run's final denoised latents into the second run's seed noise. No explicit conditioning, no fine-tuning. Just hardware-resident state.</p>
 
     <div class="chain-strip">
       <div class="chain-item">
@@ -371,56 +371,12 @@ python app.py
       <div class="chain-arrow">
         <div class="chain-arrow-line"></div>
         <div class="chain-arrow-tip"></div>
-        <div class="chain-arrow-label">α 0.68</div>
+        <div class="chain-arrow-label">α 0.20</div>
       </div>
       <div class="chain-item">
         <figure>
           <img src="assets/chain/glasses-cosmic.gif" alt="retro 3D glasses floating in deep space nebula" loading="lazy">
           <figcaption>deep space<br>violet nebula</figcaption>
-        </figure>
-      </div>
-      <div class="chain-arrow">
-        <div class="chain-arrow-line"></div>
-        <div class="chain-arrow-tip"></div>
-        <div class="chain-arrow-label">α 0.65</div>
-      </div>
-      <div class="chain-item">
-        <figure>
-          <img src="assets/chain/glasses-forest.gif" alt="retro 3D glasses on bioluminescent forest floor" loading="lazy">
-          <figcaption>bioluminescent<br>forest</figcaption>
-        </figure>
-      </div>
-      <div class="chain-arrow">
-        <div class="chain-arrow-line"></div>
-        <div class="chain-arrow-tip"></div>
-        <div class="chain-arrow-label">α 0.68</div>
-      </div>
-      <div class="chain-item">
-        <figure>
-          <img src="assets/chain/glasses-circuit.gif" alt="retro 3D glasses dissolving into circuit board" loading="lazy">
-          <figcaption>circuit board<br>Tenstorrent</figcaption>
-        </figure>
-      </div>
-      <div class="chain-arrow">
-        <div class="chain-arrow-line"></div>
-        <div class="chain-arrow-tip"></div>
-        <div class="chain-arrow-label">α 0.65</div>
-      </div>
-      <div class="chain-item">
-        <figure>
-          <img src="assets/chain/glasses-watercolor.gif" alt="retro 3D glasses in flowing watercolor" loading="lazy">
-          <figcaption>watercolor<br>studio art</figcaption>
-        </figure>
-      </div>
-      <div class="chain-arrow">
-        <div class="chain-arrow-line"></div>
-        <div class="chain-arrow-tip"></div>
-        <div class="chain-arrow-label">α 0.65</div>
-      </div>
-      <div class="chain-item">
-        <figure>
-          <img src="assets/chain/glasses-ocean.gif" alt="retro 3D glasses on tropical coral reef" loading="lazy">
-          <figcaption>coral reef<br>underwater</figcaption>
         </figure>
       </div>
     </div>
@@ -437,7 +393,7 @@ python examples/generate.py \
 # Run 2 — thread DNA from run 1
 python examples/generate.py \
   --prompt "retro 3D glasses, deep space" \
-  --chain-from chain.pt --chain-alpha 0.65 \
+  --chain-from chain.pt --chain-alpha 0.20 \
   --chain-save chain.pt</pre>
       </div>
       <div class="chain-col">
