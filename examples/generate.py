@@ -167,6 +167,12 @@ if args.output is None:
     args.output = f"output/{args.mode}.gif"
 if not 0.0 <= args.temporal_alpha <= 1.0:
     _build_parser().error(f"--temporal-alpha must be in [0, 1], got {args.temporal_alpha}")
+if args.lightning and args.mode != "cpu":
+    _build_parser().error(
+        f"--lightning uses the ByteDance distilled CPU adapter and is only valid with "
+        f"--mode cpu (got --mode {args.mode}). "
+        f"Blackhole/sim modes use the base TTNN UNet with any step count."
+    )
 
 # ── sim: resolve ttsim path and configure env before tt-metal loads ────────
 if args.mode == "sim":

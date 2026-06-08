@@ -1,4 +1,4 @@
-gradio==4.44.1
+gradio==4.44.1  # must match sdk_version in spaces/README.md Space card
 torch>=2.0.0
 diffusers>=0.32.1
 transformers>=4.30.0

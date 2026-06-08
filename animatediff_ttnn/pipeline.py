@@ -11,6 +11,7 @@ No TT hardware required.
 Lightning mode uses ByteDance/AnimateDiff-Lightning distilled checkpoints
 (arXiv:2403.12706). 4-step Lightning ≈ 25-step standard quality, ~6× faster.
 Requires EulerDiscreteScheduler with timestep_spacing="trailing" and CFG=1.0.
+Supported step counts: 2, 4, 8 (each has a distinct distilled checkpoint).
 """
 
 from pathlib import Path
@@ -36,8 +37,8 @@ def create_lightning_pipeline(
     4-step Lightning ≈ 25-step standard AnimateDiff quality, ~6× faster.
 
     Args:
-        step: Distillation step count — 2, 4, or 8. 4 is the recommended default.
-              Use 2 for fastest output; 8 for highest quality.
+        step: Distillation step count — must be 2, 4, or 8 (distinct checkpoints).
+              Use 4 (default) for the best quality/speed tradeoff; 2 for fastest.
         model_id: Base SD model. Lightning works best with stylised bases.
         torch_dtype: torch.float32 (CPU) or torch.float16 (GPU).
 

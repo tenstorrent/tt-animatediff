@@ -45,9 +45,14 @@ python app.py
 The `spaces/` directory is the Space entrypoint — `spaces/app.py` sets
 `SPACE_MODE=sim` and then imports the shared `app.py` from the repo root.
 
+**Important:** The Space repo must contain the entire tt-animatediff repository
+tree (not just the contents of `spaces/`). `spaces/app.py` does
+`sys.path.insert(0, Path(__file__).parent.parent)` to locate `app.py` one
+level up — this only works when the full repo is present.
+
 1. Create a new Space at https://huggingface.co/spaces (SDK: Gradio)
-2. Copy the full repo into the Space (both `spaces/` and repo-root files)
-3. Set `app_file: spaces/app.py` in the Space card metadata
+2. Push the full tt-animatediff repo to the Space (e.g. `git push space main`)
+3. The `spaces/README.md` Space card already sets `app_file: spaces/app.py`
 4. The Space detects `SPACE_MODE=sim` and runs in sim mode automatically
 
 Note: ttsim requires a Linux x86_64 runner. Upload `libttsim_bh.so` as a

@@ -251,8 +251,8 @@
     <p class="arch-sub">What runs on Blackhole silicon, what runs on CPU, and where this differs from standard AnimateDiff.</p>
 
     <div class="arch-tabs">
-      <button class="arch-tab active" onclick="showDiagram('flow')">Execution flow</button>
-      <button class="arch-tab" onclick="showDiagram('arch')">Original vs current</button>
+      <button class="arch-tab active" onclick="showDiagram('flow', this)">Execution flow</button>
+      <button class="arch-tab" onclick="showDiagram('arch', this)">Original vs current</button>
     </div>
 
     <div id="diag-flow" class="arch-diagram active">
@@ -302,11 +302,11 @@ flowchart TB
 </section>
 
 <script>
-function showDiagram(name) {
+function showDiagram(name, btn) {
   document.querySelectorAll('.arch-diagram').forEach(d => d.classList.remove('active'));
   document.querySelectorAll('.arch-tab').forEach(t => t.classList.remove('active'));
   document.getElementById('diag-' + name).classList.add('active');
-  event.target.classList.add('active');
+  if (btn) btn.classList.add('active');
 }
 </script>
 
