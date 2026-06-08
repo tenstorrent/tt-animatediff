@@ -203,3 +203,53 @@ toward the previous subject concept.
   forest=green, circuit=violet) rather than converging to neutral gray.
 - Subject silhouette remains recognisable across at least 4 consecutive hops.
 - The chain-demo script produces a compelling 6-scene sequence suitable for the website.
+
+---
+
+## Persistent Device State Across Chained Runs
+
+### Opportunity
+
+Currently, each `--chain` run performs a full device setup and teardown:
+`open_mesh_device` → compile UNet → run → `close_device`. The UNet weights
+(~800 MB compiled for Blackhole L1) are loaded fresh every call. For a
+6-scene chain sequence this means 6× compile overhead (~30s each) even though
+the weights never change between hops.
+
+The compiled TTNN UNet and model weights could instead remain resident on the
+device between chained calls — only the latent noise seed and text embeddings
+change per run. This would reduce chain-hop overhead from ~30s to near-zero
+and make interactive chaining (e.g. from the Gradio UI) practical.
+
+### What already works
+
+The Gradio `app.py` already implements a cached device pattern: `_bh_device`
+is a module-level singleton that survives across UI requests. The UNet model
+(`ttnn_model`) is also cached in `_bh_device` state. This means **the Gradio
+UI already benefits from persistent device state for sequential generations**.
+
+The gap is in the CLI: `examples/generate.py` calls `setup_blackhole()` and
+`close_device()` on every invocation, so `--chain` sequences from the CLI
+pay full setup cost each hop.
+
+### Proposed approach: long-lived device context for CLI chains
+
+1. Add a `--chain-keep-device` flag (or detect `--chain-save` as a signal)
+   that skips `close_device()` at the end of the run, leaving the device and
+   compiled model resident.
+2. On the next hop, `setup_blackhole()` detects an already-open device (via a
+   lock file or environment variable) and skips recompilation.
+3. A `--chain-close` flag (or timeout) explicitly tears down the device when
+   the chain sequence is complete.
+
+**Simpler alternative:** expose a Python API for chaining that keeps the
+device object in scope across calls — callers manage the lifecycle explicitly
+rather than via CLI flags.
+
+### Why this matters for hardware-native positioning
+
+Keeping weights resident between calls is trivially cheap on standard GPU
+frameworks (PyTorch model stays in VRAM). On Blackhole it requires explicit
+L1 management — but the hardware makes it efficient once done. A chain of
+6 scenes with sub-second hop latency (vs 30s today) is a qualitatively
+different capability that highlights BH's persistent-state advantage.
