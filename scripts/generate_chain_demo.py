@@ -30,71 +30,81 @@ MANIFEST = OUT / "manifest.json"
 GENERATE = REPO / "examples" / "generate.py"
 PYTHON = Path.home() / "tt-metal" / "python_env" / "bin" / "python"
 
-NEG = "blurry, low quality, distorted, text, people, faces, modern buildings"
+NEG = "blurry, low quality, distorted, text, people, faces, modern buildings, glasses removed, no glasses"
 
-# Each scene lists: slug, prompt, negative, seed, alpha, lightning
-# The chain_alpha is tuned per scene — earlier scenes need tighter coupling
-# to establish the latent fingerprint; later scenes can loosen it for variety.
+# Each scene lists: slug, prompt, negative, seed, alpha (temporal), lightning, chain_alpha.
+#
+# Tuning notes:
+#   temporal alpha 0.65-0.70 → strong per-frame motion; lower values make all
+#   frames near-identical (over-smoothing from temporal attention).
+#   chain_alpha 0.65-0.72 → enough latent fingerprint to carry the glasses
+#   shape across scene changes; values below ~0.5 are too weak to see.
 SCENES = [
     {
         "slug": "glasses-neon",
-        "prompt": "vintage anaglyphic 3D glasses resting on a wet neon-lit diner counter at night, "
-                  "pink and teal neon tube reflections in the lenses, rain-slicked formica, "
-                  "chromatic aberration, cinematic 35mm film photography",
+        "prompt": "closeup of retro anaglyphic 3D glasses as the hero subject, "
+                  "pink and teal neon tube reflections glowing in the lenses, "
+                  "dark wet diner counter in the background, cinematic 35mm film photography, "
+                  "sharp glasses in focus, bokeh background",
         "seed": 111,
-        "alpha": 0.35,
+        "alpha": 0.65,
         "lightning": False,
         "chain_alpha": None,  # first scene — no chain input
     },
     {
         "slug": "glasses-cosmic",
-        "prompt": "vintage anaglyphic 3D glasses floating weightless in deep space, "
-                  "swirling violet and indigo nebula filling the lenses, cold starfield, "
-                  "macro studio photography, cinematic 4K",
+        "prompt": "closeup of retro anaglyphic 3D glasses as the hero subject, "
+                  "violet and indigo nebula light reflected in both lenses, "
+                  "deep space starfield background, macro studio photography, "
+                  "sharp glasses in focus, cinematic 4K",
         "seed": 222,
-        "alpha": 0.40,
-        "lightning": True,
-        "chain_alpha": 0.45,
+        "alpha": 0.68,
+        "lightning": False,
+        "chain_alpha": 0.68,
     },
     {
         "slug": "glasses-forest",
-        "prompt": "vintage anaglyphic 3D glasses perched on a mossy ancient tree root, "
-                  "bioluminescent teal spores drifting through the lenses, emerald green "
-                  "undergrowth, golden morning light, macro nature photography",
+        "prompt": "closeup of retro anaglyphic 3D glasses as the hero subject, "
+                  "bioluminescent teal and green light reflected in both lenses, "
+                  "mossy forest floor in the background, golden morning light, "
+                  "macro nature photography, sharp glasses in focus",
         "seed": 333,
-        "alpha": 0.40,
+        "alpha": 0.65,
         "lightning": False,
-        "chain_alpha": 0.40,
+        "chain_alpha": 0.65,
     },
     {
         "slug": "glasses-circuit",
-        "prompt": "vintage anaglyphic 3D glasses resting on a glowing circuit board, "
-                  "violet and fuchsia data streams tracing the lens outlines, teal solder "
-                  "points, macro semiconductor photography, dark background",
+        "prompt": "closeup of retro anaglyphic 3D glasses as the hero subject, "
+                  "violet and fuchsia circuit traces glowing in the lenses, "
+                  "glowing circuit board background, macro semiconductor photography, "
+                  "sharp glasses in focus, dark studio background",
         "seed": 444,
-        "alpha": 0.45,
-        "lightning": True,
-        "chain_alpha": 0.40,
+        "alpha": 0.68,
+        "lightning": False,
+        "chain_alpha": 0.68,
     },
     {
         "slug": "glasses-watercolor",
-        "prompt": "vintage anaglyphic 3D glasses rendered as a loose watercolor illustration, "
-                  "cerulean and gold wet-on-wet washes, white paper texture showing through, "
-                  "ink outlines, studio art, ultra-detailed",
+        "prompt": "closeup of retro anaglyphic 3D glasses as the hero subject rendered as "
+                  "a loose watercolor illustration, cerulean and gold wet-on-wet washes "
+                  "visible through the lenses, white paper texture background, "
+                  "ink outlines, ultra-detailed studio art",
         "seed": 555,
-        "alpha": 0.35,
+        "alpha": 0.65,
         "lightning": False,
-        "chain_alpha": 0.38,
+        "chain_alpha": 0.65,
     },
     {
         "slug": "glasses-ocean",
-        "prompt": "vintage anaglyphic 3D glasses resting on a shallow coral reef, "
-                  "turquoise water caustics through the lenses, orange clownfish, "
-                  "underwater macro photography, vivid tropical colors",
+        "prompt": "closeup of retro anaglyphic 3D glasses as the hero subject, "
+                  "turquoise water caustics and coral reef light reflected in the lenses, "
+                  "shallow tropical reef in the background, orange clownfish, "
+                  "underwater macro photography, sharp glasses in focus, vivid tropical colors",
         "seed": 666,
-        "alpha": 0.40,
-        "lightning": True,
-        "chain_alpha": 0.38,
+        "alpha": 0.65,
+        "lightning": False,
+        "chain_alpha": 0.65,
     },
 ]
 
