@@ -7,13 +7,13 @@
 from setuptools import setup, find_packages
 from pathlib import Path
 
-# Read README for long description
-readme_file = Path(__file__).parent / "README.md"
-long_description = readme_file.read_text() if readme_file.exists() else ""
+here = Path(__file__).parent
+long_description = (here / "README.md").read_text() if (here / "README.md").exists() else ""
+version = (here / "VERSION").read_text().strip()
 
 setup(
     name="animatediff-ttnn",
-    version="0.2.0",
+    version=version,
     author="Tenstorrent Community",
     author_email="",
     description="AnimateDiff video generation on Tenstorrent Blackhole via TTNN UNet (SD 1.4)",
