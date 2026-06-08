@@ -168,11 +168,11 @@ if args.output is None:
 if not 0.0 <= args.temporal_alpha <= 1.0:
     _build_parser().error(f"--temporal-alpha must be in [0, 1], got {args.temporal_alpha}")
 if args.lightning and args.mode != "cpu":
-    _build_parser().error(
-        f"--lightning uses the ByteDance distilled CPU adapter and is only valid with "
-        f"--mode cpu (got --mode {args.mode}). "
-        f"Blackhole/sim modes use the base TTNN UNet with any step count."
-    )
+    # On Blackhole/sim, --lightning switches to TtEulerScheduler (trailing,
+    # linear) and runs the base TTNN UNet — no distilled adapter is loaded.
+    # CFG stays at 7.5 (distilled CFG=1.0 constraint doesn't apply here).
+    # This is intentional and supported; no error.
+    pass
 
 # ── sim: resolve ttsim path and configure env before tt-metal loads ────────
 if args.mode == "sim":

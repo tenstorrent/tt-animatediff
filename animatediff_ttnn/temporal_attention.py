@@ -306,14 +306,6 @@ def generate_frames_temporal(
     # single batched call. For now, use a single-chip MeshDevice (1×1) on QB2.
     num_steps_actual = len(timesteps)
 
-    # last_lat_input / last_ttnn_out / last_guided: track the most-recent device
-    # tensors from the UNet call so we can deallocate them before VAE decode.
-    # The UNet internally may reuse L1 across calls, but the output tensors from
-    # tt_guide and lat_input linger until explicitly freed.
-    last_lat_input = None
-    last_ttnn_out = None
-    last_guided = None
-
     for step_idx, t in enumerate(timesteps):
         # Collect TTNN noise predictions for all frames at timestep t
         noise_preds = []
@@ -342,12 +334,13 @@ def generate_frames_temporal(
             )
             guided = tt_guide(ttnn_out, guidance_scale)
             noise_preds.append(from_device(guided, device).to(torch.float32))
-            # Keep references to the last set of live device tensors for cleanup
-            # before VAE. Earlier iterations' tensors were already pulled to CPU
-            # by from_device, but the device buffers may not be freed until GC.
-            last_lat_input = lat_input
-            last_ttnn_out = ttnn_out
-            last_guided = guided
+            # Deallocate immediately — from_device() pulls data to CPU but does
+            # not free the underlying L1 buffers. Freeing here keeps L1 usage
+            # bounded to one frame's worth of tensors rather than accumulating
+            # across all frames × steps before GC runs.
+            lat_input.deallocate(True)
+            ttnn_out.deallocate(True)
+            guided.deallocate(True)
 
         if use_lightning:
             # Lightning two-point blend with cosine-decay alpha:
@@ -399,13 +392,7 @@ def generate_frames_temporal(
     # Deallocate all live UNet device tensors before VAE decode.
     # The TTNN VAE needs substantial L1 for its conv layers; if the UNet's
     # output tensors are still occupying L1 the VAE conv_out will OOM.
-    # Pattern matches sd_helper_funcs.py::run() from tt-metal SD demo.
-    if last_lat_input is not None:
-        last_lat_input.deallocate(True)
-    if last_ttnn_out is not None:
-        last_ttnn_out.deallocate(True)
-    if last_guided is not None:
-        last_guided.deallocate(True)
+    # Free shared tensors that outlive the loop before VAE decode needs L1.
     ttnn_text_emb.deallocate(True)
     for t_tensor in _tlist:
         t_tensor.deallocate(True)

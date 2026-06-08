@@ -258,26 +258,28 @@
     <div id="diag-flow" class="arch-diagram active">
       <div class="mermaid">
 flowchart TD
-    P([Prompt + seed]) --> ENC["CLIP encode\n(CPU — always)"]
+    P([Prompt + seed]) --> CHAIN{"--chain-from?"}
+    CHAIN -->|yes| BLEND["low-pass blend prev latents\ninto seed noise — CPU"]
+    CHAIN -->|no| ENC
+    BLEND --> ENC["CLIP encode — CPU"]
     ENC --> MODE{Mode?}
 
-    MODE -->|cpu| CPU_SCHED["PNDM or Euler scheduler\n+ MotionAdapter weights"]
+    MODE -->|cpu| CPU_SCHED["PNDM scheduler + MotionAdapter\nor Euler + distilled Lightning weights"]
     CPU_SCHED --> CPU_UNET["diffusers UNet2DConditionModel\n+ MotionAdapter TemporalTransformer\nFull AnimateDiff — CPU only"]
     CPU_UNET --> CPU_VAE["VAE decode — CPU"]
     CPU_VAE --> GIF([Output GIF])
 
-    MODE -->|blackhole / sim| LOOP["Denoising loop\none scheduler per frame"]
-    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C silicon\n~15 s / frame"]
-    BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all frames — CPU"]
+    MODE -->|blackhole / sim| LOOP["Denoising loop — one scheduler per frame\nPNDM standard · Euler for Lightning"]
+    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~4–15 s / frame"]
+    BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all N frames — CPU"]
     CFA --> STEP["scheduler.step — one per frame"]
-    STEP -->|Lightning mode| LAT["cross_frame_attention\nprev_sample blended\n0.4× alpha — cosine decay"]
-    LAT --> NEXT{more steps?}
-    STEP -->|Standard PNDM| NEXT
+    STEP --> NEXT{more steps?}
     NEXT -->|yes| LOOP
-    NEXT -->|no| BH_VAE["TTNN VAE decode on Blackhole\nUNet L1 freed before decode"]
+    NEXT -->|no| SAVE["--chain-save: write\ndenoised latents to .pt — CPU"]
+    SAVE --> BH_VAE["TTNN VAE decode on Blackhole\nUNet L1 freed before decode"]
     BH_VAE --> GIF
       </div>
-      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode adds a second blend pass on the latents after <code>scheduler.step()</code>.</p>
+      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) — no distilled adapter; same TTNN UNet, fewer steps. <code>--chain</code> blends a low-pass version of the previous run's latents into seed noise before the loop begins.</p>
     </div>
 
     <div id="diag-arch" class="arch-diagram">
