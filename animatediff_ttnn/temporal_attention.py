@@ -247,18 +247,23 @@ def generate_frames_temporal(
     noise_perturb = 0.02 if use_lightning else 0.05
 
     # Chain continuity: blend previous run's final latents into this run's seed noise.
-    # The saved latents are at the denoised scale (~0 mean, ~1 std after scheduler),
-    # so we normalise them back to unit Gaussian before blending — same space as base_noise.
+    # Per-channel zero-mean + unit-std normalization is critical: denoised latents
+    # carry strong per-channel DC bias (e.g. a red subject leaves a red mean in
+    # channel 0). A global std normalisation preserves that bias and it accumulates
+    # each hop until the image is saturated in one channel. Subtracting the per-channel
+    # spatial mean strips colour direction while keeping spatial structure (edges,
+    # shapes, composition) — which is what we actually want to chain forward.
     if chain_from is not None:
         from pathlib import Path as _Path
         chain_path = _Path(chain_from)
         if chain_path.exists():
             prev = torch.load(chain_path, weights_only=True)  # (num_frames_prev, 4, lh, lw)
-            # Use mean of previous frames as a single seed direction
-            prev_mean = prev.mean(dim=0, keepdim=True).float()
-            # Normalise to unit std so it's in the same space as base_noise
-            std = prev_mean.std().clamp(min=1e-6)
-            prev_norm = prev_mean / std
+            prev_mean = prev.mean(dim=0, keepdim=True).float()  # (1, 4, lh, lw)
+            # Per-channel (dim=1) zero-mean: remove colour DC bias so it doesn't
+            # accumulate across chain hops.
+            ch_mean = prev_mean.mean(dim=(2, 3), keepdim=True)   # (1, 4, 1, 1)
+            ch_std  = prev_mean.std(dim=(2, 3), keepdim=True).clamp(min=1e-6)
+            prev_norm = (prev_mean - ch_mean) / ch_std
             base_noise = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_norm
             print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha}")
         else:

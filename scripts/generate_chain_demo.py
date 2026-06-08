@@ -38,9 +38,9 @@ NEG = "blurry, low quality, distorted, text, people, faces, modern buildings"
 SCENES = [
     {
         "slug": "glasses-neon",
-        "prompt": "retro red-and-cyan 3D glasses resting on a neon-lit diner counter at night, "
-                  "reflections in the lenses showing a glowing jukebox, chromatic aberration, "
-                  "cinematic 35mm film photography",
+        "prompt": "vintage anaglyphic 3D glasses resting on a wet neon-lit diner counter at night, "
+                  "pink and teal neon tube reflections in the lenses, rain-slicked formica, "
+                  "chromatic aberration, cinematic 35mm film photography",
         "seed": 111,
         "alpha": 0.35,
         "lightning": False,
@@ -48,53 +48,53 @@ SCENES = [
     },
     {
         "slug": "glasses-cosmic",
-        "prompt": "retro red-and-cyan 3D glasses floating in deep space, lenses filled with "
-                  "swirling violet and magenta nebulae, starfield reflection, macro photography, "
-                  "cinematic 4K",
+        "prompt": "vintage anaglyphic 3D glasses floating weightless in deep space, "
+                  "swirling violet and indigo nebula filling the lenses, cold starfield, "
+                  "macro studio photography, cinematic 4K",
         "seed": 222,
         "alpha": 0.40,
         "lightning": True,
-        "chain_alpha": 0.55,
-    },
-    {
-        "slug": "glasses-forest",
-        "prompt": "retro red-and-cyan 3D glasses perched on a mossy ancient tree root in a "
-                  "bioluminescent forest, teal spores drifting, pink fungi glowing, macro, "
-                  "nature photography",
-        "seed": 333,
-        "alpha": 0.40,
-        "lightning": False,
-        "chain_alpha": 0.50,
-    },
-    {
-        "slug": "glasses-circuit",
-        "prompt": "retro red-and-cyan 3D glasses dissolving into a glowing circuit board, "
-                  "lens outlines traced in violet and pink data streams, macro semiconductor "
-                  "photography, Tenstorrent aesthetic",
-        "seed": 444,
-        "alpha": 0.45,
-        "lightning": True,
-        "chain_alpha": 0.55,
-    },
-    {
-        "slug": "glasses-watercolor",
-        "prompt": "retro red-and-cyan 3D glasses rendered in flowing watercolor washes, "
-                  "wet-on-wet blooms of crimson and cerulean, white paper texture, "
-                  "studio art, ultra-detailed",
-        "seed": 555,
-        "alpha": 0.35,
-        "lightning": False,
         "chain_alpha": 0.45,
     },
     {
+        "slug": "glasses-forest",
+        "prompt": "vintage anaglyphic 3D glasses perched on a mossy ancient tree root, "
+                  "bioluminescent teal spores drifting through the lenses, emerald green "
+                  "undergrowth, golden morning light, macro nature photography",
+        "seed": 333,
+        "alpha": 0.40,
+        "lightning": False,
+        "chain_alpha": 0.40,
+    },
+    {
+        "slug": "glasses-circuit",
+        "prompt": "vintage anaglyphic 3D glasses resting on a glowing circuit board, "
+                  "violet and fuchsia data streams tracing the lens outlines, teal solder "
+                  "points, macro semiconductor photography, dark background",
+        "seed": 444,
+        "alpha": 0.45,
+        "lightning": True,
+        "chain_alpha": 0.40,
+    },
+    {
+        "slug": "glasses-watercolor",
+        "prompt": "vintage anaglyphic 3D glasses rendered as a loose watercolor illustration, "
+                  "cerulean and gold wet-on-wet washes, white paper texture showing through, "
+                  "ink outlines, studio art, ultra-detailed",
+        "seed": 555,
+        "alpha": 0.35,
+        "lightning": False,
+        "chain_alpha": 0.38,
+    },
+    {
         "slug": "glasses-ocean",
-        "prompt": "retro red-and-cyan 3D glasses resting on coral in a shallow tropical reef, "
-                  "fish passing through lenses, caustic light patterns, underwater macro "
-                  "photography, vivid saturated colors",
+        "prompt": "vintage anaglyphic 3D glasses resting on a shallow coral reef, "
+                  "turquoise water caustics through the lenses, orange clownfish, "
+                  "underwater macro photography, vivid tropical colors",
         "seed": 666,
         "alpha": 0.40,
         "lightning": True,
-        "chain_alpha": 0.50,
+        "chain_alpha": 0.38,
     },
 ]
 
