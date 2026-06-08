@@ -247,25 +247,45 @@ def generate_frames_temporal(
     noise_perturb = 0.02 if use_lightning else 0.05
 
     # Chain continuity: blend previous run's final latents into this run's seed noise.
-    # Per-channel zero-mean + unit-std normalization is critical: denoised latents
-    # carry strong per-channel DC bias (e.g. a red subject leaves a red mean in
-    # channel 0). A global std normalisation preserves that bias and it accumulates
-    # each hop until the image is saturated in one channel. Subtracting the per-channel
-    # spatial mean strips colour direction while keeping spatial structure (edges,
-    # shapes, composition) — which is what we actually want to chain forward.
+    # We want coarse composition (glasses position, shape) to persist across scenes
+    # while fine detail and colour come entirely from the new prompt.  Two mechanisms:
+    #
+    # 1. Per-channel zero-mean normalisation: denoised latents carry per-channel DC
+    #    bias (e.g. a red scene leaves a red mean in ch0).  Subtracting the spatial
+    #    mean per channel strips colour direction so it can't accumulate each hop.
+    #
+    # 2. Gaussian low-pass before blending: at 64×64 latent resolution a ~9px kernel
+    #    (sigma≈3) retains only coarse layout (where the glasses are, rough silhouette)
+    #    and discards texture / fine detail.  This lets the denoiser honour the new
+    #    prompt for everything except the gross composition, so the sequence reads as
+    #    "same subject, different world" rather than "previous image slightly shifted".
     if chain_from is not None:
         from pathlib import Path as _Path
+        import torch.nn.functional as _F
         chain_path = _Path(chain_from)
         if chain_path.exists():
             prev = torch.load(chain_path, weights_only=True)  # (num_frames_prev, 4, lh, lw)
             prev_mean = prev.mean(dim=0, keepdim=True).float()  # (1, 4, lh, lw)
-            # Per-channel (dim=1) zero-mean: remove colour DC bias so it doesn't
-            # accumulate across chain hops.
+            # Per-channel zero-mean: remove colour DC bias.
             ch_mean = prev_mean.mean(dim=(2, 3), keepdim=True)   # (1, 4, 1, 1)
             ch_std  = prev_mean.std(dim=(2, 3), keepdim=True).clamp(min=1e-6)
-            prev_norm = (prev_mean - ch_mean) / ch_std
-            base_noise = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_norm
-            print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha}")
+            prev_norm = (prev_mean - ch_mean) / ch_std            # (1, 4, lh, lw)
+            # Low-pass: keep coarse layout only (kernel ~9px at 64×64, sigma=3.0).
+            # Processed channel-by-channel because avg_pool / conv expect 4-D input.
+            ksize = max(3, 2 * round(3.0 * 3.0) + 1)  # 19px; ensures coarse-only signal
+            ksize = ksize if ksize % 2 == 1 else ksize + 1
+            prev_blurred = _F.avg_pool2d(
+                prev_norm,
+                kernel_size=ksize,
+                stride=1,
+                padding=ksize // 2,
+                count_include_pad=False,
+            )
+            # Re-normalise after pooling (pooling compresses std).
+            bl_std = prev_blurred.std(dim=(2, 3), keepdim=True).clamp(min=1e-6)
+            prev_blurred = prev_blurred / bl_std
+            base_noise = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_blurred
+            print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha} (low-pass kernel={ksize})")
         else:
             print(f"  Chain: warning — {chain_from} not found, ignoring")
 

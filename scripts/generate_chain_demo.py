@@ -60,7 +60,7 @@ SCENES = [
         "seed": 222,
         "alpha": 0.68,
         "lightning": False,
-        "chain_alpha": 0.68,
+        "chain_alpha": 0.55,
     },
     {
         "slug": "glasses-forest",
@@ -71,7 +71,7 @@ SCENES = [
         "seed": 333,
         "alpha": 0.65,
         "lightning": False,
-        "chain_alpha": 0.65,
+        "chain_alpha": 0.55,
     },
     {
         "slug": "glasses-circuit",
@@ -82,7 +82,7 @@ SCENES = [
         "seed": 444,
         "alpha": 0.68,
         "lightning": False,
-        "chain_alpha": 0.68,
+        "chain_alpha": 0.55,
     },
     {
         "slug": "glasses-watercolor",
@@ -93,7 +93,7 @@ SCENES = [
         "seed": 555,
         "alpha": 0.65,
         "lightning": False,
-        "chain_alpha": 0.65,
+        "chain_alpha": 0.55,
     },
     {
         "slug": "glasses-ocean",
@@ -104,7 +104,7 @@ SCENES = [
         "seed": 666,
         "alpha": 0.65,
         "lightning": False,
-        "chain_alpha": 0.65,
+        "chain_alpha": 0.55,
     },
 ]
 
