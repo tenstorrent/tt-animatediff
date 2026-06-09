@@ -279,7 +279,7 @@ flowchart TD
     SAVE --> BH_VAE["TTNN VAE decode on Blackhole\nUNet L1 freed before decode"]
     BH_VAE --> GIF
       </div>
-      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) — no distilled adapter; same TTNN UNet, fewer steps. <code>--chain</code> blends a low-pass version of the previous run's latents into seed noise before the loop begins.</p>
+      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) with the same TTNN UNet — no distilled adapter loaded on Blackhole/sim; step count is still controlled by <code>--steps</code>. CPU Lightning loads ByteDance's distilled adapter (CFG=1.0) and requires 2/4/8 steps. <code>--chain</code> blends a low-pass version of the previous run's latents into seed noise before the loop begins.</p>
     </div>
 
     <div id="diag-arch" class="arch-diagram">
@@ -321,13 +321,13 @@ function showDiagram(name, btn) {
     <div class="lightning-cols">
       <div class="lightning-col">
         <h4>AnimateDiff-Lightning on Blackhole</h4>
-        <p>We integrated <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) into <em>all three modes</em> — including Blackhole hardware. On P300C: <strong>~4.3 s/frame</strong> (4 steps) vs ~15 s/frame standard. The key was implementing <code>TtEulerScheduler</code> — a thin wrapper around <code>EulerDiscreteScheduler</code> (trailing, linear) that feeds the correct timestep tensors into <code>build_tlist()</code>. Enable with:</p>
+        <p>Lightning mode is available across all three backends, but works differently per mode. On <strong>CPU</strong>: loads <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) — genuine 4-step distillation, CFG=1.0 baked in. On <strong>Blackhole/sim</strong>: switches to <code>TtEulerScheduler</code> (Euler, trailing, linear) with the base SD 1.4 TTNN UNet — no distilled adapter, CFG=7.5 retained, any step count. Enable with:</p>
         <pre class="lightning-code"># Blackhole hardware — ~4.3 s/frame
 python examples/generate.py --lightning
 
 # CPU — ~20 s/frame, no hardware required
 python examples/generate.py --mode cpu --lightning</pre>
-        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">On Blackhole/sim the base SD 1.4 TTNN UNet is used — CFG=7.5 retained for full guidance. CPU Lightning uses the real distilled adapter (CFG=1.0 baked in). Blackhole samples run 25 steps · Euler · ~15 s/frame; full 10-prompt comparison in the <a href="gallery.html">gallery</a>.</p>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Full 10-prompt comparison in the <a href="gallery.html">gallery</a>.</p>
       </div>
       <div class="lightning-col">
         <h4>Gradio UI</h4>

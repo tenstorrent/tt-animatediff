@@ -263,7 +263,7 @@ def generate_frames_temporal(
         import torch.nn.functional as _F
         chain_path = _Path(chain_from)
         if chain_path.exists():
-            prev = torch.load(chain_path, weights_only=True)  # (F, 4, lh, lw)
+            prev = torch.load(chain_path, map_location="cpu", weights_only=True)  # (F, 4, lh, lw)
             prev_mean = prev.mean(dim=0, keepdim=True).float()  # (1, 4, lh, lw)
             # Per-channel zero-mean: remove colour DC so it can't accumulate.
             ch_mean = prev_mean.mean(dim=(2, 3), keepdim=True)
