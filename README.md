@@ -49,6 +49,20 @@ Expected output: `output/baseline.gif` — 16 frames of temporally coherent anim
 
 ---
 
+## Lightning Mode (4-step / 8-step)
+
+Distill your own lightning weights on Tenstorrent Blackhole hardware:
+
+```bash
+python scripts/distill_lcm.py --steps 8 --num_train_steps 5000
+python scripts/distill_motion_adapter.py --steps 8 --unet weights/unet_lcm_8step.pt
+python scripts/validate_parallel.py
+```
+
+Full guide: [docs/DISTILLATION_GUIDE.md](docs/DISTILLATION_GUIDE.md)
+
+---
+
 ## Phase 2 — Blackhole-Accelerated Frame Generation
 
 Uses the SD 1.4 TTNN UNet from `~/tt-metal/models/demos/vision/generative/stable_diffusion/wormhole/` —
