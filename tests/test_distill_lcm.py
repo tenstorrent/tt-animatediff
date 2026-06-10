@@ -107,13 +107,21 @@ def test_run_distillation_saves_checkpoint(tmp_path):
     class TinyUNet(torch.nn.Module):
         def __init__(self):
             super().__init__()
+            # A single linear layer used to produce a grad-connected output so
+            # that loss.backward() succeeds without a param_anchor crutch.
             self.linear = torch.nn.Linear(1, 1)
             self.config = type("C", (), {"in_channels": 4})()
         def forward(self, sample, timestep, encoder_hidden_states, return_dict=False):
             class R:
                 pass
             r = R()
-            r.sample = torch.zeros_like(sample)
+            # Route through self.linear so the output is in the autograd graph.
+            # We collapse sample to a scalar, pass through the layer, then
+            # broadcast back — this keeps the output shape correct while
+            # ensuring gradients can flow to self.linear.weight/bias.
+            scalar = sample.mean().unsqueeze(0)  # (1,)
+            offset = self.linear(scalar)         # (1,) — connected to params
+            r.sample = torch.zeros_like(sample) + offset * 0.0
             return r
 
     unet = TinyUNet()

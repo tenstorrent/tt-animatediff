@@ -280,7 +280,9 @@ def run_distillation(
             sqrt_alpha_s = alphas_cumprod[t_student].sqrt().view(-1, 1, 1, 1)
             sqrt_one_minus_s = (1 - alphas_cumprod[t_student]).sqrt().view(-1, 1, 1, 1)
             x0_from_teacher_t = (z_teacher - sqrt_one_minus_t * eps_teacher) / sqrt_alpha_t.clamp(min=1e-8)
-            z_student_level = sqrt_alpha_s * x0_from_teacher_t + sqrt_one_minus_s * noise
+            # Fresh noise required — reusing the eps that built z_teacher would bias teacher_x0.
+            eps_renoise = torch.randn_like(z0)
+            z_student_level = sqrt_alpha_s * x0_from_teacher_t + sqrt_one_minus_s * eps_renoise
             teacher_x0 = predict_x0(teacher_unet, z_student_level, t_student,
                                      encoder_hidden_states, alphas_cumprod)
 
@@ -289,13 +291,6 @@ def run_distillation(
 
         weight = compute_loss_weight(t_teacher, alphas_cumprod)
         loss = consistency_loss(student_x0, teacher_x0, weight)
-
-        # Anchor the loss to the student's parameters so that .backward() works
-        # even when the model's forward pass returns a constant tensor (e.g. in
-        # test stubs where the output doesn't depend on weights). The anchor
-        # contributes zero gradient magnitude, so it has no effect on training.
-        param_anchor = sum(p.sum() * 0.0 for p in student_unet.parameters())
-        loss = loss + param_anchor
 
         optimizer.zero_grad()
         loss.backward()
@@ -329,6 +324,10 @@ def main():
     scheduler = DDPMScheduler.from_pretrained(args.model_id, subfolder="scheduler")
     alphas_cumprod = scheduler.alphas_cumprod
 
+    # Fixed random text embedding for distillation. LCM consistency distillation does
+    # not require real prompts — the self-consistency constraint holds regardless of
+    # the conditioning signal. A real deployment would use a CLIPTextModel here for
+    # prompt-conditional generation quality.
     encoder_hs = torch.randn(1, 77, 768)
     latent_shape = (1, 4, 64, 64)
     num_timesteps = len(alphas_cumprod)
