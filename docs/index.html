@@ -61,6 +61,8 @@
     .node.phase-3 { border-color: rgba(244,196,113,.4); }
     .node.phase-4 { border-color: rgba(39,174,96,.4); }
     .node.phase-5 { border-color: rgba(129,230,217,.6); }
+    .node.lightning { border-color: rgba(236,150,184,.75); box-shadow: 0 0 6px rgba(236,150,184,.35); }
+    .node.lightning::after { content: "⚡"; position: absolute; top: 2px; right: 3px; font-size: 8px; line-height: 1; pointer-events: none; }
     .node-tip { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(8,15,20,.92); color: var(--text2); font-size: .38rem; padding: 2px 3px; line-height: 1.3; opacity: 0; transition: opacity .2s; pointer-events: none; text-align: center; }
     .node:hover .node-tip { opacity: 1; }
 
@@ -87,6 +89,71 @@
     .what-col { flex: 1 1 220px; }
     .what-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .07em; }
     .what-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+
+    /* ── architecture / mermaid section ── */
+    .arch-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    .arch-inner { max-width: 980px; margin: 0 auto; }
+    .arch-section h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: .35rem; font-weight: 700; }
+    .arch-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .arch-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+    .arch-tab { font-size: .72rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: .25rem .65rem; cursor: pointer; background: transparent; transition: color .15s, border-color .15s; }
+    .arch-tab.active, .arch-tab:hover { color: var(--teal); border-color: var(--teal-border); }
+    .arch-diagram { display: none; background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; overflow-x: auto; }
+    .arch-diagram.active { display: block; }
+    .arch-diagram .mermaid { max-width: 100%; }
+    .arch-caption { margin-top: .75rem; font-size: .75rem; color: var(--muted); line-height: 1.6; }
+
+    /* ── lightning section ── */
+    .lightning-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    .lightning-inner { max-width: 980px; margin: 0 auto; }
+    .lightning-section h3 { font-size: 1.1rem; color: var(--teal); margin-bottom: .35rem; font-weight: 700; }
+    .lightning-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .lightning-cols { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .lightning-col { flex: 1 1 280px; }
+    .lightning-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .07em; }
+    .lightning-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+    .lightning-code { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: .5rem .75rem; font-size: .75rem; color: var(--teal); font-family: monospace; white-space: pre-wrap; margin: .5rem 0; }
+    .lightning-gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; max-width: 600px; }
+    .lgif { margin: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid rgba(79,209,197,.3); }
+    .lgif img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .lgif figcaption { padding: .4rem .6rem; font-size: .7rem; color: var(--muted); background: var(--card); }
+    @media (max-width: 600px) {
+      .lightning-cols { gap: 1.25rem; }
+      .lightning-gallery { grid-template-columns: repeat(2, 1fr); max-width: 100%; }
+    }
+
+    /* ── chain section ── */
+    .chain-section { padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    .chain-inner { max-width: 980px; margin: 0 auto; }
+    .chain-section h3 { font-size: 1.1rem; color: var(--pink, #ec96b8); margin-bottom: .35rem; font-weight: 700; }
+    .chain-sub { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .chain-strip { display: flex; align-items: flex-end; gap: 0; overflow-x: auto; padding-bottom: .5rem; }
+    .chain-item { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; }
+    .chain-item figure { margin: 0; border-radius: var(--radius); overflow: hidden;
+      border: 1px solid rgba(236,150,184,.45); width: 140px; }
+    .chain-item img { width: 140px; height: 140px; object-fit: cover; display: block; }
+    .chain-item figcaption { padding: .35rem .5rem; font-size: .62rem; color: var(--muted);
+      background: var(--card); line-height: 1.35; text-align: center; }
+    .chain-arrow { flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+      padding: 0 .35rem; padding-bottom: 2rem; }
+    .chain-arrow-line { width: 28px; height: 1px; background: rgba(236,150,184,.4); margin-top: 69px; }
+    .chain-arrow-tip { width: 0; height: 0;
+      border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+      border-left: 6px solid rgba(236,150,184,.55); margin-top: -4px; margin-left: 22px; }
+    .chain-arrow-label { font-size: .55rem; color: rgba(236,150,184,.6);
+      letter-spacing: .06em; text-transform: uppercase; margin-top: .4rem; white-space: nowrap; }
+    .chain-cols { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 2rem; }
+    .chain-col { flex: 1 1 280px; }
+    .chain-col h4 { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .5rem;
+      text-transform: uppercase; letter-spacing: .07em; }
+    .chain-col p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+    .chain-code { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: .5rem .75rem; font-size: .75rem; color: rgba(236,150,184,.9);
+      font-family: monospace; white-space: pre-wrap; margin: .5rem 0; }
+    @media (max-width: 700px) {
+      .chain-item figure { width: 110px; }
+      .chain-item img { width: 110px; height: 110px; }
+    }
 
     /* ── prompt guide ── */
     .prompt-guide { background: var(--bg1); border-top: 1px solid var(--border); padding: 3rem 2rem; }
@@ -138,6 +205,7 @@
   <p>35 animated GIFs generated on a single Blackhole chip. Each cell in this grid is a Tensix compute node. The ones that glow ran the model.</p>
   <div class="hero-links">
     <a class="btn btn-primary" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
+    <a class="btn btn-ghost" href="gallery.html">Gallery →</a>
     <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff#prompt-guide">Prompt Guide</a>
   </div>
   <div class="hero-related">
@@ -206,6 +274,169 @@
   </div>
 </section>
 
+<section class="arch-section">
+  <div class="arch-inner">
+    <span class="section-label">How it works</span>
+    <h3>Architecture &amp; Execution Flow</h3>
+    <p class="arch-sub">What runs on Blackhole silicon, what runs on CPU, and where this differs from standard AnimateDiff.</p>
+
+    <div class="arch-tabs">
+      <button class="arch-tab active" onclick="showDiagram('flow', this)">Execution flow</button>
+      <button class="arch-tab" onclick="showDiagram('arch', this)">Original vs current</button>
+    </div>
+
+    <div id="diag-flow" class="arch-diagram active">
+      <div class="mermaid">
+flowchart TD
+    P([Prompt + seed]) --> CHAIN{"--chain-from?"}
+    CHAIN -->|yes| BLEND["low-pass blend prev latents\ninto seed noise — CPU"]
+    CHAIN -->|no| ENC
+    BLEND --> ENC["CLIP encode — CPU"]
+    ENC --> MODE{Mode?}
+
+    MODE -->|cpu| CPU_SCHED["PNDM scheduler + MotionAdapter\nor Euler + distilled Lightning weights"]
+    CPU_SCHED --> CPU_UNET["diffusers UNet2DConditionModel\n+ MotionAdapter TemporalTransformer\nFull AnimateDiff — CPU only"]
+    CPU_UNET --> CPU_VAE["VAE decode — CPU"]
+    CPU_VAE --> GIF([Output GIF])
+
+    MODE -->|blackhole / sim| LOOP["Denoising loop — one scheduler per frame\nPNDM standard · Euler for Lightning"]
+    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~4–15 s / frame"]
+    BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all N frames — CPU"]
+    CFA --> STEP["scheduler.step — one per frame"]
+    STEP --> NEXT{more steps?}
+    NEXT -->|yes| LOOP
+    NEXT -->|no| SAVE["--chain-save: write\ndenoised latents to .pt — CPU"]
+    SAVE --> BH_VAE["TTNN VAE decode on Blackhole\nUNet L1 freed before decode"]
+    BH_VAE --> GIF
+      </div>
+      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) with the same TTNN UNet — no distilled adapter loaded on Blackhole/sim; step count is still controlled by <code>--steps</code>. CPU Lightning loads ByteDance's distilled adapter (CFG=1.0) and requires 2/4/8 steps. <code>--chain</code> blends a low-pass version of the previous run's latents into seed noise before the loop begins.</p>
+    </div>
+
+    <div id="diag-arch" class="arch-diagram">
+      <div class="mermaid">
+flowchart TB
+    subgraph WRONG["❌ Original — silent failure"]
+        W1["SD 3.5 DiT · 2432-dim features"] -->|motion weights injected| W2["mm_sd_v15_v2.ckpt trained for SD 1.5 UNet · 320-dim"]
+        W2 --> W3["Dimension mismatch — no temporal attention actually applied"]
+    end
+
+    subgraph RIGHT["✅ Current"]
+        R1["SD 1.4 UNet · 320-dim — matching architecture"]
+        R1 -->|CPU| R2["MotionAdapter TemporalTransformer · full AnimateDiff ✓"]
+        R1 -->|Blackhole| R3["TTNN UNet2D · cross-frame attention blend · Phase 2.5"]
+    end
+
+    WRONG -.->|fix: use matching architecture| RIGHT
+      </div>
+      <p class="arch-caption">The original code applied <code>mm_sd_v15_v2.ckpt</code> motion weights (trained for SD 1.5 UNet, 320-dim features) to the SD 3.5 DiT (a Diffusion Transformer, 2432-dim). The shapes are incompatible — no temporal attention was actually running. The fix was switching to SD 1.4 whose UNet matches the motion weights exactly.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+function showDiagram(name, btn) {
+  document.querySelectorAll('.arch-diagram').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.arch-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('diag-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+</script>
+
+<section class="lightning-section">
+  <div class="lightning-inner">
+    <span class="section-label">Recent additions</span>
+    <h3>⚡ AnimateDiff-Lightning &amp; Gradio UI</h3>
+    <p class="lightning-sub">Two new additions since the initial release.</p>
+
+    <div class="lightning-cols">
+      <div class="lightning-col">
+        <h4>AnimateDiff-Lightning on Blackhole</h4>
+        <p>Lightning mode is available across all three backends, but works differently per mode. On <strong>CPU</strong>: loads <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) — genuine 4-step distillation, CFG=1.0 baked in. On <strong>Blackhole/sim</strong>: switches to <code>TtEulerScheduler</code> (Euler, trailing, linear) with the base SD 1.4 TTNN UNet — no distilled adapter, CFG=7.5 retained, any step count. Enable with:</p>
+        <pre class="lightning-code"># Blackhole hardware — ~4.3 s/frame
+python examples/generate.py --lightning
+
+# CPU — ~20 s/frame, no hardware required
+python examples/generate.py --mode cpu --lightning</pre>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Full 10-prompt comparison in the <a href="gallery.html">gallery</a>.</p>
+      </div>
+      <div class="lightning-col">
+        <h4>Gradio UI</h4>
+        <p>A browser-based interface for point-and-click generation — all three modes (Blackhole, ttsim, CPU) plus Lightning controls, live in the same window.</p>
+        <pre class="lightning-code">pip install -e ".[ui]"
+python app.py
+# → http://localhost:7860</pre>
+        <p style="margin-top:.75rem;font-size:.78rem;color:var(--muted)">Select mode → enter prompt → adjust frames/steps/seed → click Generate. Lightning checkbox is available in all modes. Output GIF displays inline.</p>
+      </div>
+    </div>
+
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~15 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
+    <div class="lightning-gallery">
+      <figure class="lgif">
+        <img src="assets/study/lightning-mandala.gif" alt="supernova explosion in deep space, purple and orange nebula" loading="lazy">
+        <figcaption>supernova · deep space nebula</figcaption>
+      </figure>
+      <figure class="lgif">
+        <img src="assets/study/lightning-aurora.gif" alt="crystal cave interior with amethyst formations and light refractions" loading="lazy">
+        <figcaption>crystal cave · amethyst formations</figcaption>
+      </figure>
+      <figure class="lgif">
+        <img src="assets/study/lightning-mycelium.gif" alt="deep sea hydrothermal vent with bioluminescent ecosystem" loading="lazy">
+        <figcaption>deep sea vent · bioluminescent</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="chain-section">
+  <div class="chain-inner">
+    <span class="section-label">Stateful latent threading</span>
+    <h3>🔗 Chain Continuity</h3>
+    <p class="chain-sub">Two independent prompts. One subject — retro 3D glasses — threaded between them by blending the first run's final denoised latents into the second run's seed noise. No explicit conditioning, no fine-tuning. Just hardware-resident state.</p>
+
+    <div class="chain-strip">
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-neon.gif" alt="retro 3D glasses on neon-lit diner counter" loading="lazy">
+          <figcaption>neon diner<br>35mm film</figcaption>
+        </figure>
+      </div>
+      <div class="chain-arrow">
+        <div class="chain-arrow-line"></div>
+        <div class="chain-arrow-tip"></div>
+        <div class="chain-arrow-label">α 0.20</div>
+      </div>
+      <div class="chain-item">
+        <figure>
+          <img src="assets/chain/glasses-cosmic.gif" alt="retro 3D glasses floating in deep space nebula" loading="lazy">
+          <figcaption>deep space<br>violet nebula</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <div class="chain-cols">
+      <div class="chain-col">
+        <h4>How it works</h4>
+        <p>After each generation, <code>--chain-save</code> persists the final denoised latent tensors to a <code>.pt</code> file. The next run loads them with <code>--chain-from</code> and blends the normalised mean into the seed noise before denoising begins. Each step's solver then steers away from shared noise toward the new prompt — so the subject's form lingers in the structure while the context changes completely.</p>
+        <pre class="chain-code"># Run 1 — save latents
+python examples/generate.py \
+  --prompt "retro 3D glasses, neon diner" \
+  --chain-save chain.pt
+
+# Run 2 — thread DNA from run 1
+python examples/generate.py \
+  --prompt "retro 3D glasses, deep space" \
+  --chain-from chain.pt --chain-alpha 0.20 \
+  --chain-save chain.pt</pre>
+      </div>
+      <div class="chain-col">
+        <h4>Why this is hardware-native</h4>
+        <p>Standard diffusion pipelines evict all intermediate tensors between calls. On Tenstorrent Blackhole, the denoised latent state lives in L1 between runs — the hardware makes persistent-state inference cheap. Chain threading is only practical at this cost because the latents never need to round-trip through host memory. It's a primitive that other architectures can't express efficiently without bespoke memory management. <code>--chain-alpha</code> (0–1) controls how strongly the previous run's identity bleeds through — lower values let the new prompt fully take over; higher values preserve more of the subject's structural fingerprint.</p>
+        <p style="margin-top:.75rem;font-size:.78rem;">The Gradio UI exposes chain controls under the <em>Chain continuity</em> accordion — load a <code>.pt</code> from disk and chain runs interactively.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="prompt-guide">
   <div class="prompt-inner">
     <h3>Prompt Guide</h3>
@@ -249,7 +480,7 @@
         <p style="margin-top:.75rem;font-size:.75rem;color:var(--muted)">Fast motion (fire, water): 0.2–0.35 · Slow drift (cosmos, aurora): 0.4–0.6</p>
 
         <h4 style="margin-top:1.25rem"><code>--steps</code></h4>
-        <p style="font-size:.8rem;color:var(--muted)">PNDM scheduler. Minimum ~4 (preview). 25 is the sweet spot on silicon. Beyond 30 gives diminishing returns.</p>
+        <p style="font-size:.8rem;color:var(--muted)">PNDM and Euler (Lightning): 25 is the sweet spot on silicon for both. Minimum ~4 for quick previews. CPU Lightning uses 4 steps (distilled adapter).</p>
       </div>
     </div>
   </div>
@@ -262,6 +493,31 @@
   Original work by <a href="https://arxiv.org/abs/2307.04725">Guo et al. 2023</a>
 </footer>
 
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      background: '#0d1b24',
+      primaryColor: '#0f2a35',
+      primaryBorderColor: '#4fd1c5',
+      primaryTextColor: '#e8f0f2',
+      secondaryColor: '#122130',
+      secondaryBorderColor: '#81e6d9',
+      tertiaryColor: '#1a3c47',
+      tertiaryBorderColor: '#607d8b',
+      lineColor: '#4fd1c5',
+      textColor: '#e8f0f2',
+      edgeLabelBackground: '#0d1b24',
+      clusterBkg: '#0f2a35',
+      clusterBorder: '#4fd1c5',
+      titleColor: '#4fd1c5',
+      fontFamily: "'Segoe UI', system-ui, sans-serif",
+      fontSize: '13px',
+    },
+  });
+</script>
 <script>
 const GIFS = [
   {name:"p1-nebula",        row:0, col:0,  phase:1, prompt:"swirling nebula in deep space"},
@@ -288,14 +544,14 @@ const GIFS = [
   {name:"p3-temple",        row:5, col:2,  phase:3, prompt:"Mayan temple under shifting cosmos"},
   {name:"p3-cave-circuit",  row:5, col:6,  phase:3, prompt:"cave paintings morphing to circuit traces"},
   {name:"p3-standing-stones",row:5,col:9,  phase:3, prompt:"stone circle with aurora"},
-  {name:"p3-crystal-data",  row:6, col:1,  phase:3, prompt:"crystal mountain with data streams"},
+  {name:"p3-crystal-data",  row:6, col:1,  phase:3, lightning:true, prompt:"amethyst crystal fused with circuit traces, violet data streams"},
   {name:"p3-ley-fiber",     row:6, col:5,  phase:3, prompt:"ley lines becoming fiber optic"},
   {name:"p3-mayan-grid",    row:6, col:10, phase:3, prompt:"Mayan calendar dissolving to grid"},
   {name:"p4-circuit-moss",  row:7, col:0,  phase:4, prompt:"circuit board growing like moss"},
-  {name:"p4-silicon",       row:7, col:4,  phase:4, prompt:"silicon crystal lattice, cosmic light"},
-  {name:"p4-neural-const",  row:7, col:8,  phase:4, prompt:"neural network as constellation"},
+  {name:"p4-silicon",       row:7, col:4,  phase:4, lightning:true, prompt:"Tensix core: pink waveforms cascading as matrix multiply completes"},
+  {name:"p4-neural-const",  row:7, col:8,  phase:4, lightning:true, prompt:"butterflies emerging from circuit board, wings printed with logic gates, fuchsia"},
   {name:"p4-server-aurora", row:8, col:2,  phase:4, prompt:"server room bathed in aurora"},
-  {name:"p4-chip-city",     row:8, col:7,  phase:4, prompt:"chip die as aerial city at night"},
+  {name:"p4-chip-city",     row:8, col:7,  phase:4, lightning:true, prompt:"aerial city at night where streets are data buses, hexagonal Tensix districts, purple neon"},
   {name:"p5-chip-cosmos",   row:9, col:0,  phase:5, prompt:"Blackhole chip glowing with cosmos"},
   {name:"p5-hand-galaxy",   row:9, col:5,  phase:5, prompt:"hand touching circuit blooms to galaxy"},
   {name:"p5-grid-is-all",   row:9, col:10, phase:5, prompt:"grid revealed as fabric of universe"},
@@ -311,6 +567,7 @@ for (let i = 0; i < 110; i++) {
   if (gifMap.has(i)) {
     const g = gifMap.get(i);
     div.classList.add(`phase-${g.phase}`);
+    if (g.lightning) div.classList.add('lightning');
     const img = document.createElement('img');
     img.src = `assets/study/${g.name}.gif`;
     img.alt = g.prompt;

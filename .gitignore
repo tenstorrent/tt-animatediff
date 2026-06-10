@@ -1,6 +1,8 @@
 output/*.gif
 output/*.mp4
 output/*.png
+generated/
+weights/
 *.egg-info/
 __pycache__/
 *.pyc

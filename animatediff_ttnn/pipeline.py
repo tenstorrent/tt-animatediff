@@ -7,6 +7,11 @@ Uses CompVis/stable-diffusion-v1-4 with guoyww/animatediff-motion-adapter-v1-5-2
 The MotionAdapter injects temporal attention inside each SD 1.4 UNet transformer
 block at 320-dim features — the correct location for mm_sd_v15_v2.ckpt weights.
 No TT hardware required.
+
+Lightning mode uses ByteDance/AnimateDiff-Lightning distilled checkpoints
+(arXiv:2403.12706). 4-step Lightning ≈ 25-step standard quality, ~6× faster.
+Requires EulerDiscreteScheduler with timestep_spacing="trailing" and CFG=1.0.
+Supported step counts: 2, 4, 8 (each has a distinct distilled checkpoint).
 """
 
 from pathlib import Path
@@ -14,7 +19,58 @@ from typing import List, Optional
 
 import torch
 from PIL import Image
-from diffusers import AnimateDiffPipeline, DDIMScheduler, MotionAdapter
+from diffusers import AnimateDiffPipeline, DDIMScheduler, EulerDiscreteScheduler, MotionAdapter
+
+
+LIGHTNING_REPO = "ByteDance/AnimateDiff-Lightning"
+LIGHTNING_STEPS = (2, 4, 8)  # 1-step is research-only
+
+
+def create_lightning_pipeline(
+    step: int = 4,
+    model_id: str = "CompVis/stable-diffusion-v1-4",
+    torch_dtype: torch.dtype = torch.float32,
+) -> AnimateDiffPipeline:
+    """Create an AnimateDiff-Lightning pipeline for fast CPU generation.
+
+    Uses ByteDance's distilled motion adapter weights (arXiv:2403.12706).
+    4-step Lightning ≈ 25-step standard AnimateDiff quality, ~6× faster.
+
+    Args:
+        step: Distillation step count — must be 2, 4, or 8 (distinct checkpoints).
+              Use 4 (default) for the best quality/speed tradeoff; 2 for fastest.
+        model_id: Base SD model. Lightning works best with stylised bases.
+        torch_dtype: torch.float32 (CPU) or torch.float16 (GPU).
+
+    Returns:
+        AnimateDiffPipeline configured with EulerDiscreteScheduler (required).
+    """
+    if step not in LIGHTNING_STEPS:
+        raise ValueError(f"step must be one of {LIGHTNING_STEPS}, got {step}")
+
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file
+
+    ckpt = f"animatediff_lightning_{step}step_diffusers.safetensors"
+    adapter = MotionAdapter()
+    adapter.load_state_dict(
+        load_file(hf_hub_download(LIGHTNING_REPO, ckpt)),
+        strict=True,
+    )
+    adapter = adapter.to(dtype=torch_dtype)
+
+    pipe = AnimateDiffPipeline.from_pretrained(
+        model_id,
+        motion_adapter=adapter,
+        torch_dtype=torch_dtype,
+    )
+    # Lightning requires EulerDiscreteScheduler with these exact settings
+    pipe.scheduler = EulerDiscreteScheduler.from_config(
+        pipe.scheduler.config,
+        timestep_spacing="trailing",
+        beta_schedule="linear",
+    )
+    return pipe
 
 
 def create_animatediff_pipeline(

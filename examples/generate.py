@@ -95,13 +95,56 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.35,
         dest="temporal_alpha",
-        help="Cross-frame attention blend 0–1 (blackhole/sim only; default 0.35)",
+        help=(
+            "Cross-frame attention blend 0–1 (blackhole/sim only; default 0.35). "
+            "In Lightning mode a cosine decay schedule is applied automatically: "
+            "alpha decays from this value to ~15%% of it across the denoising steps."
+        ),
     )
     parser.add_argument(
         "--sim",
         default=None,
         metavar="PATH",
         help="Path to libttsim_bh.so for sim mode (overrides TT_METAL_SIMULATOR)",
+    )
+    parser.add_argument(
+        "--lightning",
+        action="store_true",
+        help=(
+            "Use EulerDiscreteScheduler instead of PNDM — different solver, same CFG=7.5. "
+            "In cpu mode also loads AnimateDiff-Lightning distilled weights (requires CFG=1.0). "
+            "In blackhole/sim modes the base SD 1.4 TTNN UNet is used regardless."
+        ),
+    )
+    parser.add_argument(
+        "--lightning-steps",
+        type=int,
+        default=4,
+        choices=[2, 4, 8],
+        dest="lightning_steps",
+        help="Lightning distillation step count: 2, 4, or 8 (default 4)",
+    )
+    parser.add_argument(
+        "--chain-from",
+        default=None,
+        dest="chain_from",
+        metavar="PATH",
+        help="Load latents saved by a previous --chain-save run and blend into seed noise "
+             "for visual narrative continuity across prompts (blackhole/sim only).",
+    )
+    parser.add_argument(
+        "--chain-save",
+        default=None,
+        dest="chain_save",
+        metavar="PATH",
+        help="Save this run's final denoised latents to PATH (.pt) for use by --chain-from.",
+    )
+    parser.add_argument(
+        "--chain-alpha",
+        type=float,
+        default=0.6,
+        dest="chain_alpha",
+        help="Blend weight for --chain-from latents (0=ignore, 1=replace; default 0.6).",
     )
     return parser
 
@@ -111,11 +154,25 @@ args = _build_parser().parse_args()
 if args.frames is None:
     args.frames = 16 if args.mode == "cpu" else 8
 if args.steps is None:
-    args.steps = 4 if args.mode == "sim" else 25
+    if args.mode == "sim":
+        args.steps = 4
+    elif args.lightning and args.mode == "cpu":
+        # CPU Lightning uses real distilled adapter — step count must match the
+        # checkpoint (2, 4, or 8). Blackhole/sim Lightning uses base TTNN UNet;
+        # 25 steps is correct there (no distillation constraint).
+        args.steps = args.lightning_steps
+    else:
+        args.steps = 25
 if args.output is None:
     args.output = f"output/{args.mode}.gif"
 if not 0.0 <= args.temporal_alpha <= 1.0:
     _build_parser().error(f"--temporal-alpha must be in [0, 1], got {args.temporal_alpha}")
+if args.lightning and args.mode != "cpu":
+    # On Blackhole/sim, --lightning switches to TtEulerScheduler (trailing,
+    # linear) and runs the base TTNN UNet — no distilled adapter is loaded.
+    # CFG stays at 7.5 (distilled CFG=1.0 constraint doesn't apply here).
+    # This is intentional and supported; no error.
+    pass
 
 # ── sim: resolve ttsim path and configure env before tt-metal loads ────────
 if args.mode == "sim":
@@ -163,57 +220,9 @@ if args.mode in ("blackhole", "sim"):
 # Shared helpers (blackhole + sim share load_sd14_ttnn / encode_prompt)
 # ══════════════════════════════════════════════════════════════════════════
 
-def load_sd14_ttnn(device):
-    """Load SD 1.4 TTNN UNet onto device; return (ttnn_model, torch_vae, config, time_proj).
-
-    VAE stays on CPU — TTNN VAE conv_out OOMs on Blackhole's L1 grid
-    (Wormhole-targeted kernel; no Blackhole-native VAE decoder yet).
-    """
-    from diffusers import AutoencoderKL, UNet2DConditionModel
-    from ttnn.model_preprocessing import preprocess_model_parameters
-    from models.demos.vision.generative.stable_diffusion.wormhole.custom_preprocessing import custom_preprocessor
-    from models.demos.vision.generative.stable_diffusion.wormhole.tt.ttnn_functional_unet_2d_condition_model_new_conv import (
-        UNet2DConditionModel as UNet2D,
-    )
-
-    print("  Loading PyTorch VAE (CPU decode)...")
-    torch_vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
-    torch_vae.eval()
-
-    print("  Loading PyTorch UNet (config + time_proj)...")
-    torch_unet = UNet2DConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="unet")
-
-    print("  Building TTNN UNet (~2-3 min first run, cached after)...")
-    parameters = preprocess_model_parameters(
-        initialize_model=lambda: torch_unet,
-        custom_preprocessor=custom_preprocessor,
-        device=device,
-    )
-    ttnn_model = UNet2D(device, parameters, 2, 64, 64)
-    return ttnn_model, torch_vae, torch_unet.config, torch_unet.time_proj
-
-
-def encode_prompt(prompt: str, negative_prompt: str = "") -> torch.Tensor:
-    """Encode text prompt pair to (2, 96, 768) CLIP embeddings.
-
-    Pads 77 → 96 tokens to match TTNN UNet's expected sequence length.
-    """
-    from transformers import CLIPTokenizer, CLIPTextModel
-
-    tokenizer = CLIPTokenizer.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="text_encoder")
-    text_encoder.eval()
-
-    def encode(text):
-        tokens = tokenizer(
-            text, padding="max_length", max_length=tokenizer.model_max_length,
-            truncation=True, return_tensors="pt",
-        )
-        with torch.no_grad():
-            embeds = text_encoder(tokens.input_ids)[0]
-        return torch.nn.functional.pad(embeds, (0, 0, 0, 19))  # 77 → 96 tokens
-
-    return torch.cat([encode(negative_prompt), encode(prompt)], dim=0)  # (2, 96, 768)
+# Helpers live in animatediff_ttnn.generation_helpers so they can be
+# imported by app.py without triggering this module's arg-parsing side effect.
+from animatediff_ttnn.generation_helpers import load_sd14_ttnn, encode_prompt
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -221,16 +230,29 @@ def encode_prompt(prompt: str, negative_prompt: str = "") -> torch.Tensor:
 # ══════════════════════════════════════════════════════════════════════════
 
 def run_cpu():
-    from animatediff_ttnn.pipeline import create_animatediff_pipeline, generate, export_gif
+    from animatediff_ttnn.pipeline import (
+        create_animatediff_pipeline, create_lightning_pipeline, generate, export_gif,
+    )
 
-    print("AnimateDiff — CPU mode (diffusers AnimateDiffPipeline + MotionAdapter)")
+    if args.lightning:
+        label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster) — CPU"
+        # Real distilled adapter: guidance is baked in, CFG=1.0 required
+        guidance = 1.0
+    else:
+        label = "AnimateDiff — CPU mode (diffusers AnimateDiffPipeline + MotionAdapter)"
+        guidance = 7.5
+
+    print(label)
     print(f"  Prompt  : {args.prompt}")
     print(f"  Frames  : {args.frames}  Steps: {args.steps}  Seed: {args.seed}")
     print()
 
-    print("Loading pipeline (first run downloads ~4.7 GB)...")
+    print("Loading pipeline (first run downloads weights)...")
     t0 = time.time()
-    pipe = create_animatediff_pipeline()
+    if args.lightning:
+        pipe = create_lightning_pipeline(step=args.lightning_steps)
+    else:
+        pipe = create_animatediff_pipeline()
     print(f"  Loaded in {time.time() - t0:.1f}s\n")
 
     print(f"Generating {args.frames} frames...")
@@ -239,6 +261,7 @@ def run_cpu():
         pipe, args.prompt,
         negative_prompt=args.negative_prompt,
         num_frames=args.frames,
+        guidance_scale=guidance,
         num_inference_steps=args.steps,
         seed=args.seed,
     )
@@ -247,8 +270,12 @@ def run_cpu():
 
     export_gif(frames, args.output)
     print(f"Saved {len(frames)} frames → {args.output}")
-    print("\nNote: MotionAdapter injected temporal attention into every UNet block.")
-    print("      Each denoising step attends across all frames simultaneously.")
+    if args.lightning:
+        print(f"\nNote: AnimateDiff-Lightning {args.lightning_steps}-step distilled weights (ByteDance).")
+        print("      CFG disabled (guidance_scale=1.0) — required for Lightning.")
+    else:
+        print("\nNote: MotionAdapter injected temporal attention into every UNet block.")
+        print("      Each denoising step attends across all frames simultaneously.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -279,15 +306,27 @@ def run_ttnn():
     from animatediff_ttnn.pipeline import export_gif
 
     backend = "ttsim simulator" if args.mode == "sim" else "Blackhole hardware"
-    print(f"AnimateDiff — {backend} (TTNN UNet + cross-frame temporal attention)")
+    lightning_tag = " ⚡ Lightning (Euler)" if args.lightning else ""
+    print(f"AnimateDiff{lightning_tag} — {backend} (TTNN UNet + cross-frame temporal attention)")
     if args.mode == "sim":
         print(f"  Simulator      : {os.environ.get('TT_METAL_SIMULATOR', '?')}")
     print(f"  Prompt         : {args.prompt}")
     print(f"  Frames         : {args.frames}  Steps: {args.steps}  Seed: {args.seed}")
     print(f"  Temporal alpha : {args.temporal_alpha}")
+    if args.lightning:
+        print(f"  Scheduler      : EulerDiscrete (trailing, linear)")
+        print(f"  CFG            : 7.5 (TTNN path uses base SD 1.4 UNet, not distilled adapter)")
+    else:
+        print(f"  Scheduler      : PNDM (scaled_linear, skip_prk)")
+    if args.chain_from:
+        print(f"  Chain from     : {args.chain_from}  (alpha={args.chain_alpha})")
+    if args.chain_save:
+        print(f"  Chain save     : {args.chain_save}")
     if args.mode == "sim":
         print(f"\n  Note: ttsim is 10–100× slower than silicon.")
     print()
+
+    guidance = 7.5
 
     print(f"Opening {'simulated ' if args.mode == 'sim' else ''}Blackhole device...")
     device = _open_device()
@@ -296,7 +335,7 @@ def run_ttnn():
     try:
         print("Loading SD 1.4 models...")
         t0 = time.time()
-        ttnn_model, torch_vae, config, torch_time_proj = load_sd14_ttnn(device)
+        ttnn_model, ttnn_vae, config, torch_time_proj = load_sd14_ttnn(device)
         print(f"  Loaded in {time.time() - t0:.1f}s\n")
 
         print("Encoding prompts with CLIP...")
@@ -308,14 +347,19 @@ def run_ttnn():
         frames = generate_frames_temporal(
             device=device,
             ttnn_model=ttnn_model,
-            torch_vae=torch_vae,
+            ttnn_vae=ttnn_vae,
             config=config,
             torch_time_proj=torch_time_proj,
             text_embeddings=text_embeddings,
             num_frames=args.frames,
             num_steps=args.steps,
+            guidance_scale=guidance,
             seed=args.seed,
             temporal_alpha=args.temporal_alpha,
+            use_lightning=args.lightning,
+            chain_from=args.chain_from,
+            chain_save=args.chain_save,
+            chain_alpha=args.chain_alpha,
         )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
@@ -328,7 +372,9 @@ def run_ttnn():
     print(f"Saved {len(frames)} frame(s) → {args.output}")
     print(f"\nBackend: TTNN UNet spatial denoising on {backend}")
     print(f"         Cross-frame temporal attention (alpha={args.temporal_alpha}): CPU")
-    print(f"         VAE decode: CPU (TTNN VAE conv_out OOMs on Blackhole)")
+    if args.lightning:
+        print(f"         Scheduler: EulerDiscrete (trailing, linear) — base TTNN UNet, CFG=7.5")
+    print(f"         VAE decode: Blackhole TTNN VAE")
 
 
 # ══════════════════════════════════════════════════════════════════════════
