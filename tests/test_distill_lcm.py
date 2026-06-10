@@ -17,7 +17,7 @@ def test_consistency_loss_zero_when_predictions_match():
     student_pred = torch.randn(B, C, H, W)
     teacher_pred = student_pred.clone()
     loss = consistency_loss(student_pred, teacher_pred, weight=torch.ones(B))
-    assert loss.item() < 1e-6
+    assert loss.item() == 0.0
 
 
 def test_consistency_loss_positive_when_predictions_differ():
@@ -55,6 +55,8 @@ def test_sample_timestep_pairs_gap_in_range():
         gaps = (t_teacher - t_student).float()
         assert (gaps >= 2).all()
         assert (gaps <= 10).all()
+        assert (t_teacher < 1000).all(), "t_teacher must be a valid timestep index"
+        assert (t_student >= 0).all(), "t_student must be non-negative"
 
 
 def test_compute_loss_weight_returns_positive_tensor():
@@ -63,3 +65,4 @@ def test_compute_loss_weight_returns_positive_tensor():
     w = compute_loss_weight(timesteps, alphas_cumprod)
     assert w.shape == (8,)
     assert (w > 0).all()
+    assert (w <= 1.0).all(), "loss weight must not exceed 1.0"

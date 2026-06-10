@@ -95,6 +95,10 @@ def sample_timestep_pairs(
         t_teacher: Timesteps where both teacher and student start, shape (batch_size,).
                    Always t_teacher = t_student + gap, gap in [w_min, w_max].
     """
+    assert 0 < w_min <= w_max < num_timesteps, (
+        f"w_min/w_max must satisfy 0 < w_min <= w_max < num_timesteps, "
+        f"got w_min={w_min}, w_max={w_max}, num_timesteps={num_timesteps}"
+    )
     # Sample student timesteps leaving room for the gap
     t_student = torch.randint(0, num_timesteps - w_max, (batch_size,))
     # Sample a random gap for each sample in [w_min, w_max]
@@ -125,7 +129,7 @@ def compute_loss_weight(
     Returns:
         Per-sample loss weights, shape (B,), all positive.
     """
-    alpha_sq = alphas_cumprod[timesteps]           # shape (B,)
+    alpha_sq = alphas_cumprod[timesteps].clamp(min=1e-8)  # shape (B,) — clamped to avoid division by zero
     sigma_sq = 1.0 - alpha_sq                      # shape (B,)
     snr = alpha_sq / sigma_sq.clamp(min=1e-8)      # shape (B,) — SNR = alpha^2/sigma^2
     # Down-weight high-noise (low SNR) timesteps
