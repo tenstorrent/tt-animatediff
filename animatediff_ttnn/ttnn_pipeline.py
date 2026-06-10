@@ -173,7 +173,7 @@ def build_tlist(ttnn_scheduler, torch_time_proj, device, latent_h: int = 64, lat
 def generate_frames(
     device,
     ttnn_model,
-    torch_vae,
+    ttnn_vae,
     config,
     ttnn_scheduler,
     torch_time_proj,
@@ -186,14 +186,13 @@ def generate_frames(
 ) -> List[Image.Image]:
     """Generate video frames using TTNN UNet on Blackhole.
 
-    UNet denoising runs on Blackhole via TTNN. VAE decode runs on CPU with the
-    PyTorch AutoencoderKL — the TTNN VAE OOMs on Blackhole's final conv_out due
-    to a grid/L1 size mismatch in the Wormhole-targeted VAE kernel.
+    UNet denoising runs on Blackhole via TTNN. VAE decode also runs on Blackhole
+    via the TTNN Vae — UNet L1 tensors are deallocated before decode to free L1.
 
     Args:
         device: TTNN Blackhole device from setup_blackhole()
         ttnn_model: UNet2D TTNN model loaded with preprocess_model_parameters
-        torch_vae: PyTorch AutoencoderKL for CPU latent decode
+        ttnn_vae: TTNN Vae decoder (from load_sd14_ttnn)
         config: unet.config from PyTorch UNet2DConditionModel
         ttnn_scheduler: TtPNDMScheduler (set_timesteps already called once)
         torch_time_proj: unet.time_proj from PyTorch UNet (used to build _tlist)
@@ -246,6 +245,9 @@ def generate_frames(
         )
 
         # TTNN UNet denoising loop on Blackhole
+        ttnn_latent_model_input = None
+        ttnn_output = None
+        noise_pred = None
         for index in range(len(time_step)):
             ttnn_latent_model_input = ttnn.concat([ttnn_latents, ttnn_latents], dim=0)
             _t = _tlist[index]
@@ -263,10 +265,28 @@ def generate_frames(
             noise_pred = tt_guide(ttnn_output, guidance_scale)
             ttnn_latents = ttnn_scheduler.step(noise_pred, t, ttnn_latents).prev_sample
 
-        # Decode with CPU PyTorch VAE — TTNN VAE conv_out OOMs on Blackhole
-        latents_cpu = from_device(ttnn_latents, device).to(torch.float32) / 0.18215
-        with torch.no_grad():
-            decoded = torch_vae.decode(latents_cpu).sample  # (1, 3, H, W) in [-1, 1]
+        # Deallocate live UNet L1 tensors before VAE decode — same pattern as
+        # sd_helper_funcs.py::run() in tt-metal SD demo. Without this the VAE
+        # conv layers OOM because UNet output buffers still occupy L1.
+        if ttnn_latent_model_input is not None:
+            ttnn_latent_model_input.deallocate(True)
+        if ttnn_output is not None:
+            ttnn_output.deallocate(True)
+        if noise_pred is not None:
+            noise_pred.deallocate(True)
+
+        # Decode with TTNN VAE on Blackhole — permute to NHWC for conv layout
+        latent_scaled = from_device(ttnn_latents, device).to(torch.float32) / 0.18215
+        ttnn_latents.deallocate(True)
+        ttnn_lat = to_device(
+            latent_scaled.permute(0, 2, 3, 1),
+            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+        ttnn_lat.deallocate(True)
+        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
+        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2])).float()
+        ttnn_decoded.deallocate(True)
         img = (decoded / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
         frames.append(Image.fromarray(img))

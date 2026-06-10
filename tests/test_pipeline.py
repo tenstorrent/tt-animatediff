@@ -58,3 +58,35 @@ def test_export_gif_creates_parent_directories(tmp_path):
     export_gif(frames, nested)
     import pathlib
     assert pathlib.Path(nested).exists()
+
+
+def test_create_lightning_pipeline_invalid_step():
+    """Verify that unsupported step counts fail loudly rather than silently."""
+    from animatediff_ttnn.pipeline import create_lightning_pipeline, LIGHTNING_STEPS
+    with pytest.raises(ValueError, match="step must be one of"):
+        create_lightning_pipeline(step=3)
+
+
+def test_create_lightning_pipeline_configures_scheduler():
+    """create_lightning_pipeline sets EulerDiscreteScheduler with required settings."""
+    from unittest.mock import patch, MagicMock
+
+    fake_adapter = MagicMock()
+    fake_pipe = MagicMock()
+    fake_pipe.scheduler = MagicMock()
+    fake_pipe.scheduler.config = {}
+
+    # hf_hub_download and load_file are lazy-imported inside the function —
+    # patch at the module level where they land after import
+    with patch("huggingface_hub.hf_hub_download", return_value="/fake/ckpt.safetensors"), \
+         patch("safetensors.torch.load_file", return_value={}), \
+         patch("animatediff_ttnn.pipeline.MotionAdapter", return_value=fake_adapter), \
+         patch("animatediff_ttnn.pipeline.AnimateDiffPipeline.from_pretrained", return_value=fake_pipe), \
+         patch("animatediff_ttnn.pipeline.EulerDiscreteScheduler.from_config") as mock_sched:
+        from animatediff_ttnn.pipeline import create_lightning_pipeline
+        create_lightning_pipeline(step=4)
+
+    assert mock_sched.called
+    _, sched_kwargs = mock_sched.call_args
+    assert sched_kwargs.get("timestep_spacing") == "trailing"
+    assert sched_kwargs.get("beta_schedule") == "linear"

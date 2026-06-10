@@ -7,13 +7,13 @@
 from setuptools import setup, find_packages
 from pathlib import Path
 
-# Read README for long description
-readme_file = Path(__file__).parent / "README.md"
-long_description = readme_file.read_text() if readme_file.exists() else ""
+here = Path(__file__).parent
+long_description = (here / "README.md").read_text() if (here / "README.md").exists() else ""
+version = (here / "VERSION").read_text().strip()
 
 setup(
     name="animatediff-ttnn",
-    version="0.2.0",
+    version=version,
     author="Tenstorrent Community",
     author_email="",
     description="AnimateDiff video generation on Tenstorrent Blackhole via TTNN UNet (SD 1.4)",
@@ -39,6 +39,8 @@ setup(
         "diffusers>=0.32.1",
         "transformers>=4.30.0",
         "accelerate>=0.20.0",
+        "huggingface_hub>=0.20.0",  # Lightning checkpoint download + VAE weights
+        "safetensors>=0.4.0",        # Lightning adapter .safetensors loading
         # tt-metal and ttnn must be installed separately (not on PyPI)
     ],
     extras_require={
@@ -47,6 +49,9 @@ setup(
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
+        ],
+        "ui": [
+            "gradio>=4.0.0",
         ],
     },
     entry_points={},
