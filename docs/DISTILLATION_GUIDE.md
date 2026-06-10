@@ -230,6 +230,15 @@ If a chip shows AICLK=0, it may be in the ARC hang state — see Troubleshooting
 
 ### Recordings
 
+After running the tapes, copy the generated GIFs into `docs/assets/recordings/` so they
+render on GitHub:
+
+```bash
+mkdir -p docs/assets/recordings
+cp scripts/record/recordings/distill.gif docs/assets/recordings/
+cp scripts/record/recordings/inference.gif docs/assets/recordings/
+```
+
 ![Distillation process](assets/recordings/distill.gif)
 *Full distillation run: training loop (left) + hardware monitor (right)*
 
