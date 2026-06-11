@@ -225,6 +225,7 @@ def run_distillation(
     learning_rate: float = 1e-5,
     w_min: int = 2,
     w_max: int = 10,
+    resume_from: Path = None,
 ) -> None:
     """Distill teacher_unet into a student that converges in target_steps steps.
 
@@ -243,12 +244,18 @@ def run_distillation(
         learning_rate:           Adam learning rate.
         w_min:                   Minimum timestep skip gap.
         w_max:                   Maximum timestep skip gap.
+        resume_from:             Optional path to a previously saved student .pt to
+                                 warm-start from instead of copying the teacher.
     """
     teacher_unet.eval()
     for p in teacher_unet.parameters():
         p.requires_grad_(False)
 
     student_unet = copy.deepcopy(teacher_unet)
+    if resume_from is not None:
+        state = torch.load(resume_from, map_location="cpu", weights_only=True)
+        student_unet.load_state_dict(state)
+        print(f"Resumed student weights from {resume_from}")
     student_unet.train()
     # Re-enable gradients on student parameters — deepcopy preserves the
     # teacher's requires_grad=False state, so we must explicitly flip it back.
@@ -262,10 +269,22 @@ def run_distillation(
 
     pbar = tqdm(range(num_train_steps), desc=f"LCM distill → {target_steps}-step")
 
+    # encoder_hidden_states is either (N, 77, 768) pooled from real prompts,
+    # or a single (1, 77, 768) fixed embedding (test stubs / legacy).
+    # We sample one embedding per step so training sees diverse conditioning.
+    multi_prompt = encoder_hidden_states.dim() == 3 and encoder_hidden_states.shape[0] > 1
+
     for step in pbar:
         B = latent_shape[0]
         z0 = torch.randn(*latent_shape)
         noise = torch.randn_like(z0)
+
+        # Sample a random prompt embedding each step for conditioning diversity.
+        if multi_prompt:
+            idx = torch.randint(0, encoder_hidden_states.shape[0], (B,))
+            cond = encoder_hidden_states[idx]  # (B, 77, 768)
+        else:
+            cond = encoder_hidden_states[:B] if encoder_hidden_states.shape[0] >= B else encoder_hidden_states.expand(B, -1, -1)
 
         t_student, t_teacher = sample_timestep_pairs(B, num_timesteps, w_min, w_max)
         z_teacher = add_noise(z0, noise, t_teacher, alphas_cumprod)
@@ -275,7 +294,7 @@ def run_distillation(
             # real diffusers UNets and lightweight test stubs.
             eps_teacher = teacher_unet(
                 z_teacher, t_teacher,
-                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states=cond,
                 return_dict=True,
             ).sample
             sqrt_alpha_t = alphas_cumprod[t_teacher].sqrt().view(-1, 1, 1, 1)
@@ -287,10 +306,10 @@ def run_distillation(
             eps_renoise = torch.randn_like(z0)
             z_student_level = sqrt_alpha_s * x0_from_teacher_t + sqrt_one_minus_s * eps_renoise
             teacher_x0 = predict_x0(teacher_unet, z_student_level, t_student,
-                                     encoder_hidden_states, alphas_cumprod)
+                                     cond, alphas_cumprod)
 
         student_x0 = predict_x0(student_unet, z_teacher, t_teacher,
-                                 encoder_hidden_states, alphas_cumprod)
+                                 cond, alphas_cumprod)
 
         weight = compute_loss_weight(t_teacher, alphas_cumprod)
         loss = consistency_loss(student_x0, teacher_x0, weight)
@@ -310,6 +329,63 @@ def run_distillation(
 # Entry point
 # ---------------------------------------------------------------------------
 
+DISTILL_PROMPTS = [
+    "a majestic mountain landscape at golden hour, cinematic",
+    "ocean waves crashing on rocky shore, dramatic lighting",
+    "aurora borealis dancing over arctic tundra, green and violet",
+    "ancient forest with shafts of sunlight, misty morning",
+    "volcanic eruption at night, lava flows glowing orange",
+    "deep sea bioluminescent creatures, dark water",
+    "spiral galaxy with golden core, deep space",
+    "cherry blossoms falling over a zen garden, watercolor",
+    "thunderstorm over desert plains, lightning striking",
+    "coral reef teeming with colorful fish, underwater",
+    "city skyline at dusk, reflections on wet pavement",
+    "frozen waterfall in winter forest, ice crystals",
+    "sand dunes at sunset, sweeping curves and shadows",
+    "tropical rainforest canopy from above, misty",
+    "northern lights over snowy mountains, starfield",
+    "abstract geometric patterns flowing in space, teal and gold",
+    "medieval castle on a cliff, stormy sky",
+    "microscopic view of crystal formation, macro photography",
+    "steam rising from hot springs at dawn, ethereal",
+    "autumn leaves falling in a park, golden light",
+    "nebula explosion in deep space, purple and orange",
+    "bamboo forest with morning mist filtering through",
+    "breaking wave with translucent green water, cinematic",
+    "moonlit desert landscape, long shadows",
+    "fireflies in a summer forest at night",
+    "snowflakes falling in slow motion, macro",
+    "lava flowing into ocean, steam explosions",
+    "starling murmuration at sunset, abstract patterns",
+    "ice cave interior with blue light, crystalline",
+    "meadow of wildflowers in wind, impressionist",
+]
+
+
+def encode_prompts(prompts: list[str], model_id: str) -> torch.Tensor:
+    """Encode a list of prompts with CLIP and return stacked embeddings (N, 77, 768)."""
+    from transformers import CLIPTextModel, CLIPTokenizer
+    print("Loading CLIP text encoder...")
+    tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(model_id, subfolder="text_encoder")
+    text_encoder.eval()
+    embeddings = []
+    with torch.no_grad():
+        for prompt in prompts:
+            tokens = tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            emb = text_encoder(tokens.input_ids).last_hidden_state  # (1, 77, 768)
+            embeddings.append(emb.squeeze(0))
+    del text_encoder
+    return torch.stack(embeddings)  # (N, 77, 768)
+
+
 def main():
     parser = argparse.ArgumentParser(description="LCM UNet distillation")
     parser.add_argument("--steps", type=int, choices=[4, 8], default=8,
@@ -320,6 +396,9 @@ def main():
                         help="AdamW learning rate")
     parser.add_argument("--model_id", type=str,
                         default="CompVis/stable-diffusion-v1-4")
+    parser.add_argument("--resume", type=str, default=None, metavar="PATH",
+                        help="Warm-start from a previously saved student .pt "
+                             "(default: start fresh from teacher weights)")
     args = parser.parse_args()
 
     print(f"Loading teacher UNet from {args.model_id}...")
@@ -327,16 +406,22 @@ def main():
     scheduler = DDPMScheduler.from_pretrained(args.model_id, subfolder="scheduler")
     alphas_cumprod = scheduler.alphas_cumprod
 
-    # Fixed random text embedding for distillation. LCM consistency distillation does
-    # not require real prompts — the self-consistency constraint holds regardless of
-    # the conditioning signal. A real deployment would use a CLIPTextModel here for
-    # prompt-conditional generation quality.
-    encoder_hs = torch.randn(1, 77, 768)
+    # Encode real prompts with CLIP — training with random embeddings causes the
+    # student to ignore conditioning entirely and collapse to a blurry average.
+    all_embeddings = encode_prompts(DISTILL_PROMPTS, args.model_id)  # (N, 77, 768)
+    print(f"Encoded {len(all_embeddings)} training prompts.")
+
+    # Pass all embeddings; the training loop samples one per step.
     latent_shape = (1, 4, 64, 64)
     num_timesteps = len(alphas_cumprod)
     w_max = num_timesteps // args.steps
 
     out = REPO_ROOT / "weights" / f"unet_lcm_{args.steps}step.pt"
+    # Only resume if explicitly requested — never silently pick up existing weights,
+    # which may be from a broken training run.
+    resume_path = Path(args.resume) if args.resume else None
+    if resume_path and resume_path.exists():
+        print(f"Warm-starting from {resume_path}")
     run_distillation(
         teacher_unet=teacher,
         alphas_cumprod=alphas_cumprod,
@@ -344,10 +429,11 @@ def main():
         target_steps=args.steps,
         output_path=out,
         latent_shape=latent_shape,
-        encoder_hidden_states=encoder_hs,
+        encoder_hidden_states=all_embeddings,
         learning_rate=args.lr,
         w_min=2,
         w_max=w_max,
+        resume_from=resume_path,
     )
 
 
