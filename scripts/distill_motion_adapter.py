@@ -83,8 +83,8 @@ def build_temporal_pipeline(
 
 
 def run_adapter_distillation(
-    frozen_unet: torch.nn.Module,
-    teacher_adapter: torch.nn.Module,
+    teacher_unet: torch.nn.Module,
+    student_unet: torch.nn.Module,
     alphas_cumprod: torch.Tensor,
     num_train_steps: int,
     target_steps: int,
@@ -95,46 +95,42 @@ def run_adapter_distillation(
     w_min: int = 2,
     w_max: int = 10,
 ) -> None:
-    """Distill teacher_adapter into a student that converges in target_steps steps.
+    """Distill the motion modules so they converge in target_steps denoising steps.
 
-    The frozen_unet handles spatial denoising (already distilled in Phase 1).
-    We only train the MotionAdapter here — the module responsible for temporal
-    coherence across frames.
+    Both teacher_unet and student_unet are full UNetMotionModel instances
+    (LCM backbone + MotionAdapter fused). The teacher is completely frozen.
+    In the student, only the motion_modules parameters are trainable — the
+    backbone weights are shared from Phase 1 and stay frozen.
 
-    The MotionAdapter is distilled using the same consistency MSE as Phase 1:
-    teacher (frozen adapter) and student (new adapter copy) must produce
-    consistent x0 predictions when skipping timesteps. Since the real
-    AnimateDiff MotionAdapter is wired inside the UNet transformer blocks
-    (not called separately), we approximate its contribution by measuring
-    the full pipeline output consistency — the student adapter trains to
-    minimize the gap between its pipeline output and the teacher pipeline's.
+    We use the same consistency distillation loss as Phase 1:
+      student x0(z_student, t_student) ≈ teacher x0(z_teacher, t_teacher)
+    where t_student < t_teacher (student skips steps, teacher takes the full path).
 
     Args:
-        frozen_unet:             LCM-distilled UNet from Phase 1 (not trained).
-        teacher_adapter:         Original 25-step MotionAdapter (not trained).
+        teacher_unet:            Fully frozen reference UNet (original motion modules).
+        student_unet:            UNet with only motion_modules trainable.
         alphas_cumprod:          Noise schedule, shape (T,).
         num_train_steps:         Gradient update steps.
-        target_steps:            Inference steps the student adapter should need.
-        output_path:             Where to save the distilled adapter weights.
-        latent_shape:            (B, C, F, H, W) for training latents (frames at dim 2).
-        encoder_hidden_states:   Text embeddings, shape (B, seq, hid).
+        target_steps:            Inference steps the student should need.
+        output_path:             Where to save the distilled motion module weights.
+        latent_shape:            (B, C, F, H, W) — frames at dim 2 (UNetMotionModel convention).
+        encoder_hidden_states:   Text embeddings, shape (B*F, seq, hid).
         learning_rate:           AdamW learning rate.
-        w_min:                   Minimum skip gap.
-        w_max:                   Maximum skip gap.
+        w_min:                   Minimum skip-step gap.
+        w_max:                   Maximum skip-step gap.
     """
-    frozen_unet.eval()
-    for p in frozen_unet.parameters():
+    teacher_unet.eval()
+    for p in teacher_unet.parameters():
         p.requires_grad_(False)
 
-    teacher_adapter.eval()
-    for p in teacher_adapter.parameters():
-        p.requires_grad_(False)
+    # Freeze backbone; only motion_modules stay trainable.
+    for name, p in student_unet.named_parameters():
+        p.requires_grad_("motion_modules" in name)
+    student_unet.train()
 
-    student_adapter = copy.deepcopy(teacher_adapter)
-    student_adapter.train()
-    for p in student_adapter.parameters():
-        p.requires_grad_(True)
-    optimizer = torch.optim.AdamW(student_adapter.parameters(), lr=learning_rate)
+    trainable = [p for p in student_unet.parameters() if p.requires_grad]
+    print(f"Trainable motion params: {sum(p.numel() for p in trainable):,}")
+    optimizer = torch.optim.AdamW(trainable, lr=learning_rate)
 
     num_timesteps = len(alphas_cumprod)
     output_path = Path(output_path)
@@ -147,27 +143,15 @@ def run_adapter_distillation(
         z0 = torch.randn(*latent_shape)
         noise = torch.randn_like(z0)
         t_student, t_teacher = sample_timestep_pairs(B, num_timesteps, w_min, w_max)
+        z_student = add_noise(z0, noise, t_student, alphas_cumprod)
         z_teacher = add_noise(z0, noise, t_teacher, alphas_cumprod)
 
         with torch.no_grad():
-            # Teacher pipeline: frozen UNet predicts x0 at t_teacher
-            teacher_x0 = predict_x0(frozen_unet, z_teacher, t_teacher,
+            teacher_x0 = predict_x0(teacher_unet, z_teacher, t_teacher,
                                      encoder_hidden_states, alphas_cumprod)
 
-        # Student pipeline: same frozen UNet predicts x0
-        # The student_adapter parameters affect the UNet's temporal attention
-        # blocks. Since the frozen_unet and student_adapter are separate modules
-        # here (simplified distillation), we train student_adapter to minimize
-        # the consistency loss relative to the teacher's output.
-        # In a full integration, student_adapter would be wired into the UNet.
-        student_x0 = predict_x0(frozen_unet, z_teacher, t_teacher,
+        student_x0 = predict_x0(student_unet, z_student, t_student,
                                  encoder_hidden_states, alphas_cumprod)
-        # Anchor the student adapter into the computation graph so gradients flow.
-        # In production, the adapter modifies UNet residuals directly; here we
-        # add its mean contribution scaled by zero (preserving the student_x0
-        # value while creating a grad path through student_adapter).
-        adapter_contribution = sum(p.mean() for p in student_adapter.parameters())
-        student_x0 = student_x0.detach() + adapter_contribution * 0.0
 
         weight = compute_loss_weight(t_teacher, alphas_cumprod)
         loss = consistency_loss(student_x0, teacher_x0, weight)
@@ -179,8 +163,11 @@ def run_adapter_distillation(
         if step % 100 == 0:
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-    torch.save(student_adapter.state_dict(), output_path)
-    print(f"\nSaved distilled {target_steps}-step MotionAdapter → {output_path}")
+    # Save only the motion module weights — that's what gets swapped at inference.
+    motion_state = {k: v for k, v in student_unet.state_dict().items()
+                    if "motion_modules" in k}
+    torch.save(motion_state, output_path)
+    print(f"\nSaved distilled {target_steps}-step motion modules → {output_path}")
 
 
 def main():
@@ -198,8 +185,18 @@ def main():
     args = parser.parse_args()
 
     unet_path = REPO_ROOT / args.unet
-    print(f"Building temporal pipeline with distilled UNet: {unet_path}")
-    pipe = build_temporal_pipeline(
+
+    # Teacher: LCM UNet backbone + original (25-step) motion modules. Fully frozen.
+    print(f"Loading teacher pipeline (distilled UNet: {unet_path})")
+    teacher_pipe = build_temporal_pipeline(
+        unet_weights_path=unet_path,
+        model_id=args.model_id,
+        adapter_id=args.adapter_id,
+    )
+
+    # Student: same backbone weights, fresh copy of motion modules (will be trained).
+    print("Loading student pipeline (same backbone, fresh motion modules)")
+    student_pipe = build_temporal_pipeline(
         unet_weights_path=unet_path,
         model_id=args.model_id,
         adapter_id=args.adapter_id,
@@ -210,20 +207,19 @@ def main():
     num_timesteps = len(alphas_cumprod)
     w_max = num_timesteps // args.steps
 
-    # Fixed random text embedding — same rationale as Phase 1 (distill_lcm.py main()).
-    # UNetMotionModel expects 5D input: (batch, channels, frames, height, width).
-    # Despite the misleading docstring, num_frames = sample.shape[2] in the
-    # model's forward(), so frames must be dim 2.
-    # encoder_hidden_states must be pre-tiled to (B*F, 77, 768) — same as
-    # AnimateDiffPipeline does via repeat_interleave before calling the UNet.
+    # UNetMotionModel input: (batch, channels, frames, height, width).
+    # num_frames = sample.shape[2] in the model, so frames is dim 2.
+    # Use 16×16 spatial (vs 64×64 inference) — motion modules are purely temporal
+    # so spatial resolution doesn't affect what they learn, only training speed.
+    # encoder_hidden_states pre-tiled to (B*F, 77, 768) as AnimateDiffPipeline does.
     num_frames = 8
     encoder_hs = torch.randn(1, 77, 768).repeat_interleave(repeats=num_frames, dim=0)
-    latent_shape = (1, 4, num_frames, 64, 64)
+    latent_shape = (1, 4, num_frames, 16, 16)
 
     out = REPO_ROOT / "weights" / f"motion_adapter_lcm_{args.steps}step.pt"
     run_adapter_distillation(
-        frozen_unet=pipe.unet,
-        teacher_adapter=pipe.motion_adapter,
+        teacher_unet=teacher_pipe.unet,
+        student_unet=student_pipe.unet,
         alphas_cumprod=alphas_cumprod,
         num_train_steps=args.num_train_steps,
         target_steps=args.steps,
