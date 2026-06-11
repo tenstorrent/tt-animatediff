@@ -125,6 +125,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Lightning distillation step count: 2, 4, or 8 (default 4)",
     )
     parser.add_argument(
+        "--lcm-unet",
+        default=None,
+        dest="lcm_unet",
+        metavar="PATH",
+        help="Load our own LCM-distilled UNet weights (.pt from scripts/distill_lcm.py). "
+             "Works with --mode cpu. Sets --steps to 4 or 8 automatically if not specified.",
+    )
+    parser.add_argument(
+        "--lcm-adapter",
+        default=None,
+        dest="lcm_adapter",
+        metavar="PATH",
+        help="Load our own LCM-distilled MotionAdapter weights (.pt from scripts/distill_motion_adapter.py). "
+             "Use together with --lcm-unet for full LCM inference.",
+    )
+    parser.add_argument(
         "--chain-from",
         default=None,
         dest="chain_from",
@@ -161,6 +177,10 @@ if args.steps is None:
         # checkpoint (2, 4, or 8). Blackhole/sim Lightning uses base TTNN UNet;
         # 25 steps is correct there (no distillation constraint).
         args.steps = args.lightning_steps
+    elif args.lcm_unet:
+        # LCM distilled UNet — default to 8 steps (balanced quality/speed).
+        # Pass --steps 4 explicitly for maximum speed.
+        args.steps = 8
     else:
         args.steps = 25
 if args.output is None:
@@ -233,8 +253,16 @@ def run_cpu():
     from animatediff_ttnn.pipeline import (
         create_animatediff_pipeline, create_lightning_pipeline, generate, export_gif,
     )
+    import torch as _torch
 
-    if args.lightning:
+    if args.lcm_unet:
+        lcm_tag = f"LCM-{args.steps}step"
+        if args.lcm_adapter:
+            label = f"AnimateDiff LCM — {lcm_tag} UNet + MotionAdapter (our distilled weights)"
+        else:
+            label = f"AnimateDiff LCM — {lcm_tag} UNet only (our distilled weights)"
+        guidance = 1.0
+    elif args.lightning:
         label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster) — CPU"
         # Real distilled adapter: guidance is baked in, CFG=1.0 required
         guidance = 1.0
@@ -249,7 +277,22 @@ def run_cpu():
 
     print("Loading pipeline (first run downloads weights)...")
     t0 = time.time()
-    if args.lightning:
+    if args.lcm_unet:
+        pipe = create_animatediff_pipeline()
+        unet_state = _torch.load(args.lcm_unet, map_location="cpu", weights_only=True)
+        pipe.unet.load_state_dict(unet_state, strict=False)
+        print(f"  Loaded LCM UNet weights from {args.lcm_unet}")
+        if args.lcm_adapter:
+            adapter_state = _torch.load(args.lcm_adapter, map_location="cpu", weights_only=True)
+            pipe.motion_adapter.load_state_dict(adapter_state, strict=False)
+            print(f"  Loaded LCM MotionAdapter weights from {args.lcm_adapter}")
+        from diffusers import EulerDiscreteScheduler
+        pipe.scheduler = EulerDiscreteScheduler.from_config(
+            pipe.scheduler.config,
+            timestep_spacing="trailing",
+            beta_schedule="linear",
+        )
+    elif args.lightning:
         pipe = create_lightning_pipeline(step=args.lightning_steps)
     else:
         pipe = create_animatediff_pipeline()

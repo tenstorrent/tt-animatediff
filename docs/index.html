@@ -85,6 +85,7 @@
     .compare-label { font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-top: .5rem; }
     .compare-label.original { color: var(--muted); }
     .compare-label.lightning { color: var(--teal); }
+    .compare-label.lcm { color: #81e6d9; }
     .compare-prompt { font-size: .72rem; color: var(--muted); margin-top: .2rem; font-style: italic; }
     .compare-divider { display: flex; align-items: center; padding-top: 2.5rem; color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
     .speed-table-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; }
@@ -97,6 +98,7 @@
     .speed-table .tag { display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: .15rem .4rem; border-radius: 3px; }
     .speed-table .tag-original { background: rgba(96,125,139,.15); color: var(--muted); border: 1px solid rgba(96,125,139,.3); }
     .speed-table .tag-lightning { background: rgba(79,209,197,.12); color: var(--teal); border: 1px solid var(--teal-border); }
+    .speed-table .tag-lcm { background: rgba(129,230,217,.1); color: #81e6d9; border: 1px solid rgba(129,230,217,.3); }
     .lightning-footer { text-align: center; font-size: .82rem; color: var(--muted); }
     .lightning-footer a { color: var(--teal); }
 
@@ -268,7 +270,7 @@
     <div class="lightning-header">
       <div class="badge">Lightning Mode</div>
       <h2>Same hardware. <em>4-step inference.</em></h2>
-      <p>LCM-distilled weights cut denoising steps from 25 to 4–8 with no change to the model architecture. Each pair below is the same prompt, same seed — original on the left, lightning on the right.</p>
+      <p>LCM-distilled weights cut denoising steps from 25 to 4–8 with no change to the model architecture. Each row below is the same prompt, same seed — original Blackhole output on the left, then our distilled variants.</p>
     </div>
 
     <div class="compare-grid">
@@ -282,6 +284,12 @@
         <div class="compare-cell">
           <img src="assets/lightning-aurora.gif" alt="aurora borealis — 8-step lightning" loading="lazy">
           <div class="compare-label lightning">⚡ 8 steps · lightning</div>
+          <div class="compare-prompt">aurora borealis over arctic ice</div>
+        </div>
+        <div class="compare-divider">→</div>
+        <div class="compare-cell">
+          <img src="assets/lcm-aurora.gif" alt="aurora borealis — 4-step LCM (our weights)" loading="lazy">
+          <div class="compare-label lcm">✦ 4 steps · LCM</div>
           <div class="compare-prompt">aurora borealis over arctic ice</div>
         </div>
       </div>
@@ -298,6 +306,12 @@
           <div class="compare-label lightning">⚡ 8 steps · lightning</div>
           <div class="compare-prompt">sacred mandala blooming from starfield</div>
         </div>
+        <div class="compare-divider">→</div>
+        <div class="compare-cell">
+          <img src="assets/lcm-mandala.gif" alt="sacred mandala — 4-step LCM (our weights)" loading="lazy">
+          <div class="compare-label lcm">✦ 4 steps · LCM</div>
+          <div class="compare-prompt">sacred mandala blooming from starfield</div>
+        </div>
       </div>
 
       <div class="compare-row">
@@ -312,11 +326,17 @@
           <div class="compare-label lightning">⚡ 8 steps · lightning</div>
           <div class="compare-prompt">mycelium network, bioluminescent spores</div>
         </div>
+        <div class="compare-divider">→</div>
+        <div class="compare-cell">
+          <img src="assets/lcm-mycelium.gif" alt="mycelium network — 4-step LCM (our weights)" loading="lazy">
+          <div class="compare-label lcm">✦ 4 steps · LCM</div>
+          <div class="compare-prompt">mycelium network, bioluminescent spores</div>
+        </div>
       </div>
     </div>
 
     <div class="speed-table-wrap">
-      <h4>Inference speed on Blackhole P300C · 8 frames</h4>
+      <h4>Inference speed · 8 frames (Blackhole P300C unless noted)</h4>
       <table class="speed-table">
         <thead>
           <tr>
@@ -348,6 +368,13 @@
             <td>~2.5 s</td>
             <td>~20 s</td>
             <td class="hl">~6×</td>
+          </tr>
+          <tr>
+            <td><span class="tag tag-lcm">LCM (ours)</span></td>
+            <td>4</td>
+            <td>~3 min</td>
+            <td>~24 min</td>
+            <td>CPU · no silicon</td>
           </tr>
         </tbody>
       </table>

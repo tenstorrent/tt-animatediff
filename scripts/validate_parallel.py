@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
-"""Parallel validation: run all 4 distilled weight combos on 4 Blackhole chips.
+"""Sequential validation: run all 4 distilled weight combos and benchmark them.
 
 What this file does
 -------------------
-After distillation, we want to compare four configurations side-by-side:
-  Chip 0: 4-step UNet + original MotionAdapter  (spatial-only fast)
-  Chip 1: 8-step UNet + original MotionAdapter  (spatial-only balanced)
-  Chip 2: 8-step UNet + 8-step MotionAdapter    (full lightning, balanced)
-  Chip 3: 4-step UNet + 4-step MotionAdapter    (full lightning, maximum speed)
+After distillation, we want to compare four configurations:
+  Config 0: 4-step UNet + original MotionAdapter  (spatial-only fast)
+  Config 1: 8-step UNet + original MotionAdapter  (spatial-only balanced)
+  Config 2: 8-step UNet + 8-step MotionAdapter    (full lightning, balanced)
+  Config 3: 4-step UNet + 4-step MotionAdapter    (full lightning, maximum speed)
 
-Each chip runs inference independently and saves a GIF. At the end we print
-a benchmark table comparing steps, elapsed time, and output path.
+Each configuration runs inference sequentially and saves a GIF. At the end
+we print a benchmark table comparing steps, elapsed time, and output path.
+
+NOTE: previously used multiprocessing.Pool across 4 chips, but Blackhole's
+PCIe lock (CHIP_IN_USE_0_PCIe) is process-wide — parallel processes all block
+on chip 0's lock regardless of which chip_id they request. Sequential is correct.
 
 Usage
 -----
@@ -23,13 +27,10 @@ Usage
 
 Requirements
 ------------
-    - tt-metal activated: source ~/tt-metal/python_env/bin/activate
     - All 4 weight files present in weights/
-    - 4 Blackhole chips available
 """
 
 import argparse
-import multiprocessing
 import sys
 import time
 from pathlib import Path
@@ -111,10 +112,7 @@ def format_benchmark_table(results: list[dict]) -> str:
 
 
 def _run_one_config(config: dict, out_dir: Path, prompt: str) -> dict:
-    """Run inference for one chip config and return timing + output path.
-
-    This function runs in a separate process (one per chip). It imports ttnn
-    inside the function to avoid initialization in the parent process.
+    """Run inference for one config and return timing + output path.
 
     Args:
         config:   One entry from build_validation_configs().
@@ -124,15 +122,11 @@ def _run_one_config(config: dict, out_dir: Path, prompt: str) -> dict:
     Returns:
         Dict with label, elapsed_s, gif_path — ready for format_benchmark_table.
     """
-    from animatediff_ttnn.ttnn_pipeline import setup_blackhole
     from animatediff_ttnn.pipeline import create_animatediff_pipeline, generate
     import torch
 
     label = config["label"]
-    print(f"[chip {config['chip_id']}] Starting {label}...")
-
-    # Open this chip's Blackhole device so it is claimed during inference.
-    device = setup_blackhole(device_ids=[config["chip_id"]])
+    print(f"\n[{label}] Starting...")
 
     pipe = create_animatediff_pipeline()
     if config["unet_path"] and Path(config["unet_path"]).exists():
@@ -165,12 +159,12 @@ def _run_one_config(config: dict, out_dir: Path, prompt: str) -> dict:
         loop=0,
     )
 
-    print(f"[chip {config['chip_id']}] {label} done in {elapsed:.1f}s → {gif_path}")
+    print(f"[{label}] done in {elapsed:.1f}s → {gif_path}")
     return {"label": label, "elapsed_s": elapsed, "gif_path": gif_path}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Parallel 4-chip validation")
+    parser = argparse.ArgumentParser(description="Sequential 4-config validation")
     parser.add_argument("--out_dir", type=str, default="output/validation")
     parser.add_argument("--prompt", type=str,
                         default="a campfire burning in a dark forest, cinematic")
@@ -185,13 +179,12 @@ def main():
     )
 
     out_dir = REPO_ROOT / args.out_dir
+    results = []
 
-    print("Launching 4 chips in parallel...")
-    with multiprocessing.Pool(processes=4) as pool:
-        results = pool.starmap(
-            _run_one_config,
-            [(cfg, out_dir, args.prompt) for cfg in configs]
-        )
+    print(f"Running {len(configs)} configs sequentially...")
+    for cfg in configs:
+        result = _run_one_config(cfg, out_dir, args.prompt)
+        results.append(result)
 
     print(format_benchmark_table(results))
 
