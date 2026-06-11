@@ -164,8 +164,10 @@ def add_noise(
     Returns:
         Noisy latent z_t, same shape as latent.
     """
-    sqrt_alpha = alphas_cumprod[timesteps].sqrt().view(-1, 1, 1, 1)
-    sqrt_one_minus_alpha = (1.0 - alphas_cumprod[timesteps]).sqrt().view(-1, 1, 1, 1)
+    # Broadcast to (B, 1, 1, ...) matching latent's number of dims (4D or 5D).
+    extra_dims = (1,) * (latent.dim() - 1)
+    sqrt_alpha = alphas_cumprod[timesteps].sqrt().view(-1, *extra_dims)
+    sqrt_one_minus_alpha = (1.0 - alphas_cumprod[timesteps]).sqrt().view(-1, *extra_dims)
     return sqrt_alpha * latent + sqrt_one_minus_alpha * noise
 
 
@@ -201,8 +203,9 @@ def predict_x0(
         return_dict=True,
     ).sample
 
-    sqrt_alpha = alphas_cumprod[timesteps].sqrt().view(-1, 1, 1, 1)
-    sqrt_one_minus_alpha = (1.0 - alphas_cumprod[timesteps]).sqrt().view(-1, 1, 1, 1)
+    extra_dims = (1,) * (noisy_latent.dim() - 1)
+    sqrt_alpha = alphas_cumprod[timesteps].sqrt().view(-1, *extra_dims)
+    sqrt_one_minus_alpha = (1.0 - alphas_cumprod[timesteps]).sqrt().view(-1, *extra_dims)
     x0_pred = (noisy_latent - sqrt_one_minus_alpha * noise_pred) / sqrt_alpha.clamp(min=1e-8)
     return x0_pred
 

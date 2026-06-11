@@ -116,7 +116,7 @@ def run_adapter_distillation(
         num_train_steps:         Gradient update steps.
         target_steps:            Inference steps the student adapter should need.
         output_path:             Where to save the distilled adapter weights.
-        latent_shape:            (B, C, H, W) for training latents.
+        latent_shape:            (B, C, F, H, W) for training latents (frames at dim 2).
         encoder_hidden_states:   Text embeddings, shape (B, seq, hid).
         learning_rate:           AdamW learning rate.
         w_min:                   Minimum skip gap.
@@ -211,8 +211,14 @@ def main():
     w_max = num_timesteps // args.steps
 
     # Fixed random text embedding — same rationale as Phase 1 (distill_lcm.py main()).
-    encoder_hs = torch.randn(1, 77, 768)
-    latent_shape = (1, 4, 64, 64)
+    # UNetMotionModel expects 5D input: (batch, channels, frames, height, width).
+    # Despite the misleading docstring, num_frames = sample.shape[2] in the
+    # model's forward(), so frames must be dim 2.
+    # encoder_hidden_states must be pre-tiled to (B*F, 77, 768) — same as
+    # AnimateDiffPipeline does via repeat_interleave before calling the UNet.
+    num_frames = 8
+    encoder_hs = torch.randn(1, 77, 768).repeat_interleave(repeats=num_frames, dim=0)
+    latent_shape = (1, 4, num_frames, 64, 64)
 
     out = REPO_ROOT / "weights" / f"motion_adapter_lcm_{args.steps}step.pt"
     run_adapter_distillation(
