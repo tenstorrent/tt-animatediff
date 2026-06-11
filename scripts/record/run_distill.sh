@@ -54,5 +54,5 @@ else
     python3 scripts/distill_motion_adapter.py --steps 4 --unet weights/unet_lcm_4step.pt
 fi
 
-_banner "Validation: launching 4 chips in parallel"
-python3 scripts/validate_parallel.py
+_banner "All weights done — running post_distill.sh (validate + suspend)"
+bash scripts/post_distill.sh
