@@ -124,13 +124,14 @@ def _run_one_config(config: dict, out_dir: Path, prompt: str) -> dict:
     Returns:
         Dict with label, elapsed_s, gif_path — ready for format_benchmark_table.
     """
-    from animatediff_ttnn.ttnn_pipeline import setup_blackhole, generate_frames_ttnn
-    from animatediff_ttnn.pipeline import create_animatediff_pipeline
+    from animatediff_ttnn.ttnn_pipeline import setup_blackhole
+    from animatediff_ttnn.pipeline import create_animatediff_pipeline, generate
     import torch
 
     label = config["label"]
     print(f"[chip {config['chip_id']}] Starting {label}...")
 
+    # Open this chip's Blackhole device so it is claimed during inference.
     device = setup_blackhole(device_ids=[config["chip_id"]])
 
     pipe = create_animatediff_pipeline()
@@ -144,9 +145,8 @@ def _run_one_config(config: dict, out_dir: Path, prompt: str) -> dict:
         pipe.motion_adapter.load_state_dict(adapter_state, strict=False)
 
     t0 = time.perf_counter()
-    frames = generate_frames_ttnn(
+    frames = generate(
         pipe=pipe,
-        device=device,
         prompt=prompt,
         num_frames=16,
         num_inference_steps=config["num_steps"],
@@ -158,7 +158,7 @@ def _run_one_config(config: dict, out_dir: Path, prompt: str) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     gif_path = out_dir / f"{label}.gif"
     frames[0].save(
-        gif_path,
+        str(gif_path),
         save_all=True,
         append_images=frames[1:],
         duration=125,
