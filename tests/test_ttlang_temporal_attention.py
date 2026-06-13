@@ -131,3 +131,28 @@ def test_qkv_kernel_pcc():
     assert _pcc(q_sim, q_ref) > 0.999, f"Q PCC {_pcc(q_sim, q_ref):.4f}"
     assert _pcc(k_sim, k_ref) > 0.999, f"K PCC {_pcc(k_sim, k_ref):.4f}"
     assert _pcc(v_sim, v_ref) > 0.999, f"V PCC {_pcc(v_sim, v_ref):.4f}"
+
+
+def test_sdpa_kernel_pcc():
+    """Sim SDPA matches float32 reference to PCC > 0.999."""
+    from animatediff_ttnn.ttlang.temporal_attention_kernel import _sdpa_kernel_sim
+
+    torch.manual_seed(7)
+    SN = S_ROWS * N_TILES
+    scale = (C_TILES * TILE) ** -0.5
+    q_t = torch.randn(SN * TILE, C_TILES * TILE)
+    k_t = torch.randn(SN * TILE, C_TILES * TILE)
+    v_t = torch.randn(SN * TILE, C_TILES * TILE)
+
+    # Reference: reshape to [S, N, C], compute attention, flatten back.
+    q = q_t.reshape(S_ROWS, N_TILES * TILE, C_TILES * TILE)
+    k = k_t.reshape(S_ROWS, N_TILES * TILE, C_TILES * TILE)
+    v = v_t.reshape(S_ROWS, N_TILES * TILE, C_TILES * TILE)
+    scores = (q @ k.transpose(-1, -2)) * scale  # [S, N, N]
+    attn = torch.softmax(scores, dim=-1)
+    ref = (attn @ v).reshape(SN * TILE, C_TILES * TILE)  # [SN*TILE, C*TILE]
+
+    sim_out = _sdpa_kernel_sim(q_t, k_t, v_t, s_rows=S_ROWS, n_tiles=N_TILES, c_tiles=C_TILES)
+
+    pcc = _pcc(sim_out, ref)
+    assert pcc > 0.999, f"SDPA sim PCC {pcc:.6f} < 0.999"

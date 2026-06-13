@@ -79,6 +79,152 @@ class TemporalAttentionKernel:
         raise NotImplementedError("TT-Lang sim path implemented in Task 3-5")
 
 
+def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
+    """Scaled dot-product attention using TT-Lang simulator Block ops.
+
+    For each spatial position s:
+      scores = q[s] @ k[s].T * scale     [n_tiles, n_tiles] tile-grid
+      attn   = softmax(scores)            [n_tiles, n_tiles] (stable: subtract row-max)
+      out[s] = attn @ v[s]               [n_tiles, c_tiles] tile-grid
+
+    Stable softmax pattern:
+      1. row_max  = reduce_max(scores, scaler, dims=[1])      → (n_tiles, 1)
+      2. max_bcast= broadcast(row_max, output_hint=scores, dims=[1]) → (n_tiles, n_tiles)
+      3. exp_s    = exp(scores - max_bcast)                   → (n_tiles, n_tiles)
+      4. row_sum  = reduce_sum(exp_s, scaler, dims=[1])       → (n_tiles, 1)
+      5. sum_bcast= broadcast(row_sum, output_hint=exp_s, dims=[1]) → (n_tiles, n_tiles)
+      6. attn     = exp_s * recip(sum_bcast)                  → (n_tiles, n_tiles)
+
+    K transpose is handled by re-ordering the tile list and transposing each
+    tile's backing data.  Tile (r, c) of k becomes tile (c, r) of k^T with
+    transposed data, giving the correct (c_tiles, n_tiles) block.
+
+    The scaler block is a single (1, 1) tile of 1.0s, required by reduce_max
+    and reduce_sum — it acts as a multiplicative identity (scale factor = 1).
+
+    Args:
+        q_t, k_t, v_t: Float32 tensors [s_rows*n_tiles*32, c_tiles*32]
+                        — output of _qkv_kernel_sim, flattened (S*N, C).
+        s_rows:   Number of spatial rows (S).
+        n_tiles:  Frame tiles (N/32, typically 1).
+        c_tiles:  Channel tiles (C/32, typically 10).
+
+    Returns:
+        attn_out: Float32 tensor [s_rows*n_tiles*32, c_tiles*32]
+                  matching PyTorch reference: softmax(Q@K.T/sqrt(C)) @ V.
+    """
+    import sys
+    import os
+    _TT_LANG_PYTHON = os.path.expanduser("~/code/tt-lang/python")
+    if _TT_LANG_PYTHON not in sys.path:
+        sys.path.insert(0, _TT_LANG_PYTHON)
+
+    from sim.dfb import Block
+    from sim.ttnnsim import Tensor
+    import sim.math as ttl_math
+    from animatediff_ttnn.ttlang.sim_helpers import tensor_to_block, block_to_tensor
+
+    # Scale factor: 1 / sqrt(C) where C = c_tiles * 32.
+    scale = (c_tiles * 32) ** -0.5
+
+    # sn_tiles: total tile-rows in the flattened (S*N) layout.
+    sn_tiles = s_rows * n_tiles
+
+    # Convert full QKV tensors to tile-Block representations.
+    # Each has shape (sn_tiles, c_tiles) in the tile grid.
+    q_blk = tensor_to_block(q_t.float(), shape=(sn_tiles, c_tiles))
+    k_blk = tensor_to_block(k_t.float(), shape=(sn_tiles, c_tiles))
+    v_blk = tensor_to_block(v_t.float(), shape=(sn_tiles, c_tiles))
+
+    # One-tile scaler block of all 1.0s: required by reduce_max / reduce_sum.
+    # Shape (1, 1) in the tile grid — a single 32×32 tile filled with ones.
+    scaler_tile = Tensor(torch.ones(32, 32, dtype=torch.float32))
+    scaler_blk = Block.from_list([scaler_tile], shape=(1, 1))
+
+    out_tiles = []  # accumulates (n_tiles, c_tiles) output tiles per spatial row
+
+    for s in range(s_rows):
+        # --- Extract one spatial position: rows [s*n_tiles : (s+1)*n_tiles] ---
+        # Flat tile indices in row-major order: row r, col c → r*c_tiles + c.
+        # q_row, k_row, v_row each have tile-grid shape (n_tiles, c_tiles).
+        q_flat = q_blk.to_list()
+        k_flat = k_blk.to_list()
+        v_flat = v_blk.to_list()
+
+        base = s * n_tiles  # first tile-row index for this spatial position
+
+        q_row = Block.from_list(
+            q_flat[base * c_tiles:(base + n_tiles) * c_tiles],
+            shape=(n_tiles, c_tiles),
+        )
+        # k_row (n_tiles, c_tiles) will be transposed to (c_tiles, n_tiles).
+        k_row_tiles = k_flat[base * c_tiles:(base + n_tiles) * c_tiles]
+        v_row = Block.from_list(
+            v_flat[base * c_tiles:(base + n_tiles) * c_tiles],
+            shape=(n_tiles, c_tiles),
+        )
+
+        # --- Transpose K: (n_tiles, c_tiles) → (c_tiles, n_tiles) ---
+        # Tile (r, c) in k_row (row-major flat index r*c_tiles + c) becomes
+        # tile (c, r) in k_row_T (flat index c*n_tiles + r), with its data
+        # transposed to flip the 32×32 element layout as well.
+        k_T_tiles = [None] * (c_tiles * n_tiles)
+        for r in range(n_tiles):
+            for c in range(c_tiles):
+                src_tile = k_row_tiles[r * c_tiles + c]
+                # to_torch() gives the 32×32 backing data; .T transposes it.
+                transposed_data = Tensor(src_tile.to_torch().T.contiguous())
+                k_T_tiles[c * n_tiles + r] = transposed_data
+        k_row_T = Block.from_list(k_T_tiles, shape=(c_tiles, n_tiles))
+
+        # --- Stage 1: Scaled scores = q_row @ k_row_T * scale ----------------
+        # (n_tiles, c_tiles) @ (c_tiles, n_tiles) → (n_tiles, n_tiles)
+        scores_raw = q_row @ k_row_T  # Block (n_tiles, n_tiles)
+
+        # Scale each tile's backing data by the scalar factor.
+        # Block arithmetic operators require two Blocks of the same shape, so
+        # we apply the scale directly to the backing tensors for simplicity.
+        scores_tiles = [
+            Tensor(t.to_torch() * scale) for t in scores_raw.to_list()
+        ]
+        scores = Block.from_list(scores_tiles, shape=(n_tiles, n_tiles))
+
+        # --- Stage 2: Stable row-wise softmax ---------------------------------
+        # Step 2a: per-row max — reduce along cols (dim 1).
+        # reduce_max(shape (n_tiles, n_tiles), dims=[1]) → (n_tiles, 1).
+        row_max = ttl_math.reduce_max(scores, scaler_blk, dims=[1])
+
+        # Step 2b: broadcast (n_tiles, 1) → (n_tiles, n_tiles) along cols.
+        bcast_max = ttl_math.broadcast(row_max, output_hint=scores, dims=[1])
+
+        # Step 2c: shift by max and exponentiate (two copies for sum + normalise).
+        shifted = scores - bcast_max
+        exp_s1 = ttl_math.exp(shifted)  # copy 1: fed to reduce_sum
+        exp_s2 = ttl_math.exp(shifted)  # copy 2: fed to final multiply
+
+        # Step 2d: per-row sum — reduce along cols.
+        # reduce_sum(shape (n_tiles, n_tiles), dims=[1]) → (n_tiles, 1).
+        row_sum = ttl_math.reduce_sum(exp_s1, scaler_blk, dims=[1])
+
+        # Step 2e: broadcast (n_tiles, 1) → (n_tiles, n_tiles) along cols.
+        bcast_sum = ttl_math.broadcast(row_sum, output_hint=exp_s2, dims=[1])
+
+        # Step 2f: normalise — element-wise multiply by reciprocal of sum.
+        # recip(bcast_sum) gives 1/sum; * exp_s2 gives the softmax weights.
+        attn = exp_s2 * ttl_math.recip(bcast_sum)  # (n_tiles, n_tiles)
+
+        # --- Stage 3: out = attn @ v_row -------------------------------------
+        # (n_tiles, n_tiles) @ (n_tiles, c_tiles) → (n_tiles, c_tiles).
+        out_row = attn @ v_row  # Block (n_tiles, c_tiles)
+
+        # Collect tiles in row-major order for final reassembly.
+        out_tiles.extend(out_row.to_list())
+
+    # Reassemble all spatial positions into (sn_tiles, c_tiles) and convert.
+    out_blk = Block.from_list(out_tiles, shape=(sn_tiles, c_tiles))
+    return block_to_tensor(out_blk)
+
+
 def _qkv_kernel_sim(x_t, w_q_t, w_k_t, w_v_t, sn_tiles, c_tiles):
     """Compute Q, K, V projections using TT-Lang simulator Block matmul.
 
