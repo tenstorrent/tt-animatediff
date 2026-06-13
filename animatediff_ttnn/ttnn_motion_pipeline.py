@@ -66,8 +66,16 @@ def _apply_temporal(
     # Step 1: pull all N frames to CPU as float32.
     # TTNN pre_process_input folds CFG batch=2 into the spatial dim, producing
     # [1, 1, 2*S, C] rather than [2, S, C].  Reshape to [2, S, C] for indexing.
-    raw_tensors = [ttnn.to_torch(s).float() for s in samples]
-    orig_shape = raw_tensors[0].shape  # save for reconstruction
+    # Also snapshot dtype and memory_config so we can restore them on the way back.
+    orig_dtype = samples[0].dtype
+    # Sharded tensors must be moved to DRAM interleaved before to_torch;
+    # we'll restore via DRAM then re-shard with to_memory_config if needed.
+    dram_samples = [
+        ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG) if ttnn.get_memory_config(s).is_sharded() else s
+        for s in samples
+    ]
+    raw_tensors = [ttnn.to_torch(s).float() for s in dram_samples]
+    orig_shape = raw_tensors[0].shape  # [1, 1, 2*S, C] — save for reconstruction
     # Flatten to [2*S, C], then split into [2, S, C]
     cpu_tensors = [t.reshape(2, -1, t.shape[-1]) for t in raw_tensors]
     # cpu_tensors[i]: [2, S, C] — uncond row 0, cond row 1
@@ -87,18 +95,24 @@ def _apply_temporal(
             for i in range(num_frames)
         ]
 
-    # Step 3: restore original TTNN layout [1, 1, 2*S, C] and push to device.
+    # Step 3: push back to device in DRAM interleaved, then re-shard to match
+    # the memory config the caller expects (captured before our CPU round-trip).
+    orig_memory_configs = [ttnn.get_memory_config(s) for s in samples]
     out = []
     for i in range(num_frames):
         t_restored = cpu_tensors[i].reshape(orig_shape)
-        out.append(
-            to_device(
-                t_restored,
-                device,
-                dtype=ttnn.bfloat16,
-                layout=ttnn.TILE_LAYOUT,
-            )
+        t_device = to_device(
+            t_restored,
+            device,
+            dtype=orig_dtype,
+            layout=ttnn.TILE_LAYOUT,
         )
+        # If the original was sharded, restore its sharding so the next TTNN op
+        # (resnet / transformer block) sees the expected L1 memory layout.
+        mc = orig_memory_configs[i]
+        if mc.is_sharded():
+            t_device = ttnn.to_memory_config(t_device, mc)
+        out.append(t_device)
         samples[i].deallocate(True)
 
     return out
@@ -264,6 +278,8 @@ def forward_unet_staged(
         )
         s = reshard_for_output_channels_divisibility(s, out_channels)
         s = ttnn.reallocate(s)
+        # Evict to DRAM so subsequent frames' conv_in L1 allocations don't clash.
+        s = ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG)
         hidden_samples.append(s)
 
     # ------------------------------------------------------------------ 3. Time embedding (shared)
@@ -293,10 +309,20 @@ def forward_unet_staged(
 
         if down_block_type == "CrossAttnDownBlock2D":
             # Process every frame through this block.
-            new_hidden = []
+            # IMPORTANT: after each frame, evict the output to DRAM before running
+            # the next frame.  The TTNN cross-attention kernel uses statically-allocated
+            # circular buffers (L1 CBs).  If a previous frame's output tensor still sits
+            # in L1 when the *same* program runs for the next frame, the static CBs clash
+            # with the live L1 buffer → TT_THROW at program.cpp:1476.
+            new_hidden_dram = []
             for i in range(num_frames):
+                # Ensure input is in L1 (block's resnet entry point expects sharded L1).
+                hs_in = hidden_samples[i]
+                if ttnn.get_memory_config(hs_in).memory_layout == ttnn.TensorMemoryLayout.INTERLEAVED:
+                    # DRAM-interleaved → let the block re-shard internally via reshard_if_not_optimal
+                    pass
                 s, res_samples = down_block(
-                    hidden_states=hidden_samples[i],
+                    hidden_states=hs_in,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
@@ -320,9 +346,12 @@ def forward_unet_staged(
                     resnet_time_scale_shift=resnet_time_scale_shift,
                 )
                 down_res_per_frame[i].extend(list(res_samples))
-                new_hidden.append(s)
+                # Evict output to DRAM so next frame's L1 allocation doesn't conflict.
+                s_dram = ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG)
+                s.deallocate(True)
+                new_hidden_dram.append(s_dram)
 
-            hidden_samples = new_hidden
+            hidden_samples = new_hidden_dram
 
             # Temporal attention injection at this CrossAttnDownBlock2D.
             key = f"down{block_idx}"
@@ -338,7 +367,7 @@ def forward_unet_staged(
         elif down_block_type == "DownBlock2D":
             # No temporal injection on plain DownBlock2D (no motion module here
             # in the AnimateDiff MotionAdapter checkpoint).
-            new_hidden = []
+            new_hidden_dram = []
             for i in range(num_frames):
                 s, res_samples = down_block(
                     hidden_states=hidden_samples[i],
@@ -353,15 +382,14 @@ def forward_unet_staged(
                     resnet_groups=norm_num_groups,
                     downsample_padding=downsample_padding,
                     resnet_time_scale_shift=resnet_time_scale_shift,
-                    # conv_compute_kernel_config is a module-level constant in the UNet
-                    # source; we pass None to stay safe — DownBlock2D uses it for dtype
-                    # selection which falls back gracefully.
                     dtype=None,
                     compute_kernel_config=None,
                 )
                 down_res_per_frame[i].extend(list(res_samples))
-                new_hidden.append(s)
-            hidden_samples = new_hidden
+                s_dram = ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG)
+                s.deallocate(True)
+                new_hidden_dram.append(s_dram)
+            hidden_samples = new_hidden_dram
 
         else:
             raise AssertionError(
@@ -371,7 +399,7 @@ def forward_unet_staged(
 
     # ------------------------------------------------------------------ 5. Mid block
     # Replicates __call__ lines 447-468.
-    new_hidden = []
+    new_hidden_dram = []
     for i in range(num_frames):
         s = ttnn_model.mid_block(
             hidden_states=hidden_samples[i],
@@ -393,9 +421,11 @@ def forward_unet_staged(
             use_linear_projection=use_linear_projection,
             upcast_attention=upcast_attention,
         )
-        new_hidden.append(s)
+        s_dram = ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG)
+        s.deallocate(True)
+        new_hidden_dram.append(s_dram)
 
-    hidden_samples = new_hidden
+    hidden_samples = new_hidden_dram
 
     # Temporal injection at the mid block (1 motion module in the checkpoint).
     if "mid" in temporal_kernels and temporal_kernels["mid"]:
@@ -439,7 +469,7 @@ def forward_unet_staged(
         upsample_size = None
 
         if up_block_type == "CrossAttnUpBlock2D":
-            new_hidden = []
+            new_hidden_dram = []
             for i in range(num_frames):
                 s = up_block(
                     hidden_states=hidden_samples[i],
@@ -468,9 +498,11 @@ def forward_unet_staged(
                     resnet_time_scale_shift=resnet_time_scale_shift,
                     index=block_idx,
                 )
-                new_hidden.append(s)
+                s_dram = ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG)
+                s.deallocate(True)
+                new_hidden_dram.append(s_dram)
 
-            hidden_samples = new_hidden
+            hidden_samples = new_hidden_dram
 
             # Temporal injection at this CrossAttnUpBlock2D.
             key = f"up{block_idx}"
@@ -485,7 +517,7 @@ def forward_unet_staged(
 
         elif up_block_type == "UpBlock2D":
             # No temporal injection on plain UpBlock2D.
-            new_hidden = []
+            new_hidden_dram = []
             for i in range(num_frames):
                 s = up_block(
                     hidden_states=hidden_samples[i],
@@ -503,8 +535,10 @@ def forward_unet_staged(
                     resnet_groups=norm_num_groups,
                     resnet_time_scale_shift=resnet_time_scale_shift,
                 )
-                new_hidden.append(s)
-            hidden_samples = new_hidden
+                s_dram = ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG)
+                s.deallocate(True)
+                new_hidden_dram.append(s_dram)
+            hidden_samples = new_hidden_dram
 
         else:
             raise AssertionError(
