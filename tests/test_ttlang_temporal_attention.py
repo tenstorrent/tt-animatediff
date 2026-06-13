@@ -101,3 +101,33 @@ def test_dim_640():
     x = torch.randn(S, N, C2)
     out = mod.forward(x)
     assert out.shape == (S, N, C2)
+
+
+def _pcc(a, b):
+    a_f = a.float().flatten()
+    b_f = b.float().flatten()
+    return torch.corrcoef(torch.stack([a_f, b_f]))[0, 1].item()
+
+
+def test_qkv_kernel_pcc():
+    """Sim QKV projection matches float32 reference to PCC > 0.999."""
+    from animatediff_ttnn.ttlang.temporal_attention_kernel import _qkv_kernel_sim
+
+    torch.manual_seed(42)
+    SN = S_ROWS * N_TILES   # tile-rows (S spatial rows × N frame-tiles)
+    x_t   = torch.randn(SN * TILE, C_TILES * TILE)
+    w_q_t = torch.randn(C_TILES * TILE, C_TILES * TILE) * 0.02
+    w_k_t = torch.randn(C_TILES * TILE, C_TILES * TILE) * 0.02
+    w_v_t = torch.randn(C_TILES * TILE, C_TILES * TILE) * 0.02
+
+    q_ref = x_t @ w_q_t
+    k_ref = x_t @ w_k_t
+    v_ref = x_t @ w_v_t
+
+    q_sim, k_sim, v_sim = _qkv_kernel_sim(
+        x_t, w_q_t, w_k_t, w_v_t, sn_tiles=SN, c_tiles=C_TILES
+    )
+
+    assert _pcc(q_sim, q_ref) > 0.999, f"Q PCC {_pcc(q_sim, q_ref):.4f}"
+    assert _pcc(k_sim, k_ref) > 0.999, f"K PCC {_pcc(k_sim, k_ref):.4f}"
+    assert _pcc(v_sim, v_ref) > 0.999, f"V PCC {_pcc(v_sim, v_ref):.4f}"
