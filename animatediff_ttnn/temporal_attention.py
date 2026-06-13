@@ -427,3 +427,233 @@ def generate_frames_temporal(
         print(f"  Frame {i + 1}/{num_frames} decoded")
 
     return frames
+
+
+def generate_frames_motion(
+    device,
+    ttnn_model,
+    ttnn_vae,
+    config,
+    torch_time_proj,
+    text_embeddings: torch.Tensor,
+    temporal_kernels: dict,
+    num_frames: int = 8,
+    num_steps: int = 25,
+    guidance_scale: float = 7.5,
+    seed: int = 42,
+    height: int = 512,
+    width: int = 512,
+    use_lightning: bool = False,
+    chain_from: str | None = None,
+    chain_save: str | None = None,
+    chain_alpha: float = 0.6,
+    on_step=None,
+) -> List:
+    """Generate temporally-coherent frames using MotionAdapter temporal attention.
+
+    Phase 3: MotionAdapter QKV weights are injected into the TTNN UNet via
+    forward_unet_staged(), which calls each UNet block object across all N frames
+    and applies TemporalAttentionKernel between blocks at 7 injection points
+    (down0-2, mid, up0-2). This produces genuine AnimateDiff-quality temporal
+    coherence on Blackhole hardware.
+
+    The denoising loop differs from generate_frames_temporal: instead of N
+    sequential ttnn_model() calls per step followed by cross_frame_attention(),
+    forward_unet_staged() processes all N frames in a single staged pass with
+    temporal attention applied between blocks at feature-level.
+
+    Args:
+        device: TTNN Blackhole device from setup_blackhole()
+        ttnn_model: Loaded TTNN UNet2D model
+        ttnn_vae: TTNN Vae decoder
+        config: unet.config from PyTorch UNet2DConditionModel
+        torch_time_proj: unet.time_proj, used by build_tlist
+        text_embeddings: Shape (2, 96, 768) — [uncond, cond] concatenated
+        temporal_kernels: dict from motion_weights.load_motion_kernels()
+        num_frames: Number of frames to generate
+        num_steps: Denoising steps (25 for PNDM, 8 for Lightning)
+        guidance_scale: CFG scale (7.5 recommended)
+        seed: RNG seed — shared base noise + per-frame perturbation
+        height, width: Output size in pixels (512 × 512)
+        use_lightning: If True, use EulerDiscreteScheduler
+        chain_from: Path to .pt latents from a previous chain_save run
+        chain_save: Path to save this run's final latents for chaining
+        chain_alpha: Blend weight for chain_from (default 0.6)
+        on_step: Optional callable(step_idx, num_steps, frame_latents)
+
+    Returns:
+        List of PIL Images, length num_frames
+    """
+    import ttnn
+    from PIL import Image
+    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
+    from animatediff_ttnn.ttnn_motion_pipeline import forward_unet_staged
+    from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
+
+    lh, lw = height // 8, width // 8
+
+    # Scheduler setup — identical to generate_frames_temporal
+    if use_lightning:
+        from diffusers import EulerDiscreteScheduler
+        from animatediff_ttnn.tt_euler_scheduler import TtEulerScheduler
+        euler_kwargs = dict(
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule="linear",
+            timestep_spacing="trailing",
+        )
+        schedulers = [EulerDiscreteScheduler(**euler_kwargs) for _ in range(num_frames)]
+        for s in schedulers:
+            s.set_timesteps(num_steps)
+        _tt_sched = TtEulerScheduler(**euler_kwargs)
+        _tt_sched.set_timesteps(num_steps)
+    else:
+        from diffusers import PNDMScheduler
+        from models.demos.vision.generative.stable_diffusion.wormhole.sd_pndm_scheduler import TtPNDMScheduler
+        pndm_kwargs = dict(
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule="scaled_linear",
+            num_train_timesteps=1000,
+            skip_prk_steps=True,
+            steps_offset=1,
+        )
+        schedulers = [PNDMScheduler(**pndm_kwargs) for _ in range(num_frames)]
+        for s in schedulers:
+            s.set_timesteps(num_steps)
+        _tt_sched = TtPNDMScheduler(device=device, **pndm_kwargs)
+        _tt_sched.set_timesteps(num_steps)
+
+    timesteps = schedulers[0].timesteps
+    init_noise_sigma = float(schedulers[0].init_noise_sigma)
+
+    # Noise init + chain blending — identical to generate_frames_temporal
+    generator = torch.Generator().manual_seed(seed)
+    base_noise = torch.randn(1, 4, lh, lw, generator=generator)
+    noise_perturb = 0.02 if use_lightning else 0.05
+
+    if chain_from is not None:
+        from pathlib import Path as _Path
+        import torch.nn.functional as _F
+        chain_path = _Path(chain_from)
+        if chain_path.exists():
+            prev = torch.load(chain_path, map_location="cpu", weights_only=True)
+            prev_mean = prev.mean(dim=0, keepdim=True).float()
+            ch_mean = prev_mean.mean(dim=(2, 3), keepdim=True)
+            ch_std = prev_mean.std(dim=(2, 3), keepdim=True).clamp(min=1e-6)
+            prev_norm = (prev_mean - ch_mean) / ch_std
+            ksize = 9
+            prev_blurred = _F.avg_pool2d(
+                prev_norm, kernel_size=ksize, stride=1,
+                padding=ksize // 2, count_include_pad=False,
+            )
+            mixed = (1.0 - chain_alpha) * base_noise + chain_alpha * prev_blurred
+            mixed_std = mixed.std().clamp(min=1e-6)
+            base_noise = mixed / mixed_std
+            print(f"  Chain: blended {chain_path.name} at alpha={chain_alpha} (ksize=9, renorm)")
+        else:
+            print(f"  Chain: warning — {chain_from} not found, ignoring")
+
+    frame_latents = []
+    for _ in range(num_frames):
+        perturbed = base_noise + noise_perturb * torch.randn(base_noise.shape, generator=generator)
+        frame_latents.append(perturbed * init_noise_sigma)
+
+    _tlist = build_tlist(_tt_sched, torch_time_proj, device, lh, lw)
+    ttnn_text_emb = to_device(
+        text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+    )
+
+    num_steps_actual = len(timesteps)
+
+    for step_idx, t in enumerate(timesteps):
+        # Build per-frame CFG-doubled device tensors
+        device_samples = []
+        for i in range(num_frames):
+            latent_cpu = frame_latents[i]
+            if use_lightning:
+                latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
+            lat = to_device(latent_cpu, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+            lat_input = ttnn.concat([lat, lat], dim=0)
+            lat.deallocate(True)
+            device_samples.append(lat_input)
+
+        # Staged UNet forward — all N frames, 7 temporal injection points
+        raw_outputs = forward_unet_staged(
+            ttnn_model=ttnn_model,
+            frame_samples=device_samples,
+            timestep=_tlist[step_idx],
+            encoder_hidden_states=ttnn_text_emb,
+            config=config,
+            temporal_kernels=temporal_kernels,
+            device=device,
+            num_frames=num_frames,
+        )
+
+        # Apply CFG guidance and collect noise predictions
+        noise_preds = []
+        for i, raw in enumerate(raw_outputs):
+            guided = tt_guide(raw, guidance_scale)
+            noise_pred_cpu = from_device(guided, device).to(torch.float32)
+            raw.deallocate(True)
+            guided.deallocate(True)
+            noise_preds.append(noise_pred_cpu)
+
+        # Scheduler step — same logic as generate_frames_temporal
+        if use_lightning:
+            step_alpha = _cosine_alpha(step_idx, num_steps_actual, 0.35)
+            stacked_preds = torch.cat(noise_preds, dim=0)
+            blended_preds_t = cross_frame_attention(stacked_preds, alpha=step_alpha)
+            blended_preds = [blended_preds_t[i: i + 1] for i in range(num_frames)]
+            next_latents = [
+                schedulers[i].step(blended_preds[i], t, frame_latents[i]).prev_sample
+                for i in range(num_frames)
+            ]
+            stacked_lat = torch.cat(next_latents, dim=0)
+            attended_lat = cross_frame_attention(stacked_lat, alpha=step_alpha * 0.4)
+            for i in range(num_frames):
+                frame_latents[i] = attended_lat[i: i + 1]
+        else:
+            for i in range(num_frames):
+                frame_latents[i] = schedulers[i].step(
+                    noise_preds[i], t, frame_latents[i]
+                ).prev_sample
+
+        print(f"  [motion] Step {step_idx + 1}/{num_steps_actual}", end="\r", flush=True)
+        if on_step is not None:
+            on_step(step_idx, num_steps_actual, frame_latents)
+
+    print()
+
+    # Cleanup shared device tensors
+    ttnn_text_emb.deallocate(True)
+    for t_tensor in _tlist:
+        t_tensor.deallocate(True)
+
+    # Chain save
+    if chain_save is not None:
+        from pathlib import Path as _Path
+        save_path = _Path(chain_save)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(torch.cat(frame_latents, dim=0), save_path)
+        print(f"  Chain: saved latents → {save_path}")
+
+    # VAE decode — identical to generate_frames_temporal
+    frames = []
+    for i, latent in enumerate(frame_latents):
+        latent_scaled = latent / 0.18215
+        ttnn_lat = to_device(
+            latent_scaled.permute(0, 2, 3, 1),
+            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+        ttnn_lat.deallocate(True)
+        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
+        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2])).float()
+        ttnn_decoded.deallocate(True)
+        img = (decoded / 2 + 0.5).clamp(0, 1)
+        img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
+        frames.append(Image.fromarray(img))
+        print(f"  Frame {i + 1}/{num_frames} decoded")
+
+    return frames
