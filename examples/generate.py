@@ -162,6 +162,19 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="chain_alpha",
         help="Blend weight for --chain-from latents (0=ignore, 1=replace; default 0.6).",
     )
+    parser.add_argument(
+        "--motion-adapter",
+        metavar="PATH",
+        nargs="?",
+        const="guoyww/animatediff-motion-adapter-v1-5-2",
+        default=None,
+        dest="motion_adapter",
+        help=(
+            "Load MotionAdapter weights for Phase 3 temporal attention. "
+            "PATH defaults to HuggingFace cache for guoyww/animatediff-motion-adapter-v1-5-2. "
+            "Only valid with --mode blackhole."
+        ),
+    )
     return parser
 
 args = _build_parser().parse_args()
@@ -387,23 +400,49 @@ def run_ttnn():
 
         print(f"Generating {args.frames} frame(s)...")
         t1 = time.time()
-        frames = generate_frames_temporal(
-            device=device,
-            ttnn_model=ttnn_model,
-            ttnn_vae=ttnn_vae,
-            config=config,
-            torch_time_proj=torch_time_proj,
-            text_embeddings=text_embeddings,
-            num_frames=args.frames,
-            num_steps=args.steps,
-            guidance_scale=guidance,
-            seed=args.seed,
-            temporal_alpha=args.temporal_alpha,
-            use_lightning=args.lightning,
-            chain_from=args.chain_from,
-            chain_save=args.chain_save,
-            chain_alpha=args.chain_alpha,
-        )
+        if args.motion_adapter and args.mode == "blackhole":
+            # Phase 3: MotionAdapter-injected temporal attention
+            print(f"  [motion] Loading MotionAdapter from {args.motion_adapter} ...")
+            from animatediff_ttnn.motion_weights import load_motion_kernels
+            temporal_kernels = load_motion_kernels(model_id=args.motion_adapter, num_frames=args.frames)
+            print(f"  [motion] Loaded {sum(len(v) for v in temporal_kernels.values())} kernels")
+            from animatediff_ttnn.temporal_attention import generate_frames_motion
+            frames = generate_frames_motion(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                temporal_kernels=temporal_kernels,
+                num_frames=args.frames,
+                num_steps=args.steps,
+                guidance_scale=guidance,
+                seed=args.seed,
+                use_lightning=args.lightning,
+                chain_from=args.chain_from,
+                chain_save=args.chain_save,
+                chain_alpha=args.chain_alpha,
+            )
+        else:
+            # Default path: cross-frame temporal attention (no MotionAdapter)
+            frames = generate_frames_temporal(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                num_frames=args.frames,
+                num_steps=args.steps,
+                guidance_scale=guidance,
+                seed=args.seed,
+                temporal_alpha=args.temporal_alpha,
+                use_lightning=args.lightning,
+                chain_from=args.chain_from,
+                chain_save=args.chain_save,
+                chain_alpha=args.chain_alpha,
+            )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
     finally:
