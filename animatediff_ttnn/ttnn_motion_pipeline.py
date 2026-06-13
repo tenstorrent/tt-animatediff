@@ -98,4 +98,527 @@ def _apply_temporal(
     return out
 
 
-# forward_unet_staged is added in Task 3
+def forward_unet_staged(
+    ttnn_model,
+    frame_samples: list,
+    timestep,
+    encoder_hidden_states,
+    config,
+    temporal_kernels: dict,
+    device,
+    num_frames: int,
+    *,
+    attention_mask=None,
+    cross_attention_kwargs=None,
+) -> list:
+    """Staged TTNN UNet forward pass with MotionAdapter temporal attention injection.
+
+    Replicates the TTNN UNet __call__ orchestration (SD 1.4 architecture) but processes
+    N frames and inserts _apply_temporal() at 7 injection points (3 down-blocks, 1
+    mid-block, 3 up-blocks).  Each frame travels through the UNet independently for
+    spatial operations; the temporal attention bridge cross-attends between all N frames
+    at each injection point.
+
+    This function NEVER modifies the TTNN UNet source file.  Instead it calls the same
+    block objects (ttnn_model.down_blocks, ttnn_model.mid_block, ttnn_model.up_blocks)
+    directly — they are plain Python callables.
+
+    Args:
+        ttnn_model:            Instantiated TTNN UNet2DConditionModel (the __call__-able
+                               object from ttnn_functional_unet_2d_condition_model_new_conv).
+        frame_samples:         List of N TTNN tensors, one per frame, shape [B, C, H, W]
+                               (NCHW, same format as the single-frame UNet input).
+        timestep:              Shared timestep embedding tensor (already passed through
+                               time_proj / time_embedding — same object for all frames).
+        encoder_hidden_states: Text conditioning tensor, shared across all frames.
+        config:                SD config object (center_input_sample, etc.).
+        temporal_kernels:      Dict mapping injection-point keys to lists of
+                               TemporalAttentionKernel.  Expected keys:
+                                 "down0", "down1", "down2"  — CrossAttn down blocks
+                                 "mid"                       — mid block
+                                 "up0", "up1", "up2"         — CrossAttn up blocks
+                               A missing key means no injection at that point (e.g.,
+                               "down3" / "up3" for DownBlock2D / UpBlock2D are omitted).
+        device:                TTNN device (MeshDevice from setup_blackhole).
+        num_frames:            N, the length of frame_samples.
+        attention_mask:        Optional attention mask (always None in SD 1.4 usage).
+        cross_attention_kwargs: Optional cross-attention kwargs dict.
+
+    Returns:
+        List of N TTNN tensors, each [B, 4, H, W] (predicted noise, NCHW), ready for
+        the scheduler step (scheduler.step) and VAE decode.
+
+    Architecture constants (SD 1.4 defaults matching the TTNN UNet weights):
+        block_out_channels   = (320, 640, 1280, 1280)
+        layers_per_block     = 2
+        down_block_types     = ("CrossAttnDownBlock2D", "CrossAttnDownBlock2D",
+                                "CrossAttnDownBlock2D", "DownBlock2D")
+        up_block_types       = ("CrossAttnUpBlock2D", "CrossAttnUpBlock2D",
+                                "CrossAttnUpBlock2D", "UpBlock2D")
+        time_embed_dim       = block_out_channels[0] * 4 = 1280
+        attention_head_dim   = 8  (scalar → broadcasted to tuple)
+        norm_num_groups      = 32
+        norm_eps             = 1e-5
+        cross_attention_dim  = 1280
+        act_fn               = "silu"
+        downsample_padding   = 1
+    """
+    # ------------------------------------------------------------------ imports
+    # Deferred inside the function body to avoid ImportError when ttnn is absent
+    # (CI unit-test runners, the functional simulator, etc.).
+    from models.demos.vision.generative.stable_diffusion.wormhole.tt.ttnn_functional_utility_functions import (  # noqa: E501
+        get_default_compute_config,
+        pre_process_input,
+    )
+    from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import (
+        reshard_for_output_channels_divisibility,
+    )
+
+    # ------------------------------------------------------------------ SD 1.4 constants
+    # These mirror the default arguments in __call__ of
+    # ttnn_functional_unet_2d_condition_model_new_conv.py.
+    block_out_channels = (320, 640, 1280, 1280)
+    layers_per_block = 2
+    downsample_padding = 1
+    mid_block_scale_factor = 1  # unused in forward path but kept for clarity
+    act_fn = "silu"
+    norm_num_groups = 32
+    norm_eps = 1e-5
+    cross_attention_dim = 1280
+    attention_head_dim = 8  # scalar; broadcast to per-block tuple below
+    only_cross_attention = False  # scalar; broadcast below
+    dual_cross_attention = False
+    use_linear_projection = False
+    upcast_attention = False
+    resnet_time_scale_shift = "default"
+    time_embed_dim = block_out_channels[0] * 4  # 1280
+
+    # Broadcast scalars to per-block tuples (matches __call__ lines 382-386).
+    if isinstance(only_cross_attention, bool):
+        only_cross_attention = [only_cross_attention] * len(ttnn_model.down_block_types)
+    if isinstance(attention_head_dim, int):
+        attention_head_dim = (attention_head_dim,) * len(ttnn_model.down_block_types)
+
+    # ------------------------------------------------------------------ 1. Pre-process: pad → permute → reshape
+    # Replicates __call__ lines 331-333 for each frame.
+    # Input frame: [B, C, H, W] (NCHW).  After pad + permute: NHWC.
+    # After reshape: [1, 1, B*H*W, C] (tiled, interleaved).
+    processed_samples = []
+    for frame in frame_samples:
+        s = ttnn.pad(frame, padding=((0, 0), (0, 28), (0, 0), (0, 0)), value=0)
+        s = ttnn.permute(s, (0, 2, 3, 1))  # NCHW → NHWC
+        s = ttnn.reshape(s, (1, 1, s.shape[0] * s.shape[1] * s.shape[2], s.shape[3]))
+        processed_samples.append(s)
+
+    # ------------------------------------------------------------------ 2. conv_in for each frame
+    # Replicates __call__ lines 338-378 (conv_in setup + per-frame call).
+    # ttnn_model.conv_in_weights / conv_in_bias are updated in-place via
+    # return_weights_and_bias=True (same pattern as __call__).
+    out_channels = ttnn_model.parameters.conv_in.weight.shape[0]
+    in_channels_conv = ttnn_model.parameters.conv_in.weight.shape[1]
+    shard_layout = (
+        ttnn.TensorMemoryLayout.HEIGHT_SHARDED
+        if in_channels_conv < 320
+        else ttnn.TensorMemoryLayout.BLOCK_SHARDED
+    )
+    conv_in_config = ttnn.Conv2dConfig(
+        weights_dtype=ttnn.bfloat8_b,
+        shard_layout=shard_layout,
+        reshard_if_not_optimal=True,
+        enable_act_double_buffer=True,
+        enable_weights_double_buffer=True,
+    )
+    compute_config = get_default_compute_config(ttnn_model.device)
+    conv_in_kwargs = {
+        "in_channels": in_channels_conv,
+        "out_channels": out_channels,
+        "batch_size": ttnn_model.batch_size,
+        "input_height": ttnn_model.input_height,
+        "input_width": ttnn_model.input_width,
+        "kernel_size": (3, 3),
+        "stride": (1, 1),
+        "padding": (1, 1),
+        "dilation": (1, 1),
+        "groups": 1,
+        "device": ttnn_model.device,
+        "conv_config": conv_in_config,
+        "slice_config": ttnn.Conv2dL1FullSliceConfig,
+    }
+
+    hidden_samples = []
+    for s in processed_samples:
+        s, [ttnn_model.conv_in_weights, ttnn_model.conv_in_bias] = ttnn.conv2d(
+            input_tensor=s,
+            weight_tensor=ttnn_model.conv_in_weights,
+            bias_tensor=ttnn_model.conv_in_bias,
+            **conv_in_kwargs,
+            compute_config=compute_config,
+            dtype=ttnn.bfloat8_b,
+            return_weights_and_bias=True,
+        )
+        s = reshard_for_output_channels_divisibility(s, out_channels)
+        s = ttnn.reallocate(s)
+        hidden_samples.append(s)
+
+    # ------------------------------------------------------------------ 3. Time embedding (shared)
+    # __call__ line 305: emb = self.emb(t_emb)
+    # timestep is already the preprocessed t_emb tensor — shared across all frames.
+    emb = ttnn_model.emb(timestep)
+
+    # ------------------------------------------------------------------ 4. Down blocks
+    # Replicates __call__ lines 389-445.
+    # down_res_per_frame[i] accumulates the residual samples for frame i across all
+    # down blocks (equivalent to down_block_res_samples in the original).
+    output_channel = block_out_channels[0]
+    down_res_per_frame = [[] for _ in range(num_frames)]
+
+    # Prime residuals with the conv_in output (same as original line 390).
+    # The original does: down_block_res_samples = (sample_copied_to_dram,)
+    for i in range(num_frames):
+        sample_dram = ttnn.to_memory_config(hidden_samples[i], ttnn.DRAM_MEMORY_CONFIG)
+        down_res_per_frame[i].append(sample_dram)
+
+    for block_idx, (down_block_type, down_block) in enumerate(
+        zip(ttnn_model.down_block_types, ttnn_model.down_blocks)
+    ):
+        input_channel = output_channel
+        output_channel = block_out_channels[block_idx]
+        is_final_block = block_idx == len(block_out_channels) - 1
+
+        if down_block_type == "CrossAttnDownBlock2D":
+            # Process every frame through this block.
+            new_hidden = []
+            for i in range(num_frames):
+                s, res_samples = down_block(
+                    hidden_states=hidden_samples[i],
+                    temb=emb,
+                    encoder_hidden_states=encoder_hidden_states,
+                    attention_mask=attention_mask,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                    num_layers=layers_per_block,
+                    in_channels=input_channel,
+                    out_channels=output_channel,
+                    temb_channels=time_embed_dim,
+                    add_downsample=not is_final_block,
+                    resnet_eps=norm_eps,
+                    resnet_act_fn=act_fn,
+                    config=config,
+                    resnet_groups=norm_num_groups,
+                    downsample_padding=downsample_padding,
+                    cross_attention_dim=cross_attention_dim,
+                    attn_num_head_channels=attention_head_dim[block_idx],
+                    dual_cross_attention=dual_cross_attention,
+                    use_linear_projection=use_linear_projection,
+                    only_cross_attention=only_cross_attention[block_idx],
+                    upcast_attention=upcast_attention,
+                    resnet_time_scale_shift=resnet_time_scale_shift,
+                )
+                down_res_per_frame[i].extend(list(res_samples))
+                new_hidden.append(s)
+
+            hidden_samples = new_hidden
+
+            # Temporal attention injection at this CrossAttnDownBlock2D.
+            key = f"down{block_idx}"
+            if key in temporal_kernels and temporal_kernels[key]:
+                hidden_samples = _apply_temporal(
+                    hidden_samples,
+                    temporal_kernels[key],
+                    device,
+                    num_frames,
+                    output_channel,
+                )
+
+        elif down_block_type == "DownBlock2D":
+            # No temporal injection on plain DownBlock2D (no motion module here
+            # in the AnimateDiff MotionAdapter checkpoint).
+            new_hidden = []
+            for i in range(num_frames):
+                s, res_samples = down_block(
+                    hidden_states=hidden_samples[i],
+                    temb=emb,
+                    num_layers=layers_per_block,
+                    in_channels=input_channel,
+                    out_channels=output_channel,
+                    temb_channels=time_embed_dim,
+                    add_downsample=not is_final_block,
+                    resnet_eps=norm_eps,
+                    resnet_act_fn=act_fn,
+                    resnet_groups=norm_num_groups,
+                    downsample_padding=downsample_padding,
+                    resnet_time_scale_shift=resnet_time_scale_shift,
+                    # conv_compute_kernel_config is a module-level constant in the UNet
+                    # source; we pass None to stay safe — DownBlock2D uses it for dtype
+                    # selection which falls back gracefully.
+                    dtype=None,
+                    compute_kernel_config=None,
+                )
+                down_res_per_frame[i].extend(list(res_samples))
+                new_hidden.append(s)
+            hidden_samples = new_hidden
+
+        else:
+            raise AssertionError(
+                f"Unexpected down_block_type: {down_block_type}.  "
+                "Only CrossAttnDownBlock2D and DownBlock2D are supported."
+            )
+
+    # ------------------------------------------------------------------ 5. Mid block
+    # Replicates __call__ lines 447-468.
+    new_hidden = []
+    for i in range(num_frames):
+        s = ttnn_model.mid_block(
+            hidden_states=hidden_samples[i],
+            temb=emb,
+            encoder_hidden_states=encoder_hidden_states,
+            attention_mask=attention_mask,
+            cross_attention_kwargs=cross_attention_kwargs,
+            in_channels=block_out_channels[-1],
+            temb_channels=time_embed_dim,
+            resnet_eps=norm_eps,
+            resnet_act_fn=act_fn,
+            output_scale_factor=mid_block_scale_factor,
+            resnet_time_scale_shift=resnet_time_scale_shift,
+            cross_attention_dim=cross_attention_dim,
+            config=config,
+            attn_num_head_channels=attention_head_dim[-1],
+            resnet_groups=norm_num_groups,
+            dual_cross_attention=dual_cross_attention,
+            use_linear_projection=use_linear_projection,
+            upcast_attention=upcast_attention,
+        )
+        new_hidden.append(s)
+
+    hidden_samples = new_hidden
+
+    # Temporal injection at the mid block (1 motion module in the checkpoint).
+    if "mid" in temporal_kernels and temporal_kernels["mid"]:
+        hidden_samples = _apply_temporal(
+            hidden_samples,
+            temporal_kernels["mid"],
+            device,
+            num_frames,
+            block_out_channels[-1],  # 1280
+        )
+
+    # ------------------------------------------------------------------ 6. Up blocks
+    # Replicates __call__ lines 470-550.
+    # resnets = layers_per_block + 1 = 3 for both CrossAttn and plain up blocks.
+    reversed_block_out_channels = list(reversed(block_out_channels))
+    reversed_attention_head_dim = list(reversed(attention_head_dim))
+    only_cross_attention_up = list(reversed(only_cross_attention))
+    output_channel = reversed_block_out_channels[0]
+
+    for block_idx, (up_block_type, up_block) in enumerate(
+        zip(ttnn_model.up_block_types, ttnn_model.up_blocks)
+    ):
+        is_final_block = block_idx == len(block_out_channels) - 1
+        prev_output_channel = output_channel
+        output_channel = reversed_block_out_channels[block_idx]
+        input_channel = reversed_block_out_channels[min(block_idx + 1, len(block_out_channels) - 1)]
+        add_upsample = not is_final_block
+
+        # Number of residuals consumed by this up block (SD 1.4: always 3).
+        resnets = layers_per_block + 1
+
+        # Consume residuals from each frame's accumulator.
+        res_tuples = []
+        for i in range(num_frames):
+            res_tuple = tuple(down_res_per_frame[i][-resnets:])
+            down_res_per_frame[i] = down_res_per_frame[i][:-resnets]
+            res_tuples.append(res_tuple)
+
+        # upsample_size is only set when forward_upsample_size is True (non-standard
+        # spatial dims).  SD 1.4 always uses 64×64 inputs so this stays None.
+        upsample_size = None
+
+        if up_block_type == "CrossAttnUpBlock2D":
+            new_hidden = []
+            for i in range(num_frames):
+                s = up_block(
+                    hidden_states=hidden_samples[i],
+                    temb=emb,
+                    res_hidden_states_tuple=res_tuples[i],
+                    encoder_hidden_states=encoder_hidden_states,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                    upsample_size=upsample_size,
+                    attention_mask=attention_mask,
+                    num_layers=layers_per_block + 1,
+                    in_channels=input_channel,
+                    out_channels=output_channel,
+                    prev_output_channel=prev_output_channel,
+                    temb_channels=time_embed_dim,
+                    add_upsample=add_upsample,
+                    resnet_eps=norm_eps,
+                    resnet_act_fn=act_fn,
+                    resnet_groups=norm_num_groups,
+                    config=config,
+                    cross_attention_dim=cross_attention_dim,
+                    attn_num_head_channels=reversed_attention_head_dim[block_idx],
+                    dual_cross_attention=dual_cross_attention,
+                    use_linear_projection=use_linear_projection,
+                    only_cross_attention=only_cross_attention_up[block_idx],
+                    upcast_attention=upcast_attention,
+                    resnet_time_scale_shift=resnet_time_scale_shift,
+                    index=block_idx,
+                )
+                new_hidden.append(s)
+
+            hidden_samples = new_hidden
+
+            # Temporal injection at this CrossAttnUpBlock2D.
+            key = f"up{block_idx}"
+            if key in temporal_kernels and temporal_kernels[key]:
+                hidden_samples = _apply_temporal(
+                    hidden_samples,
+                    temporal_kernels[key],
+                    device,
+                    num_frames,
+                    output_channel,
+                )
+
+        elif up_block_type == "UpBlock2D":
+            # No temporal injection on plain UpBlock2D.
+            new_hidden = []
+            for i in range(num_frames):
+                s = up_block(
+                    hidden_states=hidden_samples[i],
+                    temb=emb,
+                    res_hidden_states_tuple=res_tuples[i],
+                    upsample_size=upsample_size,
+                    num_layers=layers_per_block + 1,
+                    in_channels=input_channel,
+                    out_channels=output_channel,
+                    prev_output_channel=prev_output_channel,
+                    temb_channels=time_embed_dim,
+                    add_upsample=add_upsample,
+                    resnet_eps=norm_eps,
+                    resnet_act_fn=act_fn,
+                    resnet_groups=norm_num_groups,
+                    resnet_time_scale_shift=resnet_time_scale_shift,
+                )
+                new_hidden.append(s)
+            hidden_samples = new_hidden
+
+        else:
+            raise AssertionError(
+                f"Unexpected up_block_type: {up_block_type}.  "
+                "Only CrossAttnUpBlock2D and UpBlock2D are supported."
+            )
+
+    # ------------------------------------------------------------------ 7. Post-process
+    # Exact replica of __call__ lines 553-660, applied per frame.
+    # ttnn_model.conv_out_weights / conv_out_bias are updated in-place via
+    # return_weights_and_bias=True (matches the original).
+    output_samples = []
+    for sample in hidden_samples:
+        # --- group_norm ---
+        sample = ttnn.to_layout(sample, ttnn.ROW_MAJOR_LAYOUT)
+        if ttnn_model.fallback_on_groupnorm:
+            sample = ttnn.reshape(
+                sample,
+                (
+                    ttnn_model.batch_size,
+                    ttnn_model.conv_out_input_height,
+                    ttnn_model.conv_out_input_width,
+                    ttnn_model.conv_out_in_channels,
+                ),
+            )
+            sample = ttnn.permute(sample, (0, 3, 1, 2))
+            sample = ttnn.operations.normalization._fallback_group_norm(
+                sample,
+                num_groups=norm_num_groups,
+                weight=ttnn_model.parameters.conv_norm_out.weight,
+                bias=ttnn_model.parameters.conv_norm_out.bias,
+                epsilon=norm_eps,
+            )
+            sample = pre_process_input(ttnn_model.device, sample)
+        else:
+            sample = ttnn.to_memory_config(sample, ttnn_model.gn_expected_input_sharded_memory_config)
+            sample = ttnn.reshape(
+                sample,
+                (
+                    ttnn_model.batch_size,
+                    1,
+                    ttnn_model.conv_out_input_height * ttnn_model.conv_out_input_width,
+                    ttnn_model.conv_out_in_channels,
+                ),
+            )
+            sample = ttnn.group_norm(
+                sample,
+                num_groups=norm_num_groups,
+                epsilon=norm_eps,
+                input_mask=ttnn_model.norm_input_mask,
+                weight=ttnn_model.parameters.conv_norm_out.weight,
+                bias=ttnn_model.parameters.conv_norm_out.bias,
+                memory_config=ttnn_model.gn_expected_input_sharded_memory_config,
+                core_grid=ttnn_model.group_norm_core_grid,
+            )
+
+        sample = ttnn.reshape(
+            sample,
+            (
+                1,
+                1,
+                ttnn_model.batch_size * ttnn_model.conv_out_input_height * ttnn_model.conv_out_input_width,
+                ttnn_model.conv_out_in_channels,
+            ),
+        )
+
+        # --- SiLU + interleave ---
+        sample = ttnn.silu(sample, memory_config=ttnn.get_memory_config(sample))
+        sample = ttnn.sharded_to_interleaved(sample, ttnn.L1_MEMORY_CONFIG, sample.dtype)
+
+        # --- conv_out ---
+        conv_out_config = ttnn.Conv2dConfig(
+            weights_dtype=ttnn.bfloat8_b,
+            shard_layout=ttnn.TensorMemoryLayout.HEIGHT_SHARDED,
+            act_block_h_override=64,
+            reshard_if_not_optimal=True,
+            enable_act_double_buffer=True,
+        )
+        compute_config_out = get_default_compute_config(ttnn_model.device)
+        conv_out_kwargs = {
+            "in_channels": ttnn_model.conv_out_in_channels,
+            "out_channels": ttnn_model.conv_out_out_channels,
+            "batch_size": ttnn_model.batch_size,
+            "input_height": ttnn_model.conv_out_input_height,
+            "input_width": ttnn_model.conv_out_input_width,
+            "kernel_size": (3, 3),
+            "stride": (1, 1),
+            "padding": (1, 1),
+            "dilation": (1, 1),
+            "groups": 1,
+            "device": ttnn_model.device,
+            "conv_config": conv_out_config,
+            "slice_config": ttnn.Conv2dL1FullSliceConfig,
+        }
+        sample, [ttnn_model.conv_out_weights, ttnn_model.conv_out_bias] = ttnn.conv2d(
+            input_tensor=sample,
+            **conv_out_kwargs,
+            weight_tensor=ttnn_model.conv_out_weights,
+            bias_tensor=ttnn_model.conv_out_bias,
+            compute_config=compute_config_out,
+            dtype=ttnn.bfloat8_b,
+            return_weights_and_bias=True,
+        )
+        sample = reshard_for_output_channels_divisibility(sample, ttnn_model.conv_out_out_channels)
+
+        # --- final reshape + permute → NCHW → slice first 4 channels ---
+        sample = ttnn.to_memory_config(sample, ttnn.L1_MEMORY_CONFIG)
+        sample = ttnn.clone(sample, memory_config=ttnn.L1_MEMORY_CONFIG, dtype=ttnn.bfloat16)
+        sample = ttnn.reshape(
+            sample,
+            (
+                ttnn_model.batch_size,
+                ttnn_model.conv_out_input_height,
+                ttnn_model.conv_out_input_width,
+                -1,
+            ),
+        )
+        sample = ttnn.permute(sample, (0, 3, 1, 2))  # NHWC → NCHW
+        sample = sample[:, :4, :, :]  # keep only the 4 latent channels
+
+        output_samples.append(sample)
+
+    return output_samples
