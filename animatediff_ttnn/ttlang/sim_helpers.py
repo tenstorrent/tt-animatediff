@@ -70,10 +70,16 @@ def block_to_tensor(block) -> torch.Tensor:
     Returns:
         Float32 tensor of shape (M_tiles*TILE_SIZE, N_tiles*TILE_SIZE).
     """
-    TM, TN = block._shape  # tile-grid dimensions
+    TM, TN = block.shape  # tile-grid dimensions (public property)
+    assert TM > 0 and TN > 0, f"Block tile-grid must be non-empty, got ({TM}, {TN})"
     raw = [t.to_torch() for t in block.to_list()]
     tile_h, tile_w = raw[0].shape
+    assert tile_h == tile_w == TILE_SIZE, (
+        f"Expected square {TILE_SIZE}×{TILE_SIZE} tiles, got {tile_h}×{tile_w}"
+    )
     # Stack into (TM*TN, tile_h, tile_w) then view as 4-D tile grid.
     grid = torch.stack(raw).reshape(TM, TN, tile_h, tile_w)
     # Permute so row-tiles and row-elements are adjacent, then flatten.
-    return grid.permute(0, 2, 1, 3).contiguous().reshape(TM * tile_h, TN * tile_w)
+    # Cast to float32 to guarantee a consistent output dtype regardless of
+    # how the Block's internal Tensors were created.
+    return grid.permute(0, 2, 1, 3).contiguous().reshape(TM * tile_h, TN * tile_w).float()
