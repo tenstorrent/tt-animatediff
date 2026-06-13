@@ -447,6 +447,7 @@ def generate_frames_motion(
     chain_from: str | None = None,
     chain_save: str | None = None,
     chain_alpha: float = 0.6,
+    temporal_alpha: float = 0.35,
     on_step=None,
 ) -> List:
     """Generate temporally-coherent frames using MotionAdapter temporal attention.
@@ -601,7 +602,7 @@ def generate_frames_motion(
 
         # Scheduler step — same logic as generate_frames_temporal
         if use_lightning:
-            step_alpha = _cosine_alpha(step_idx, num_steps_actual, 0.35)
+            step_alpha = _cosine_alpha(step_idx, num_steps_actual, temporal_alpha)
             stacked_preds = torch.cat(noise_preds, dim=0)
             blended_preds_t = cross_frame_attention(stacked_preds, alpha=step_alpha)
             blended_preds = [blended_preds_t[i: i + 1] for i in range(num_frames)]
