@@ -76,7 +76,56 @@ class TemporalAttentionKernel:
         return out.to(x.dtype)
 
     def _forward_ttlang(self, x):
-        raise NotImplementedError("TT-Lang sim path implemented in Task 3-5")
+        """Full TT-Lang sim path: QKV proj → SDPA → out proj + residual.
+
+        Reshapes the 3-D input [S, N, C] to the 2-D tile-kernel layout
+        [S*N, C], runs each stage through the simulator Block ops, then
+        reshapes the result back to [S, N, C].
+
+        Args:
+            x: Float or half tensor of shape [S, N, C].
+
+        Returns:
+            Tensor of shape [S, N, C] matching _forward_pytorch to PCC > 0.999.
+        """
+        S, N, C = x.shape
+        TILE = self.TILE_SIZE
+
+        # Both N and C must be tile-aligned for the Block matmul kernels.
+        assert N % TILE == 0, f"N={N} must be multiple of TILE={TILE}"
+        assert C % TILE == 0, f"C={C} must be multiple of TILE={TILE}"
+
+        n_tiles = N // TILE    # frame tiles (typically 1 when N=32)
+        c_tiles = C // TILE    # channel tiles (e.g. 10 for C=320)
+        # Each spatial position is one "row" of tile-rows in the 2-D layout.
+        # The flattened layout has s_rows * n_tiles tile-rows total.
+        s_rows = S
+
+        xf = x.float()
+        # Flatten spatial + frame dims: [S, N, C] → [S*N, C].
+        # Kernel convention: sn_tiles = s_rows * n_tiles tile-rows of height TILE.
+        x_2d = xf.reshape(S * N, C)
+
+        # Stage 1: QKV projection — x_2d @ w_{q,k,v}
+        q_2d, k_2d, v_2d = _qkv_kernel_sim(
+            x_2d, self.w_q, self.w_k, self.w_v,
+            sn_tiles=s_rows * n_tiles, c_tiles=c_tiles,
+        )
+
+        # Stage 2: Scaled dot-product attention per spatial position.
+        attn_out_2d = _sdpa_kernel_sim(
+            q_2d, k_2d, v_2d,
+            s_rows=s_rows, n_tiles=n_tiles, c_tiles=c_tiles,
+        )
+
+        # Stage 3: Output projection + residual: out = x_2d + attn_out @ w_o
+        out_2d = _out_proj_kernel_sim(
+            attn_out_2d, x_2d, self.w_o,
+            s_rows=s_rows, n_tiles=n_tiles, c_tiles=c_tiles,
+        )
+
+        # Restore [S, N, C] shape and cast back to the input dtype.
+        return out_2d.reshape(S, N, C).to(x.dtype)
 
 
 def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
@@ -301,3 +350,72 @@ def _qkv_kernel_sim(x_t, w_q_t, w_k_t, w_v_t, sn_tiles, c_tiles):
     k = block_to_tensor(Block.from_list(k_tiles, shape=(sn_tiles, c_tiles)))
     v = block_to_tensor(Block.from_list(v_tiles, shape=(sn_tiles, c_tiles)))
     return q, k, v
+
+
+def _out_proj_kernel_sim(attn_out_t, x_residual_t, w_o_t, s_rows, n_tiles, c_tiles):
+    """Output projection + residual: out = x_residual + attn_out @ w_o.
+
+    Uses the same row-streaming Block ``@`` pattern as ``_qkv_kernel_sim``:
+    for each tile-row *m*, computes ``attn_row [1, c_tiles] @ w_o → proj_row``
+    then adds the corresponding ``x_residual`` row tile-by-tile.
+
+    The addition uses the sim Block ``+`` operator (element-wise, same shape),
+    which is overloaded on the Block class.
+
+    Args:
+        attn_out_t:   Float32 [s_rows*n_tiles*32, c_tiles*32] — output of
+                      _sdpa_kernel_sim.
+        x_residual_t: Float32 [s_rows*n_tiles*32, c_tiles*32] — original x
+                      (for the residual connection).
+        w_o_t:        Float32 [c_tiles*32, c_tiles*32] — output projection weight.
+        s_rows:       Spatial rows S.
+        n_tiles:      Frame tiles N/32 (typically 1).
+        c_tiles:      Channel tiles C/32.
+
+    Returns:
+        out: Float32 tensor [s_rows*n_tiles*32, c_tiles*32]
+             equal to x_residual + attn_out @ w_o.
+    """
+    import sys
+    import os
+    _TT_LANG_PYTHON = os.path.expanduser("~/code/tt-lang/python")
+    if _TT_LANG_PYTHON not in sys.path:
+        sys.path.insert(0, _TT_LANG_PYTHON)
+
+    from sim.dfb import Block
+    from animatediff_ttnn.ttlang.sim_helpers import tensor_to_block, block_to_tensor
+
+    # Total tile-rows in the flattened (S*N) layout.
+    sn_tiles = s_rows * n_tiles
+
+    # Convert inputs to tile-Block representations.
+    attn_blk = tensor_to_block(attn_out_t.float(),   shape=(sn_tiles, c_tiles))
+    xres_blk = tensor_to_block(x_residual_t.float(), shape=(sn_tiles, c_tiles))
+    wo_blk   = tensor_to_block(w_o_t.float(),        shape=(c_tiles, c_tiles))
+
+    out_tiles = []
+
+    for m in range(sn_tiles):
+        # Extract row m from attn_out and x_residual: each is (1, c_tiles).
+        attn_row = Block.from_list(
+            attn_blk.to_list()[m * c_tiles:(m + 1) * c_tiles],
+            shape=(1, c_tiles),
+        )
+        xres_row = Block.from_list(
+            xres_blk.to_list()[m * c_tiles:(m + 1) * c_tiles],
+            shape=(1, c_tiles),
+        )
+
+        # Output projection: (1, c_tiles) @ (c_tiles, c_tiles) → (1, c_tiles).
+        proj_row = attn_row @ wo_blk
+
+        # Residual addition: (1, c_tiles) + (1, c_tiles) → (1, c_tiles).
+        # Block.__add__ performs element-wise addition tile-by-tile.
+        out_row = xres_row + proj_row
+
+        # Collect output tiles in row-major order.
+        out_tiles.extend(out_row.to_list())
+
+    # Reassemble the full (sn_tiles, c_tiles) block and convert to tensor.
+    out_blk = Block.from_list(out_tiles, shape=(sn_tiles, c_tiles))
+    return block_to_tensor(out_blk)

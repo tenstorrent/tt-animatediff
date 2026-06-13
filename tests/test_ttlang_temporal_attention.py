@@ -156,3 +156,45 @@ def test_sdpa_kernel_pcc():
 
     pcc = _pcc(sim_out, ref)
     assert pcc > 0.999, f"SDPA sim PCC {pcc:.6f} < 0.999"
+
+
+def test_out_proj_kernel_pcc():
+    """Sim out-proj + residual matches float32 reference to PCC > 0.999."""
+    from animatediff_ttnn.ttlang.temporal_attention_kernel import _out_proj_kernel_sim
+
+    torch.manual_seed(11)
+    SN = S_ROWS * N_TILES
+    attn_out_t = torch.randn(SN * TILE, C_TILES * TILE)
+    x_res_t    = torch.randn(SN * TILE, C_TILES * TILE)
+    w_o_t      = torch.randn(C_TILES * TILE, C_TILES * TILE) * 0.02
+
+    ref = x_res_t + attn_out_t @ w_o_t
+
+    sim_out = _out_proj_kernel_sim(
+        attn_out_t, x_res_t, w_o_t,
+        s_rows=S_ROWS, n_tiles=N_TILES, c_tiles=C_TILES
+    )
+
+    pcc = _pcc(sim_out, ref)
+    assert pcc > 0.999, f"out_proj sim PCC {pcc:.6f} < 0.999"
+
+
+def test_full_forward_ttlang():
+    """End-to-end use_ttlang=True matches use_ttlang=False to PCC > 0.999."""
+    w_q, w_k, w_v, w_o = _make_weights(C)
+
+    mod_py = TemporalAttentionKernel(dim=C, num_frames=N, use_ttlang=False)
+    mod_py.load_weights(w_q, w_k, w_v, w_o)
+
+    mod_tt = TemporalAttentionKernel(dim=C, num_frames=N, use_ttlang=True)
+    mod_tt.load_weights(w_q, w_k, w_v, w_o)
+
+    torch.manual_seed(3)
+    x = torch.randn(S, N, C)
+
+    ref = mod_py.forward(x)
+    out = mod_tt.forward(x)
+
+    assert out.shape == ref.shape, f"shape mismatch: {out.shape} vs {ref.shape}"
+    pcc = _pcc(out, ref)
+    assert pcc > 0.999, f"full ttlang forward PCC {pcc:.6f} < 0.999"
