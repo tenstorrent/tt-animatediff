@@ -94,9 +94,11 @@ def run_ttnn(x: torch.Tensor, w_q, w_k, w_v, w_o, device, ttnn) -> torch.Tensor:
       6. out_2d = x_dev + matmul(matmul(attn, V), w_o)
       7. Retrieve to CPU and reshape to [S, N, C]
 
-    MeshDevice note: to_device() replicates the tensor across all chips.
-    from_device() concatenates along dim=0 and we slice [:batch] to recover one
-    replica — the same pattern used in generate_frames() in ttnn_pipeline.py.
+    MeshDevice note: to_device() from animatediff_ttnn.ttnn_pipeline replicates
+    the tensor across all chips. from_device() concatenates along dim=0 and
+    slices [:batch] to recover one replica — the same pattern used in
+    generate_frames() in ttnn_pipeline.py. batch=S*N is passed for the final
+    output so the full [S*N, C] result is not truncated.
 
     Args:
         x:      [S, N, C] float32 input tensor (CPU).
@@ -116,33 +118,14 @@ def run_ttnn(x: torch.Tensor, w_q, w_k, w_v, w_o, device, ttnn) -> torch.Tensor:
     S, N, C = x.shape
     x_2d = x.float().reshape(S * N, C)  # [S*N, C]
 
-    # ---- Helper: send tensor to device (handles both Device and MeshDevice) ----
-    def to_dev(t: torch.Tensor):
-        """Send t to device as bfloat16 TILE layout, replicated across chips."""
-        if isinstance(device, ttnn.MeshDevice):
-            return ttnn.from_torch(
-                t,
-                dtype=ttnn.bfloat16,
-                layout=ttnn.TILE_LAYOUT,
-                device=device,
-                mesh_mapper=ttnn.ReplicateTensorToMesh(device),
-            )
-        return ttnn.from_torch(t, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=device)
-
-    def from_dev(t) -> torch.Tensor:
-        """Retrieve tensor from device to CPU torch (handles MeshDevice)."""
-        if isinstance(device, ttnn.MeshDevice):
-            # ConcatMeshToTensor stacks chip replicas along dim=0;
-            # slice [: S*N] to get one replica.
-            return ttnn.to_torch(ttnn.from_device(t), mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))[: S * N]
-        return ttnn.to_torch(ttnn.from_device(t))
-
     # ---- Send inputs to device ------------------------------------------------
-    x_dev  = to_dev(x_2d)
-    wq_dev = to_dev(w_q)
-    wk_dev = to_dev(w_k)
-    wv_dev = to_dev(w_v)
-    wo_dev = to_dev(w_o)
+    # Use project helpers from animatediff_ttnn.ttnn_pipeline (imported above)
+    # which handle both single Device and MeshDevice transparently.
+    x_dev  = to_device(x_2d, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+    wq_dev = to_device(w_q,  device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+    wk_dev = to_device(w_k,  device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+    wv_dev = to_device(w_v,  device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+    wo_dev = to_device(w_o,  device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
     hw_stages.append("send_to_device")
 
     # ---- QKV projections -------------------------------------------------------
@@ -175,7 +158,9 @@ def run_ttnn(x: torch.Tensor, w_q, w_k, w_v, w_o, device, ttnn) -> torch.Tensor:
     hw_stages.append("out_proj_residual")
 
     # ---- Retrieve to CPU  -----------------------------------------------------
-    out_cpu = from_dev(out_dev).float()                       # cast bf16 → f32
+    # batch=S*N: from_device slices [:batch] after concatenating chip replicas,
+    # so the full [S*N, C] result is preserved (not truncated to batch=1).
+    out_cpu = from_device(out_dev, device, batch=S * N).float()  # cast bf16 → f32
     hw_stages.append("from_device")
 
     # Reshape back to [S, N, C]
@@ -231,7 +216,7 @@ def main():
             sys.path.insert(0, str(repo_root))
 
         try:
-            from animatediff_ttnn.ttnn_pipeline import setup_blackhole
+            from animatediff_ttnn.ttnn_pipeline import setup_blackhole, to_device, from_device
             print("[info] Opening Blackhole device …")
             device = setup_blackhole()
             n_chips = device.num_devices if hasattr(device, "num_devices") else 1
