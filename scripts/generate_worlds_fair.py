@@ -443,6 +443,7 @@ def main():
     parser = argparse.ArgumentParser(description="World's Fair generation suite")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running")
     parser.add_argument("--skip-chain", action="store_true", help="Skip Unisphere chain")
+    parser.add_argument("--chain-only", action="store_true", help="Run only Unisphere chain (skip all tiers)")
     parser.add_argument("--tier", choices=["Q1", "Q2", "Q3", "all"], default="all",
                         help="Which tier to run (default: all)")
     parser.add_argument("--only-prompt", type=int, default=None,
@@ -450,7 +451,7 @@ def main():
     args = parser.parse_args()
 
     prompts = ALL_PROMPTS if args.only_prompt is None else [ALL_PROMPTS[args.only_prompt]]
-    tiers = ["Q1", "Q2", "Q3"] if args.tier == "all" else [args.tier]
+    tiers = [] if args.chain_only else (["Q1", "Q2", "Q3"] if args.tier == "all" else [args.tier])
 
     all_results = {}
 
