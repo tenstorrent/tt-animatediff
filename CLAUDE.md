@@ -1,24 +1,22 @@
 # tt-animatediff — project notes for Claude
 
 ## What this project is
-Canonical implementation of AnimateDiff on Tenstorrent Blackhole hardware.
-TTNN UNet denoising on Blackhole; VAE decode on CPU; cross-frame temporal
-attention in Phase 2.5. Exported by copy to:
-  - ~/code/tt-vscode-toolkit/content/projects/animatediff/
-  - ~/code/tt-local-generator/app/animatediff/ (via _BUNDLED_DIR in animatediff.py)
+Canonical three-phase implementation of AnimateDiff on Tenstorrent Blackhole hardware.
+- Phase 1: CPU AnimateDiff (full MotionAdapter, any machine)
+- Phase 2/2.5: TTNN UNet on Blackhole, cross-frame temporal blend (--temporal-alpha)
+- Phase 3: MotionAdapter injected into Blackhole denoising loop (--motion-adapter)
+  via forward_unet_staged() + _apply_temporal() CPU round-trip at 7 injection points
 
-## Export workflow (until this is a public vendorable repo)
-After changes here, run:
-  rsync -a --exclude="__pycache__" --exclude="*.pyc" --exclude="*.egg-info" \
-    ~/code/tt-animatediff/ ~/code/tt-vscode-toolkit/content/projects/animatediff/
-  rsync -a --exclude="__pycache__" --exclude="*.pyc" --exclude="*.egg-info" \
-    ~/code/tt-animatediff/ ~/code/tt-local-generator/app/animatediff/
-Then commit in each downstream repo separately.
+## Export workflow
+Public repo (v0.1.0+). Consumers vendor via git submodule — no rsync needed.
+See ~/CLAUDE.md "tt-animatediff" section for details.
 
 ## Architecture phases
 - Phase 1 (generate_baseline.py): CPU AnimateDiff with MotionAdapter
 - Phase 2 (generate_blackhole.py): TTNN UNet on Blackhole, sequential frames
-- Phase 2.5 (generate_blackhole_v2.py): TTNN UNet + cross-frame temporal attention
+- Phase 2.5 (generate_blackhole_v2.py): TTNN UNet + cross-frame temporal attention ← default Blackhole
+- Phase 3 (generate.py --motion-adapter): forward_unet_staged() replaces TTNN __call__,
+  inserts _apply_temporal() after each cross-attention block (7 injection points, CPU round-trip)
 
 ## Key known issues
 - ARC firmware hang on chip 3 (P300C board 0000046131924055) — see ~/qb2-debug/
