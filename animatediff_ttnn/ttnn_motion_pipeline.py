@@ -63,31 +63,37 @@ def _apply_temporal(
         List of N TTNN tensors, same shape as input, with temporal attention applied.
         Original input tensors are deallocated.
     """
-    # Step 1: pull all N frames to CPU as float32
-    cpu_tensors = [ttnn.to_torch(s).float() for s in samples]
-    # cpu_tensors[i]: [2, S, C] — batch=2 (CFG: uncond row 0, cond row 1)
+    # Step 1: pull all N frames to CPU as float32.
+    # TTNN pre_process_input folds CFG batch=2 into the spatial dim, producing
+    # [1, 1, 2*S, C] rather than [2, S, C].  Reshape to [2, S, C] for indexing.
+    raw_tensors = [ttnn.to_torch(s).float() for s in samples]
+    orig_shape = raw_tensors[0].shape  # save for reconstruction
+    # Flatten to [2*S, C], then split into [2, S, C]
+    cpu_tensors = [t.reshape(2, -1, t.shape[-1]) for t in raw_tensors]
+    # cpu_tensors[i]: [2, S, C] — uncond row 0, cond row 1
 
-    # Step 2: apply each motion module kernel in sequence
+    # Step 2: apply each motion module kernel in sequence.
     # Kernel input/output: [S, N, C] — spatial positions × frames × channels
     for kernel in kernel_list:
         new_cpu = []
-        for b in range(2):  # uncond (b=0), cond (b=1) — attend separately
+        for b in range(2):  # uncond (b=0), cond (b=1) — attend independently
             # Stack [S, C] from each frame at this CFG branch → [S, N, C]
             feats = torch.stack([t[b] for t in cpu_tensors], dim=1)  # [S, N, C]
             attended = kernel.forward(feats)                           # [S, N, C]
             new_cpu.append(attended)
-        # Reconstruct per-frame [2, S, C] tensors from attended output
+        # Reconstruct per-frame [2, S, C] from attended outputs
         cpu_tensors = [
             torch.stack([new_cpu[0][:, i, :], new_cpu[1][:, i, :]], dim=0)  # [2, S, C]
             for i in range(num_frames)
         ]
 
-    # Step 3: push back to device; deallocate originals
+    # Step 3: restore original TTNN layout [1, 1, 2*S, C] and push to device.
     out = []
     for i in range(num_frames):
+        t_restored = cpu_tensors[i].reshape(orig_shape)
         out.append(
             to_device(
-                cpu_tensors[i],
+                t_restored,
                 device,
                 dtype=ttnn.bfloat16,
                 layout=ttnn.TILE_LAYOUT,
