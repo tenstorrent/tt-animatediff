@@ -70,22 +70,27 @@ def test_wrapper_n1_passthrough():
 
 
 def test_full_forward_pytorch():
-    """use_ttlang=False forward matches manual reference implementation."""
+    """use_ttlang=False forward matches manual reference implementation.
+
+    _make_weights() returns [C, C] matrices that simulate nn.Linear storage
+    (i.e. [out_features, in_features]).  load_weights() transposes them on
+    load, so the reference must also transpose before the @ operator.
+    """
     w_q, w_k, w_v, w_o = _make_weights(C)
     mod = TemporalAttentionKernel(dim=C, num_frames=N, use_ttlang=False)
     mod.load_weights(w_q, w_k, w_v, w_o)
     torch.manual_seed(1)
     x = torch.randn(S, N, C)
 
-    # Manual reference
+    # Reference uses transposed weights, matching nn.Linear convention.
     scale = C ** -0.5
-    q = x.float() @ w_q
-    k = x.float() @ w_k
-    v = x.float() @ w_v
+    q = x.float() @ w_q.T
+    k = x.float() @ w_k.T
+    v = x.float() @ w_v.T
     scores = (q @ k.transpose(-1, -2)) * scale   # [S, N, N]
     attn = torch.softmax(scores, dim=-1)
     attn_out = attn @ v                           # [S, N, C]
-    ref = x.float() + attn_out @ w_o             # [S, N, C]
+    ref = x.float() + attn_out @ w_o.T           # [S, N, C]
 
     out = mod.forward(x)
     pcc = torch.corrcoef(torch.stack([out.float().flatten(), ref.float().flatten()]))[0, 1].item()

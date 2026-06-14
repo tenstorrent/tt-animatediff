@@ -37,12 +37,16 @@ class TemporalAttentionKernel:
         """Load QKV and output-projection weights.
 
         Args:
-            w_q, w_k, w_v, w_o: Each shape [C, C], any dtype (converted to float32).
+            w_q, w_k, w_v, w_o: Each shape [C, C] from nn.Linear (stored as
+                [out_features, in_features]).  Transposed here so the forward
+                pass can compute ``x @ w`` (not ``x @ w.T``).
         """
-        self.w_q = w_q.float()
-        self.w_k = w_k.float()
-        self.w_v = w_v.float()
-        self.w_o = w_o.float()
+        # nn.Linear stores weights as [out, in]; transpose to [in, out] so that
+        # x @ self.w_{q,k,v,o} matches the correct linear-projection direction.
+        self.w_q = w_q.float().T.contiguous()
+        self.w_k = w_k.float().T.contiguous()
+        self.w_v = w_v.float().T.contiguous()
+        self.w_o = w_o.float().T.contiguous()
 
     def forward(self, x):
         """Apply temporal self-attention across N frames.
