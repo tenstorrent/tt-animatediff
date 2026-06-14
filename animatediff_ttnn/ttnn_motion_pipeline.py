@@ -154,6 +154,7 @@ def forward_unet_staged(
     attention_mask=None,
     cross_attention_kwargs=None,
     injection_alpha: float = 1.0,
+    skip_keys: set | None = None,
 ) -> list:
     """Staged TTNN UNet forward pass with MotionAdapter temporal attention injection.
 
@@ -379,7 +380,7 @@ def forward_unet_staged(
 
             # Temporal attention injection at this CrossAttnDownBlock2D.
             key = f"down{block_idx}"
-            if key in temporal_kernels and temporal_kernels[key]:
+            if key in temporal_kernels and temporal_kernels[key] and key not in (skip_keys or set()):
                 from animatediff_ttnn.motion_weights import get_injection_point_info
                 ip = get_injection_point_info(key)
                 hidden_samples = _apply_temporal(
@@ -457,7 +458,7 @@ def forward_unet_staged(
     hidden_samples = new_hidden_dram
 
     # Temporal injection at the mid block (1 motion module in the checkpoint).
-    if "mid" in temporal_kernels and temporal_kernels["mid"]:
+    if "mid" in temporal_kernels and temporal_kernels["mid"] and "mid" not in (skip_keys or set()):
         from animatediff_ttnn.motion_weights import get_injection_point_info
         ip_mid = get_injection_point_info("mid")
         hidden_samples = _apply_temporal(
@@ -540,7 +541,7 @@ def forward_unet_staged(
 
             # Temporal injection at this CrossAttnUpBlock2D.
             key = f"up{block_idx}"
-            if key in temporal_kernels and temporal_kernels[key]:
+            if key in temporal_kernels and temporal_kernels[key] and key not in (skip_keys or set()):
                 from animatediff_ttnn.motion_weights import get_injection_point_info
                 ip = get_injection_point_info(key)
                 hidden_samples = _apply_temporal(

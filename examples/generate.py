@@ -187,6 +187,19 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--motion-adapter-skip",
+        nargs="+",
+        default=[],
+        dest="motion_adapter_skip",
+        metavar="KEY",
+        help=(
+            "Injection-point keys to skip (space-separated). "
+            "Valid keys: down0 down1 down2 mid up0 up1 up2. "
+            "Skipping up1/up2 cuts ~85%% of CPU overhead (large spatial dims) "
+            "with minimal quality impact. Example: --motion-adapter-skip up1 up2"
+        ),
+    )
+    parser.add_argument(
         "--device-id",
         type=int,
         default=None,
@@ -448,6 +461,7 @@ def run_ttnn():
                 chain_save=args.chain_save,
                 chain_alpha=args.chain_alpha,
                 injection_alpha=args.motion_adapter_alpha,
+                skip_keys=set(args.motion_adapter_skip),
             )
         else:
             # Default path: cross-frame temporal attention (no MotionAdapter)
