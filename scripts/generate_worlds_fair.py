@@ -299,8 +299,14 @@ def _build_cmd(prompt_cfg: dict, tier_key: str, chip: int) -> tuple[list[str], P
     return cmd, out_path
 
 
-def run_tier(tier_key: str, prompts: list, dry_run: bool = False):
-    """Run all prompts in a tier, up to 4 at a time (one per chip)."""
+def run_tier(tier_key: str, prompts: list, dry_run: bool = False, stagger: int = 360):
+    """Run all prompts in a tier, up to 4 at a time (one per chip).
+
+    stagger: seconds to wait between launching each subprocess.  The TTNN JIT
+    cache and model-weight loader use file locks that deadlock when 4 processes
+    hit them simultaneously.  A stagger of ~360s (6 min) lets each process
+    complete model loading before the next one starts.  Pass 0 to disable.
+    """
     tier = TIERS[tier_key]
     chips = tier["chips"]
     (OUT / tier_key).mkdir(parents=True, exist_ok=True)
@@ -308,6 +314,8 @@ def run_tier(tier_key: str, prompts: list, dry_run: bool = False):
     print(f"\n{'═' * 60}")
     print(f"║  Tier {tier_key}: {tier['label']}")
     print(f"║  {tier['desc']}")
+    if stagger:
+        print(f"║  Stagger: {stagger}s between launches to avoid JIT lock contention")
     print(f"{'═' * 60}")
 
     pending = list(prompts)
@@ -337,6 +345,13 @@ def run_tier(tier_key: str, prompts: list, dry_run: bool = False):
             procs.append((p, chip, out_path, subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             ), time.time()))
+
+            # Stagger: wait before launching the next process so each one
+            # finishes TTNN JIT compilation and model loading before the next
+            # one starts — simultaneous loads deadlock on the JIT cache lock.
+            if stagger and i < len(batch) - 1:
+                print(f"  [stagger] waiting {stagger}s before next launch…")
+                time.sleep(stagger)
 
         for p, chip, out_path, proc, t0 in procs:
             stdout, stderr = proc.communicate()
@@ -448,6 +463,10 @@ def main():
                         help="Which tier to run (default: all)")
     parser.add_argument("--only-prompt", type=int, default=None,
                         help="Run only prompt index 0-8 (for testing)")
+    parser.add_argument("--stagger", type=int, default=360,
+                        help="Seconds between parallel chip launches (default 360). "
+                             "Prevents JIT cache deadlock when 4 processes load models simultaneously. "
+                             "Use 0 to disable.")
     args = parser.parse_args()
 
     prompts = ALL_PROMPTS if args.only_prompt is None else [ALL_PROMPTS[args.only_prompt]]
@@ -456,7 +475,7 @@ def main():
     all_results = {}
 
     for tier_key in tiers:
-        results = run_tier(tier_key, prompts, dry_run=args.dry_run)
+        results = run_tier(tier_key, prompts, dry_run=args.dry_run, stagger=args.stagger)
         all_results.update(results)
 
     if not args.skip_chain:
