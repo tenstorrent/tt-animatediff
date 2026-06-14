@@ -449,6 +449,7 @@ def generate_frames_motion(
     chain_alpha: float = 0.6,
     temporal_alpha: float = 0.35,
     on_step=None,
+    injection_alpha: float = 1.0,
 ) -> List:
     """Generate temporally-coherent frames using MotionAdapter temporal attention.
 
@@ -589,6 +590,7 @@ def generate_frames_motion(
             temporal_kernels=temporal_kernels,
             device=device,
             num_frames=num_frames,
+            injection_alpha=injection_alpha,
         )
 
         # Apply CFG guidance and collect noise predictions

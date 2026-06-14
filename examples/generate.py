@@ -175,6 +175,29 @@ def _build_parser() -> argparse.ArgumentParser:
             "Only valid with --mode blackhole."
         ),
     )
+    parser.add_argument(
+        "--motion-adapter-alpha",
+        type=float,
+        default=1.0,
+        dest="motion_adapter_alpha",
+        help=(
+            "Injection blend weight for MotionAdapter temporal attention (0.0–1.0). "
+            "0.0 = bypass (no-op, useful for debugging forward_unet_staged in isolation). "
+            "1.0 = full injection (default). Only used with --motion-adapter."
+        ),
+    )
+    parser.add_argument(
+        "--device-id",
+        type=int,
+        default=None,
+        dest="device_id",
+        metavar="ID",
+        help=(
+            "Blackhole chip index to use (0-based). Defaults to all available chips "
+            "(typically 4 on a quad-P300c system). Use to pin a generation run to "
+            "a specific chip for parallel multi-process batch jobs."
+        ),
+    )
     return parser
 
 args = _build_parser().parse_args()
@@ -354,7 +377,8 @@ def _open_device():
     else:
         # SD 1.4 TTNN UNet (Wormhole-targeted) uses ttnn.to_torch() without a
         # mesh_composer, which crashes if tensor is sharded across >1 chip.
-        return setup_blackhole(device_ids=[0])
+        chip = [args.device_id] if args.device_id is not None else [0]
+        return setup_blackhole(device_ids=chip)
 
 
 def run_ttnn():
@@ -423,6 +447,7 @@ def run_ttnn():
                 chain_from=args.chain_from,
                 chain_save=args.chain_save,
                 chain_alpha=args.chain_alpha,
+                injection_alpha=args.motion_adapter_alpha,
             )
         else:
             # Default path: cross-frame temporal attention (no MotionAdapter)

@@ -40,6 +40,7 @@ def _apply_temporal(
     device,
     num_frames: int,
     C: int,
+    injection_alpha: float = 1.0,
 ) -> list:
     """Bridge between TTNN device tensors and TemporalAttentionKernel.
 
@@ -82,6 +83,7 @@ def _apply_temporal(
 
     # Step 2: apply each motion module kernel in sequence.
     # Kernel input/output: [S, N, C] — spatial positions × frames × channels
+    pre_energy = sum(t.norm().item() for t in cpu_tensors)
     for kernel in kernel_list:
         new_cpu = []
         for b in range(2):  # uncond (b=0), cond (b=1) — attend independently
@@ -89,11 +91,21 @@ def _apply_temporal(
             feats = torch.stack([t[b] for t in cpu_tensors], dim=1)  # [S, N, C]
             attended = kernel.forward(feats)                           # [S, N, C]
             new_cpu.append(attended)
-        # Reconstruct per-frame [2, S, C] from attended outputs
-        cpu_tensors = [
+        attended_tensors = [
             torch.stack([new_cpu[0][:, i, :], new_cpu[1][:, i, :]], dim=0)  # [2, S, C]
             for i in range(num_frames)
         ]
+        if injection_alpha >= 1.0:
+            cpu_tensors = attended_tensors
+        else:
+            # Blend: alpha=0.0 → pure bypass (no-op), alpha=1.0 → full injection
+            cpu_tensors = [
+                (1.0 - injection_alpha) * cpu_tensors[i] + injection_alpha * attended_tensors[i]
+                for i in range(num_frames)
+            ]
+    post_energy = sum(t.norm().item() for t in cpu_tensors)
+    print(f"  [_apply_temporal C={C}] energy: {pre_energy:.1f} → {post_energy:.1f}"
+          f"  ratio={post_energy/max(pre_energy,1e-6):.3f}  alpha={injection_alpha}")
 
     # Step 3: push back to device in DRAM interleaved, then re-shard to match
     # the memory config the caller expects (captured before our CPU round-trip).
@@ -130,6 +142,7 @@ def forward_unet_staged(
     *,
     attention_mask=None,
     cross_attention_kwargs=None,
+    injection_alpha: float = 1.0,
 ) -> list:
     """Staged TTNN UNet forward pass with MotionAdapter temporal attention injection.
 
@@ -362,6 +375,7 @@ def forward_unet_staged(
                     device,
                     num_frames,
                     output_channel,
+                    injection_alpha=injection_alpha,
                 )
 
         elif down_block_type == "DownBlock2D":
@@ -435,6 +449,7 @@ def forward_unet_staged(
             device,
             num_frames,
             block_out_channels[-1],  # 1280
+            injection_alpha=injection_alpha,
         )
 
     # ------------------------------------------------------------------ 6. Up blocks
@@ -513,6 +528,7 @@ def forward_unet_staged(
                     device,
                     num_frames,
                     output_channel,
+                    injection_alpha=injection_alpha,
                 )
 
         elif up_block_type == "UpBlock2D":
