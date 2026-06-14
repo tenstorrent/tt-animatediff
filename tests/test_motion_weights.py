@@ -5,79 +5,75 @@ import pytest
 import torch
 
 
-def test_load_motion_kernels_returns_all_keys():
-    """load_motion_kernels returns dict with all 7 injection point keys."""
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    kernels = load_motion_kernels()
+def test_load_motion_modules_returns_all_keys():
+    """load_motion_modules returns dict with all 7 injection point keys."""
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    modules = load_motion_modules()
     expected_keys = {"down0", "down1", "down2", "mid", "up0", "up1", "up2"}
-    assert set(kernels.keys()) == expected_keys
+    assert set(modules.keys()) == expected_keys
 
 
-def test_load_motion_kernels_list_lengths():
-    """down keys have 2 kernels each; up keys have 3 each; mid has 1.
+def test_load_motion_modules_list_lengths():
+    """down keys have 2 modules each; up keys have 3 each; mid has 1.
 
     Verified against the actual guoyww/animatediff-motion-adapter-v1-5-2
     state dict: down_blocks 0-2 have 2 motion_modules each, up_blocks 0-2
     have 3 motion_modules each, mid_block has 1.
     """
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    kernels = load_motion_kernels()
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    modules = load_motion_modules()
     for key in ("down0", "down1", "down2"):
-        assert len(kernels[key]) == 2, f"{key} should have 2 motion modules"
+        assert len(modules[key]) == 2, f"{key} should have 2 motion modules"
     for key in ("up0", "up1", "up2"):
-        assert len(kernels[key]) == 3, f"{key} should have 3 motion modules"
-    assert len(kernels["mid"]) == 1, "mid should have 1 motion module"
+        assert len(modules[key]) == 3, f"{key} should have 3 motion modules"
+    assert len(modules["mid"]) == 1, "mid should have 1 motion module"
 
 
-def test_load_motion_kernels_weights_loaded():
-    """Every kernel has non-None w_q, w_k, w_v, w_o."""
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    kernels = load_motion_kernels()
-    for key, kernel_list in kernels.items():
-        for j, k in enumerate(kernel_list):
-            assert k.w_q is not None, f"{key}[{j}].w_q is None"
-            assert k.w_k is not None, f"{key}[{j}].w_k is None"
-            assert k.w_v is not None, f"{key}[{j}].w_v is None"
-            assert k.w_o is not None, f"{key}[{j}].w_o is None"
+def test_load_motion_modules_are_transformer3d():
+    """Every module is an AnimateDiffTransformer3D (has the forward method and num_attention_heads)."""
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    modules = load_motion_modules()
+    for key, module_list in modules.items():
+        for j, m in enumerate(module_list):
+            assert hasattr(m, "forward"), f"{key}[{j}] missing .forward"
+            assert hasattr(m, "num_attention_heads"), f"{key}[{j}] missing .num_attention_heads"
 
 
-def test_load_motion_kernels_channel_dims():
-    """Kernel dims match expected channel sizes for each injection point.
-
-    Channel dims verified from actual to_q.weight shapes in the
-    guoyww/animatediff-motion-adapter-v1-5-2 checkpoint:
-      down_blocks 0→320, 1→640, 2→1280
-      mid_block       →1280
-      up_blocks  0→1280, 1→1280, 2→640
-    """
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    kernels = load_motion_kernels()
-    expected_dims = {"down0": 320, "down1": 640, "down2": 1280,
-                     "mid": 1280, "up0": 1280, "up1": 1280, "up2": 640}
-    for key, dim in expected_dims.items():
-        for j, k in enumerate(kernels[key]):
-            assert k.dim == dim, f"{key}[{j}].dim: expected {dim}, got {k.dim}"
-            assert k.w_q.shape == (dim, dim), f"{key}[{j}].w_q.shape wrong: {k.w_q.shape}"
+def test_load_motion_modules_eval_mode():
+    """All modules are in eval mode (training=False)."""
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    modules = load_motion_modules()
+    for key, module_list in modules.items():
+        for j, m in enumerate(module_list):
+            assert not m.training, f"{key}[{j}] is still in training mode"
 
 
-def test_load_motion_kernels_weight_dtype():
-    """All weights are float32 (load_weights converts on load)."""
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    kernels = load_motion_kernels()
-    for key, kernel_list in kernels.items():
-        for j, k in enumerate(kernel_list):
-            assert k.w_q.dtype == torch.float32, f"{key}[{j}].w_q dtype: {k.w_q.dtype}"
-
-
-def test_load_motion_kernels_different_modules_have_different_weights():
+def test_load_motion_modules_different_modules_have_different_weights():
     """Adjacent motion modules per block have distinct weights (not copies)."""
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    kernels = load_motion_kernels()
-    # down blocks have 2 modules each — compare module 0 vs 1
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    modules = load_motion_modules()
+    # down blocks have 2 modules each — compare proj_in weights of module 0 vs 1
     for key in ("down0", "down1", "down2"):
-        k0, k1 = kernels[key][0], kernels[key][1]
-        assert not torch.allclose(k0.w_q, k1.w_q), f"{key}: modules 0 and 1 have identical w_q"
-    # up blocks have 3 modules each — compare module 0 vs 1
-    for key in ("up0", "up1", "up2"):
-        k0, k1 = kernels[key][0], kernels[key][1]
-        assert not torch.allclose(k0.w_q, k1.w_q), f"{key}: modules 0 and 1 have identical w_q"
+        m0, m1 = modules[key][0], modules[key][1]
+        w0 = m0.proj_in.weight.data
+        w1 = m1.proj_in.weight.data
+        assert not torch.allclose(w0, w1), f"{key}: modules 0 and 1 have identical proj_in weights"
+
+
+def test_get_injection_point_info_dims():
+    """get_injection_point_info returns correct spatial dims for all 7 keys."""
+    from animatediff_ttnn.motion_weights import get_injection_point_info
+    expected = {
+        "down0": (320, 32, 32),
+        "down1": (640, 16, 16),
+        "down2": (1280, 8, 8),
+        "mid":   (1280, 8, 8),
+        "up0":   (1280, 16, 16),
+        "up1":   (1280, 32, 32),
+        "up2":   (640, 64, 64),
+    }
+    for key, (dim, h, w) in expected.items():
+        ip = get_injection_point_info(key)
+        assert ip.dim == dim, f"{key} dim: expected {dim}, got {ip.dim}"
+        assert ip.spatial_h == h, f"{key} spatial_h: expected {h}, got {ip.spatial_h}"
+        assert ip.spatial_w == w, f"{key} spatial_w: expected {w}, got {ip.spatial_w}"

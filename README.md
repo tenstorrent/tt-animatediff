@@ -202,8 +202,9 @@ For full details see [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.
 The `guoyww/animatediff-motion-adapter-v1-5-2` motion weights are loaded and injected
 at 7 points (down0/1/2, mid, up0/1/2) in the SD 1.4 TTNN UNet without modifying tt-metal
 source. After each TTNN cross-attention block, hidden states are round-tripped to CPU,
-passed through the `TemporalAttentionKernel.forward()` per injection point, then returned
-to Blackhole. Enable with `--motion-adapter` (any number of chips, any step count).
+passed through the full `AnimateDiffTransformer3D.forward()` (norm, proj_in/out, positional
+embedding, GEGLU feedforward) per injection point, then returned to Blackhole.
+Enable with `--motion-adapter` (any number of chips, any step count).
 
 ---
 
@@ -216,7 +217,7 @@ animatediff_ttnn/
   temporal_attention.py     Phase 2.5/3: cross-frame blend + generate_frames_motion()
   tt_euler_scheduler.py     TtEulerScheduler — Euler wrapper for Lightning on Blackhole
   generation_helpers.py     Shared load_sd14_ttnn / encode_prompt
-  motion_weights.py         Phase 3: load MotionAdapter weights → TemporalAttentionKernel dict
+  motion_weights.py         Phase 3: load MotionAdapter weights → AnimateDiffTransformer3D modules
   ttnn_motion_pipeline.py   Phase 3: _apply_temporal() + forward_unet_staged()
   temporal_module.py        Reference — temporal attention math (kept for study)
   ttlang/                   TT-Lang sim kernel track (TemporalAttentionKernel + 3 DSL kernels)
@@ -345,7 +346,7 @@ flowchart TD
     MODE -->|blackhole / sim| BH_SCHED["PNDMScheduler (standard)\nor EulerDiscreteScheduler (Lightning)\n— one per frame"]
     BH_SCHED --> LOOP["For each step t:"]
     LOOP --> BH_UNET["TTNN UNet2D — SD 1.4\nBlackhole P300C\n~15 s/frame"]
-    BH_UNET -->|--motion-adapter| MA["forward_unet_staged()\n7 × TemporalAttentionKernel\nCPU round-trip per block"]
+    BH_UNET -->|--motion-adapter| MA["forward_unet_staged()\n7 × AnimateDiffTransformer3D\nCPU round-trip per block"]
     BH_UNET -->|standard| CFA
     MA --> CFA["cross_frame_attention()\nnoise_preds blended\n(CPU, tiny)"]
     CFA --> STEP["scheduler.step()\n— one per frame"]
@@ -405,10 +406,25 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.8.0 — 2026-06-14
+- **Phase 3 bug fixes** — two root-cause fixes for energy explosion that made all Phase 3
+  output pure noise:
+  1. **Weight transpose** — `nn.Linear` stores `[out, in]`; `load_weights()` now applies
+     `.T.contiguous()` so `x @ w` gets the correct `[in, out]` projection. Square `[C,C]`
+     matrices hid the bug until energy was measured.
+  2. **Full diffusers module** — `TemporalAttentionKernel` only implemented QKV+residual,
+     missing GroupNorm, `proj_in/proj_out` (trained, not identity), LayerNorm×3, positional
+     embedding, and GEGLU feedforward. Replaced with direct `AnimateDiffTransformer3D.forward()`.
+     Energy ratios dropped from >2.0 to <1.25.
+- **`--motion-adapter-skip KEY...`** — skip injection points by name (e.g., `--motion-adapter-skip up1 up2`).
+  Skipping the two highest-resolution up-blocks gives ~6× speedup with negligible quality change.
+- **World's Fair Q1/Q2 regenerated** — all 9 prompts × 2 tiers (plus Unisphere chain) re-run
+  with corrected Phase 3 weights.
+
 ### v0.7.0 — 2026-06-13
 - **Phase 3 — MotionAdapter on Blackhole** — `--motion-adapter` flag injects
   `guoyww/animatediff-motion-adapter-v1-5-2` at 7 UNet cross-attention points via CPU
-  round-trip through `TemporalAttentionKernel`. No tt-metal source modifications required.
+  round-trip. No tt-metal source modifications required.
   `forward_unet_staged()` replicates the TTNN UNet `__call__` orchestration in-repo,
   calling the same block objects and inserting `_apply_temporal()` hooks between them.
 - **TT-Lang temporal attention** — `animatediff_ttnn/ttlang/` implements QKV projection,

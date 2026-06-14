@@ -178,7 +178,7 @@ def forward_unet_staged(
         encoder_hidden_states: Text conditioning tensor, shared across all frames.
         config:                SD config object (center_input_sample, etc.).
         temporal_kernels:      Dict mapping injection-point keys to lists of
-                               TemporalAttentionKernel.  Expected keys:
+                               AnimateDiffTransformer3D modules.  Expected keys:
                                  "down0", "down1", "down2"  — CrossAttn down blocks
                                  "mid"                       — mid block
                                  "up0", "up1", "up2"         — CrossAttn up blocks

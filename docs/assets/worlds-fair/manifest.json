@@ -123,41 +123,137 @@
     }
   },
   "results": {
+    "paris-1889-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/paris-1889.gif",
+      "elapsed": 1278.1464931964874
+    },
+    "chicago-1893-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/chicago-1893.gif",
+      "elapsed": 990.2543320655823
+    },
+    "nyc-1939-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/nyc-1939.gif",
+      "elapsed": 702.572657585144
+    },
+    "brussels-1958-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/brussels-1958.gif",
+      "elapsed": 414.9821066856384
+    },
+    "nyc-1964-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/nyc-1964.gif",
+      "elapsed": 1278.2677156925201
+    },
+    "osaka-1970-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/osaka-1970.gif",
+      "elapsed": 989.9778263568878
+    },
+    "2064-lunar-basin-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/2064-lunar-basin.gif",
+      "elapsed": 703.7038064002991
+    },
+    "2064-deepwater-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/2064-deepwater.gif",
+      "elapsed": 417.20486307144165
+    },
+    "2064-orbital-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q2/2064-orbital.gif",
+      "elapsed": 137.92942762374878
+    },
+    "unisphere-1964": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-1964.gif",
+      "elapsed": null
+    },
+    "unisphere-1980": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-1980.gif",
+      "elapsed": null
+    },
+    "unisphere-2000": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2000.gif",
+      "elapsed": null
+    },
+    "unisphere-2026": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2026.gif",
+      "elapsed": null
+    },
+    "unisphere-2050": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2050.gif",
+      "elapsed": null
+    },
+    "unisphere-2064": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2064.gif",
+      "elapsed": null
+    },
     "paris-1889-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/paris-1889.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "paris-1889-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/paris-1889.gif",
+      "elapsed": null
     },
     "chicago-1893-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/chicago-1893.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "chicago-1893-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/chicago-1893.gif",
+      "elapsed": null
     },
     "nyc-1939-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/nyc-1939.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "nyc-1939-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/nyc-1939.gif",
+      "elapsed": null
     },
     "brussels-1958-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/brussels-1958.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "brussels-1958-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/brussels-1958.gif",
+      "elapsed": null
     },
     "nyc-1964-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/nyc-1964.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "nyc-1964-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/nyc-1964.gif",
+      "elapsed": null
     },
     "osaka-1970-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/osaka-1970.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "osaka-1970-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/osaka-1970.gif",
+      "elapsed": null
     },
     "2064-lunar-basin-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/2064-lunar-basin.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "2064-lunar-basin-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/2064-lunar-basin.gif",
+      "elapsed": null
     },
     "2064-deepwater-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/2064-deepwater.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "2064-deepwater-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/2064-deepwater.gif",
+      "elapsed": null
     },
     "2064-orbital-Q1": {
       "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q1/2064-orbital.gif",
-      "elapsed": 0
+      "elapsed": null
+    },
+    "2064-orbital-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/Q3/2064-orbital.gif",
+      "elapsed": null
     }
   }
 }

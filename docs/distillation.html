@@ -163,24 +163,30 @@
 </nav>
 
 
+<!-- ── Outcome banner ─────────────────────────────────────────────── -->
+<div style="background:#3d1010;border-bottom:2px solid #ff6b6b;padding:.9rem 2rem;text-align:center;font-size:.88rem;line-height:1.5">
+  <strong style="color:#ff6b6b">Distillation track closed — results were noisy.</strong>
+  <span style="color:#c8a0a0;margin-left:.5rem">All four runs produced noise-only output (flat learning rate on a sharp loss landscape). Weights archived as <code>weights/*.broken</code>. The documentation below preserves the methodology. For fast inference use <strong>Lightning mode</strong> (<code>--lightning</code>) instead.</span>
+</div>
+
 <!-- ── Hero ─────────────────────────────────────────────────────────── -->
 <div class="hero">
-  <div class="badge">Model Distillation</div>
-  <h1>25 steps → <em>4 steps.</em><br>Same model. 6× faster.</h1>
-  <p>We distilled the AnimateDiff UNet and MotionAdapter down to Latent Consistency Model (LCM) weights using our own Blackhole hardware. No extra GPUs. No cloud bill. Just 13 hours of consistency training.</p>
+  <div class="badge">Model Distillation — Closed</div>
+  <h1>LCM distillation attempt.<br><em style="color:#ff6b6b">Did not converge.</em></h1>
+  <p>We attempted to distill the AnimateDiff UNet and MotionAdapter to LCM weights on Blackhole hardware. The loss decreased as expected but inference produced noise — a flat learning-rate schedule on a sharp loss landscape prevented the student from learning the skip-step target. See the <a href="#outcome">Outcome</a> section for root cause. Use <code>--lightning</code> for fast inference instead.</p>
 
   <div class="hero-stats">
     <div class="stat">
       <div class="stat-val">13 h</div>
-      <div class="stat-label">Total training time</div>
-    </div>
-    <div class="stat">
-      <div class="stat-val">6×</div>
-      <div class="stat-label">Inference speedup</div>
+      <div class="stat-label">Training time (CPU)</div>
     </div>
     <div class="stat">
       <div class="stat-val">4</div>
-      <div class="stat-label">Denoising steps</div>
+      <div class="stat-label">Runs attempted</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val">0</div>
+      <div class="stat-label">Runs converged</div>
     </div>
     <div class="stat">
       <div class="stat-val">2</div>
@@ -325,7 +331,7 @@ bash scripts/record/run_distill.sh</pre>
 
     <div class="loss-box">
       <h3>Loss behavior</h3>
-      <p class="loss-desc">Consistency distillation loss oscillates normally — the student and teacher are always adapting relative to each other. Concern markers are NaN/Inf, loss stuck exactly at 0, or a sustained upward trend. We saw none of those.</p>
+      <p class="loss-desc">Consistency distillation loss oscillated normally — no NaN/Inf, not stuck at 0, no sustained upward trend. These metrics all passed. However, the loss landscape requires warmup to navigate: a flat learning rate (1e-5 throughout) prevented the student from finding the consistency manifold, and the weights collapsed to predicting mean-image noise despite the healthy-looking curves.</p>
       <div class="loss-phases">
         <div class="loss-phase">
           <h4>Phase 1 — UNet</h4>
@@ -393,11 +399,37 @@ bash scripts/record/run_distill.sh</pre>
 </section>
 
 
+<!-- ── Outcome ───────────────────────────────────────────────────────── -->
+<section id="outcome">
+  <div class="inner">
+    <h2 style="color:#ff6b6b">Outcome — distillation did not converge</h2>
+    <p class="sub">The loss metrics looked healthy, but inference produced noise on all four runs. Here's what happened.</p>
+    <div class="concept-grid" style="margin-top:1.5rem">
+      <div class="concept-card" style="border-color:rgba(255,107,107,.3)">
+        <h3 style="color:#ff6b6b">Root cause</h3>
+        <p>LCM consistency training requires a warmup phase — the loss landscape is sharp around the skip-step consistency targets, and a flat learning rate (1e-5 throughout) fails to navigate the initial gradient cliff. The student loss decreased in aggregate but never found the consistency manifold. Result: the distilled weights collapse to predicting mean-image noise.</p>
+      </div>
+      <div class="concept-card" style="border-color:rgba(255,107,107,.3)">
+        <h3 style="color:#ff6b6b">What we tried</h3>
+        <p>4 runs: UNet 4-step, UNet 8-step, MotionAdapter 4-step, MotionAdapter 8-step. Loss curves showed no NaN/Inf, no stuck-at-zero, no sustained upward trend — all the standard checks passed. The failure mode was subtle: visually healthy curves with semantically empty weights.</p>
+      </div>
+      <div class="concept-card" style="border-color:rgba(244,196,113,.3)">
+        <h3 style="color:#f4c471">What would fix it</h3>
+        <p>LR warmup (cosine from 0 → peak over first 500 steps), lower initial LR (5e-6 or less), and a guidance-distillation step that bakes CFG=7.5 into the student before consistency training begins. Standard LCM recipes from the literature all include warmup — we omitted it.</p>
+      </div>
+      <div class="concept-card" style="border-color:rgba(79,209,197,.3)">
+        <h3 style="color:#4fd1c5">Use Lightning instead</h3>
+        <p>For fast inference today, use <code>--lightning</code>. This runs 8 Euler steps (same TTNN UNet, no distillation) and produces real images. CPU Lightning uses ByteDance's genuine distilled adapter. Both are faster than 25-step PNDM with working quality.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ── Before / After ────────────────────────────────────────────────── -->
 <section id="before-after">
   <div class="inner">
-    <h2>Before and after — the same prompt, four ways</h2>
-    <p class="sub">Each row uses the same prompt and seed (42). Left: original 25-step base model. Right: our distilled variants. The quality compression from 25 → 4 steps is surprisingly small.</p>
+    <h2>Before and after — the same prompt</h2>
+    <p class="sub">Each row uses the same prompt and seed (42). Left: original 25-step base model. Middle: Euler Lightning (8-step, no distillation — <strong>this works</strong>). Right: our LCM distilled weights — <strong>noise only</strong>, distillation failed to converge.</p>
 
     <div class="ba-grid">
 
@@ -419,10 +451,9 @@ bash scripts/record/run_distill.sh</pre>
           </div>
           <div class="ba-arrow">→</div>
           <div class="ba-cell">
-            <img src="assets/lcm-aurora.gif" alt="aurora — 4-step LCM distilled" loading="lazy"
-              onerror="this.parentElement.innerHTML='<div class=\'placeholder-gif\'><span>lcm-aurora.gif<br>generating…</span></div><div class=\'ba-label after-lcm\'>4 steps · LCM (our weights)</div><div class=\'ba-caption\'>Distilled UNet + MotionAdapter</div>'">
-            <div class="ba-label after-lcm">4 steps · LCM (our weights)</div>
-            <div class="ba-caption">Distilled UNet + MotionAdapter</div>
+            <img src="assets/lcm-aurora.gif" alt="aurora — 4-step LCM (failed, noise)" loading="lazy">
+            <div class="ba-label" style="background:rgba(255,107,107,.2);color:#ff6b6b">4 steps · LCM (failed)</div>
+            <div class="ba-caption" style="color:#ff6b6b">Noise — distillation did not converge</div>
           </div>
         </div>
       </div>
@@ -445,10 +476,9 @@ bash scripts/record/run_distill.sh</pre>
           </div>
           <div class="ba-arrow">→</div>
           <div class="ba-cell">
-            <img src="assets/lcm-mandala.gif" alt="mandala — 4-step LCM distilled" loading="lazy"
-              onerror="this.parentElement.innerHTML='<div class=\'placeholder-gif\'><span>lcm-mandala.gif<br>generating…</span></div><div class=\'ba-label after-lcm\'>4 steps · LCM (our weights)</div><div class=\'ba-caption\'>Distilled UNet + MotionAdapter</div>'">
-            <div class="ba-label after-lcm">4 steps · LCM (our weights)</div>
-            <div class="ba-caption">Distilled UNet + MotionAdapter</div>
+            <img src="assets/lcm-mandala.gif" alt="mandala — 4-step LCM (failed, noise)" loading="lazy">
+            <div class="ba-label" style="background:rgba(255,107,107,.2);color:#ff6b6b">4 steps · LCM (failed)</div>
+            <div class="ba-caption" style="color:#ff6b6b">Noise — distillation did not converge</div>
           </div>
         </div>
       </div>
@@ -471,10 +501,9 @@ bash scripts/record/run_distill.sh</pre>
           </div>
           <div class="ba-arrow">→</div>
           <div class="ba-cell">
-            <img src="assets/lcm-mycelium.gif" alt="mycelium — 4-step LCM distilled" loading="lazy"
-              onerror="this.parentElement.innerHTML='<div class=\'placeholder-gif\'><span>lcm-mycelium.gif<br>generating…</span></div><div class=\'ba-label after-lcm\'>4 steps · LCM (our weights)</div><div class=\'ba-caption\'>Distilled UNet + MotionAdapter</div>'">
-            <div class="ba-label after-lcm">4 steps · LCM (our weights)</div>
-            <div class="ba-caption">Distilled UNet + MotionAdapter</div>
+            <img src="assets/lcm-mycelium.gif" alt="mycelium — 4-step LCM (failed, noise)" loading="lazy">
+            <div class="ba-label" style="background:rgba(255,107,107,.2);color:#ff6b6b">4 steps · LCM (failed)</div>
+            <div class="ba-caption" style="color:#ff6b6b">Noise — distillation did not converge</div>
           </div>
         </div>
       </div>

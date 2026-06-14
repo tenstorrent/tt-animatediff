@@ -454,11 +454,11 @@ def generate_frames_motion(
 ) -> List:
     """Generate temporally-coherent frames using MotionAdapter temporal attention.
 
-    Phase 3: MotionAdapter QKV weights are injected into the TTNN UNet via
+    Phase 3: MotionAdapter modules are injected into the TTNN UNet via
     forward_unet_staged(), which calls each UNet block object across all N frames
-    and applies TemporalAttentionKernel between blocks at 7 injection points
-    (down0-2, mid, up0-2). This produces genuine AnimateDiff-quality temporal
-    coherence on Blackhole hardware.
+    and applies full AnimateDiffTransformer3D.forward() between blocks at 7
+    injection points (down0-2, mid, up0-2). This produces genuine AnimateDiff-quality
+    temporal coherence on Blackhole hardware.
 
     The denoising loop differs from generate_frames_temporal: instead of N
     sequential ttnn_model() calls per step followed by cross_frame_attention(),
@@ -472,7 +472,7 @@ def generate_frames_motion(
         config: unet.config from PyTorch UNet2DConditionModel
         torch_time_proj: unet.time_proj, used by build_tlist
         text_embeddings: Shape (2, 96, 768) — [uncond, cond] concatenated
-        temporal_kernels: dict from motion_weights.load_motion_kernels()
+        temporal_kernels: dict from motion_weights.load_motion_modules()
         num_frames: Number of frames to generate
         num_steps: Denoising steps (25 for PNDM, 8 for Lightning)
         guidance_scale: CFG scale (7.5 recommended)
