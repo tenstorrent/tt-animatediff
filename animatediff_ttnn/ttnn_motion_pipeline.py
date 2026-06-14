@@ -36,91 +36,102 @@ except Exception:
 
 def _apply_temporal(
     samples: list,
-    kernel_list: list,
+    module_list: list,
     device,
     num_frames: int,
     C: int,
+    spatial_h: int,
+    spatial_w: int,
     injection_alpha: float = 1.0,
 ) -> list:
-    """Bridge between TTNN device tensors and TemporalAttentionKernel.
+    """Bridge between TTNN device tensors and diffusers AnimateDiffTransformer3D.
 
-    Pulls N TTNN hidden states to CPU, applies each kernel in kernel_list
-    sequentially (AnimateDiff uses 2-3 motion modules per block; mid uses 1),
-    then pushes back to device with the same dtype/layout.
+    Pulls N TTNN hidden states to CPU, reshapes to [B*N, C, H, W] (the format
+    AnimateDiffTransformer3D.forward expects), runs the full diffusers temporal
+    attention module (LayerNorm, QKV, positional embedding, feedforward), then
+    pushes back to device with the same dtype/layout.
 
-    The TTNN UNet doubles batch to 2 for CFG (uncond + cond). We split these
-    before temporal attention so uncond and cond attend over their own N-frame
-    sequences independently, then reconstruct the [2, S, C] tensors.
+    Using the full diffusers module rather than a partial QKV-only kernel ensures
+    all components (norm, proj_in/out, bias, positional embedding) are applied.
 
     Args:
-        samples:     List of N TTNN tensors, each [2, S, C].
-        kernel_list: List of TemporalAttentionKernel, applied in order.
-                     Typically 2-3 kernels (motion modules), or 1 for mid_block.
+        samples:     List of N TTNN tensors, each [1, 1, 2*S, C] where S=H*W.
+                     (TTNN pre_process_input folds CFG batch=2 into spatial dim.)
+        module_list: List of AnimateDiffTransformer3D modules (on CPU, eval mode).
+                     Typically 2-3 for down/up blocks, 1 for mid_block.
         device:      TTNN device (MeshDevice from setup_blackhole).
         num_frames:  N (length of samples).
-        C:           Channel dimension — used only for documentation / assertion.
+        C:           Channel dimension C.
+        spatial_h:   Spatial height H at this UNet stage.
+        spatial_w:   Spatial width  W at this UNet stage.
+        injection_alpha: 0.0 = bypass (no-op for debugging), 1.0 = full injection.
 
     Returns:
         List of N TTNN tensors, same shape as input, with temporal attention applied.
         Original input tensors are deallocated.
     """
     # Step 1: pull all N frames to CPU as float32.
-    # TTNN pre_process_input folds CFG batch=2 into the spatial dim, producing
-    # [1, 1, 2*S, C] rather than [2, S, C].  Reshape to [2, S, C] for indexing.
-    # Also snapshot dtype and memory_config so we can restore them on the way back.
+    # TTNN layout: [1, 1, 2*H*W, C] (batch=2 folded into spatial).
+    # We need [2, C, H, W] per frame (CFG pair per-frame NCHW).
     orig_dtype = samples[0].dtype
-    # Sharded tensors must be moved to DRAM interleaved before to_torch;
-    # we'll restore via DRAM then re-shard with to_memory_config if needed.
+    orig_memory_configs = [ttnn.get_memory_config(s) for s in samples]
+
     dram_samples = [
         ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG) if ttnn.get_memory_config(s).is_sharded() else s
         for s in samples
     ]
     raw_tensors = [ttnn.to_torch(s).float() for s in dram_samples]
     orig_shape = raw_tensors[0].shape  # [1, 1, 2*S, C] — save for reconstruction
-    # Flatten to [2*S, C], then split into [2, S, C]
-    cpu_tensors = [t.reshape(2, -1, t.shape[-1]) for t in raw_tensors]
-    # cpu_tensors[i]: [2, S, C] — uncond row 0, cond row 1
 
-    # Step 2: apply each motion module kernel in sequence.
-    # Kernel input/output: [S, N, C] — spatial positions × frames × channels
-    pre_energy = sum(t.norm().item() for t in cpu_tensors)
-    for kernel in kernel_list:
-        new_cpu = []
-        for b in range(2):  # uncond (b=0), cond (b=1) — attend independently
-            # Stack [S, C] from each frame at this CFG branch → [S, N, C]
-            feats = torch.stack([t[b] for t in cpu_tensors], dim=1)  # [S, N, C]
-            attended = kernel.forward(feats)                           # [S, N, C]
-            new_cpu.append(attended)
-        attended_tensors = [
-            torch.stack([new_cpu[0][:, i, :], new_cpu[1][:, i, :]], dim=0)  # [2, S, C]
-            for i in range(num_frames)
-        ]
+    # Reshape [1, 1, 2*S, C] → [2, C, H, W] per frame.
+    # S = H * W; CFG batch=2 was folded into spatial by pre_process_input.
+    # raw[0,0, 0:S, :] = uncond frame i, raw[0,0, S:2S, :] = cond frame i.
+    frame_tensors = []
+    for raw in raw_tensors:
+        flat = raw.reshape(2, spatial_h * spatial_w, C)           # [2, S, C]
+        nchw = flat.permute(0, 2, 1).reshape(2, C, spatial_h, spatial_w)  # [2, C, H, W]
+        frame_tensors.append(nchw)
+
+    # Step 2: apply each AnimateDiffTransformer3D module sequentially.
+    # Module expects [B*N, C, H, W]; B=2 (uncond+cond), N frames.
+    # Stack N frames along batch → [2*N, C, H, W], run module, unstack.
+    pre_energy = sum(t.norm().item() for t in frame_tensors)
+    for module in module_list:
+        # Stack: [2*N, C, H, W]
+        stacked = torch.stack(frame_tensors, dim=1).reshape(2 * num_frames, C, spatial_h, spatial_w)
+
+        with torch.no_grad():
+            attended = module.forward(stacked, num_frames=num_frames)  # [2*N, C, H, W]
+
+        # Unstack back to N tensors of [2, C, H, W]
+        attended_frames = attended.reshape(2, num_frames, C, spatial_h, spatial_w).permute(1, 0, 2, 3, 4)
+        attended_list = list(attended_frames)  # N tensors of [2, C, H, W]
+
         if injection_alpha >= 1.0:
-            cpu_tensors = attended_tensors
+            frame_tensors = attended_list
         else:
-            # Blend: alpha=0.0 → pure bypass (no-op), alpha=1.0 → full injection
-            cpu_tensors = [
-                (1.0 - injection_alpha) * cpu_tensors[i] + injection_alpha * attended_tensors[i]
+            frame_tensors = [
+                (1.0 - injection_alpha) * frame_tensors[i] + injection_alpha * attended_list[i]
                 for i in range(num_frames)
             ]
-    post_energy = sum(t.norm().item() for t in cpu_tensors)
-    print(f"  [_apply_temporal C={C}] energy: {pre_energy:.1f} → {post_energy:.1f}"
+
+    post_energy = sum(t.norm().item() for t in frame_tensors)
+    print(f"  [_apply_temporal C={C} {spatial_h}x{spatial_w}] "
+          f"energy: {pre_energy:.1f} → {post_energy:.1f}"
           f"  ratio={post_energy/max(pre_energy,1e-6):.3f}  alpha={injection_alpha}")
 
-    # Step 3: push back to device in DRAM interleaved, then re-shard to match
-    # the memory config the caller expects (captured before our CPU round-trip).
-    orig_memory_configs = [ttnn.get_memory_config(s) for s in samples]
+    # Step 3: reshape back to [1, 1, 2*S, C] and push to device.
     out = []
     for i in range(num_frames):
-        t_restored = cpu_tensors[i].reshape(orig_shape)
+        # [2, C, H, W] → [1, 1, 2*S, C]
+        nchw = frame_tensors[i]                                        # [2, C, H, W]
+        sc = nchw.reshape(2, C, -1).permute(0, 2, 1).reshape(orig_shape)  # [1,1,2*S,C]
         t_device = to_device(
-            t_restored,
+            sc,
             device,
             dtype=orig_dtype,
             layout=ttnn.TILE_LAYOUT,
         )
-        # If the original was sharded, restore its sharding so the next TTNN op
-        # (resnet / transformer block) sees the expected L1 memory layout.
         mc = orig_memory_configs[i]
         if mc.is_sharded():
             t_device = ttnn.to_memory_config(t_device, mc)
@@ -369,12 +380,16 @@ def forward_unet_staged(
             # Temporal attention injection at this CrossAttnDownBlock2D.
             key = f"down{block_idx}"
             if key in temporal_kernels and temporal_kernels[key]:
+                from animatediff_ttnn.motion_weights import get_injection_point_info
+                ip = get_injection_point_info(key)
                 hidden_samples = _apply_temporal(
                     hidden_samples,
                     temporal_kernels[key],
                     device,
                     num_frames,
                     output_channel,
+                    ip.spatial_h,
+                    ip.spatial_w,
                     injection_alpha=injection_alpha,
                 )
 
@@ -443,12 +458,16 @@ def forward_unet_staged(
 
     # Temporal injection at the mid block (1 motion module in the checkpoint).
     if "mid" in temporal_kernels and temporal_kernels["mid"]:
+        from animatediff_ttnn.motion_weights import get_injection_point_info
+        ip_mid = get_injection_point_info("mid")
         hidden_samples = _apply_temporal(
             hidden_samples,
             temporal_kernels["mid"],
             device,
             num_frames,
             block_out_channels[-1],  # 1280
+            ip_mid.spatial_h,
+            ip_mid.spatial_w,
             injection_alpha=injection_alpha,
         )
 
@@ -522,12 +541,16 @@ def forward_unet_staged(
             # Temporal injection at this CrossAttnUpBlock2D.
             key = f"up{block_idx}"
             if key in temporal_kernels and temporal_kernels[key]:
+                from animatediff_ttnn.motion_weights import get_injection_point_info
+                ip = get_injection_point_info(key)
                 hidden_samples = _apply_temporal(
                     hidden_samples,
                     temporal_kernels[key],
                     device,
                     num_frames,
                     output_channel,
+                    ip.spatial_h,
+                    ip.spatial_w,
                     injection_alpha=injection_alpha,
                 )
 

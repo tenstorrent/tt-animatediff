@@ -427,9 +427,9 @@ def run_ttnn():
         if args.motion_adapter and args.mode == "blackhole":
             # Phase 3: MotionAdapter-injected temporal attention
             print(f"  [motion] Loading MotionAdapter from {args.motion_adapter} ...")
-            from animatediff_ttnn.motion_weights import load_motion_kernels
-            temporal_kernels = load_motion_kernels(model_id=args.motion_adapter, num_frames=args.frames)
-            print(f"  [motion] Loaded {sum(len(v) for v in temporal_kernels.values())} kernels")
+            from animatediff_ttnn.motion_weights import load_motion_modules
+            temporal_kernels = load_motion_modules(model_id=args.motion_adapter)
+            print(f"  [motion] Loaded {sum(len(v) for v in temporal_kernels.values())} modules")
             from animatediff_ttnn.temporal_attention import generate_frames_motion
             frames = generate_frames_motion(
                 device=device,
