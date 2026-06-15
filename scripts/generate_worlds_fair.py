@@ -373,69 +373,89 @@ def run_tier(tier_key: str, prompts: list, dry_run: bool = False, stagger: int =
 
 
 def run_unisphere_chain(dry_run: bool = False):
-    """Run the 6-era Unisphere continuity chain, each seeded from the previous."""
+    """Run the 6-era Unisphere continuity chain using ChainSession.
+
+    Keeps the compiled TTNN UNet resident on chip 0 across all hops —
+    each hop pays only CLIP encode + denoising time (~2 min), not 30s recompile.
+    chain_alpha=0.35: ~15% layout correlation (enough for subject continuity,
+    won't overpower text guidance the way 0.55 did).
+    """
     CHAIN_DIR.mkdir(parents=True, exist_ok=True)
     (OUT / "chain").mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'═' * 60}")
     print("║  Unisphere — 100-year continuity chain")
     print("║  6 eras · PNDM 25-step · 16 frames · MotionAdapter · chip 0")
+    print("║  chain_alpha=0.35 (fixed — was 0.55 which killed subject identity)")
     print(f"{'═' * 60}")
 
-    prev_chain = None
+    CHAIN_ALPHA = 0.35
+    NEG = "blurry, low quality, ugly"
+
+    if dry_run:
+        for era in UNISPHERE_CHAIN:
+            slug = era["slug"]
+            out_path = OUT / "chain" / f"{slug}.gif"
+            chain_save = CHAIN_DIR / f"{slug}.pt"
+            print(f"  [dry-run] {era['era']} → {out_path.name}  chain_alpha={CHAIN_ALPHA}")
+        return {e["slug"]: {"path": None, "elapsed": 0} for e in UNISPHERE_CHAIN}
+
+    sys.path.insert(0, str(REPO))
+    from animatediff_ttnn.generation_helpers import ChainSession
+    from animatediff_ttnn.pipeline import export_gif
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    from animatediff_ttnn.temporal_attention import generate_frames_motion
+
     results = {}
 
-    for era in UNISPHERE_CHAIN:
-        slug = era["slug"]
-        out_path = OUT / "chain" / f"{slug}.gif"
-        chain_save = CHAIN_DIR / f"{slug}.pt"
+    with ChainSession(device_ids=[0]) as sess:
+        # Load MotionAdapter once — stays in memory for all hops
+        print("  Loading MotionAdapter weights...")
+        temporal_kernels = load_motion_modules()
+        print(f"  Loaded {sum(len(v) for v in temporal_kernels.values())} modules\n")
 
-        if out_path.exists():
-            print(f"  [skip] {slug} already exists")
-            prev_chain = str(chain_save) if chain_save.exists() else prev_chain
-            results[slug] = {"path": out_path, "elapsed": None, "skipped": True}
-            continue
+        prev_chain = None
 
-        cmd = [
-            sys.executable, str(GENERATE),
-            "--mode", "blackhole",
-            "--prompt", era["prompt"],
-            "--negative-prompt", "blurry, low quality, ugly",
-            "--seed", str(era["seed"]),
-            "--frames", "16",
-            "--steps", "25",
-            "--temporal-alpha", "0.35",
-            "--device-id", "0",
-            "--output", str(out_path),
-            "--chain-save", str(chain_save),
-            "--motion-adapter",
-        ]
-        if prev_chain:
-            cmd += ["--chain-from", prev_chain, "--chain-alpha", "0.55"]
+        for era in UNISPHERE_CHAIN:
+            slug = era["slug"]
+            out_path = OUT / "chain" / f"{slug}.gif"
+            chain_save = CHAIN_DIR / f"{slug}.pt"
 
-        print(f"  [{era['era']}] {'(chain)' if prev_chain else '(seed)'}")
-        if dry_run:
-            print(f"    {' '.join(cmd[-12:])}")
-            results[slug] = {"path": out_path, "elapsed": 0}
-            prev_chain = str(chain_save)
-            continue
+            print(f"  [{era['era']}] {'(chain α='+str(CHAIN_ALPHA)+')' if prev_chain else '(seed)'}")
 
-        t0 = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        elapsed = time.time() - t0
+            t0 = time.time()
+            try:
+                from animatediff_ttnn.generation_helpers import encode_prompt
+                text_embeddings = encode_prompt(era["prompt"], NEG)
 
-        if result.returncode == 0:
-            size = out_path.stat().st_size // 1024 if out_path.exists() else 0
-            print(f"    Done in {elapsed:.0f}s → {size} KB")
-            results[slug] = {"path": out_path, "elapsed": elapsed}
-            prev_chain = str(chain_save)
-        else:
-            print(f"    ERROR (exit {result.returncode})")
-            print(result.stderr[-300:] if result.stderr else "  (no stderr)")
-            results[slug] = {"path": None, "elapsed": elapsed, "error": result.stderr[-120:]}
-            # Continue chain even if one era fails — use whatever chain_save exists
-            if chain_save.exists():
+                frames = generate_frames_motion(
+                    device=sess.device,
+                    ttnn_model=sess._ttnn_model,
+                    ttnn_vae=sess._ttnn_vae,
+                    config=sess._config,
+                    torch_time_proj=sess._time_proj,
+                    text_embeddings=text_embeddings,
+                    temporal_kernels=temporal_kernels,
+                    num_frames=16,
+                    num_steps=25,
+                    seed=era["seed"],
+                    temporal_alpha=0.35,
+                    chain_from=prev_chain,
+                    chain_save=str(chain_save),
+                    chain_alpha=CHAIN_ALPHA,
+                )
+                export_gif(frames, str(out_path))
+                elapsed = time.time() - t0
+                size = out_path.stat().st_size // 1024 if out_path.exists() else 0
+                print(f"    Done in {elapsed:.0f}s → {size} KB")
+                results[slug] = {"path": str(out_path), "elapsed": elapsed}
                 prev_chain = str(chain_save)
+            except Exception as exc:
+                elapsed = time.time() - t0
+                print(f"    ERROR after {elapsed:.0f}s: {exc}")
+                results[slug] = {"path": None, "elapsed": elapsed, "error": str(exc)}
+                if chain_save.exists():
+                    prev_chain = str(chain_save)
 
     return results
 
