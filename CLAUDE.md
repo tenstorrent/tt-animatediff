@@ -73,6 +73,28 @@ TT_METAL_ARCH_NAME=blackhole python scripts/ttlang_temporal_attn_hw_test.py
 ```
 Hardware results (dual P300c): C=320 PCC=0.9998, C=640 PCC=0.9989, C=1280 PCC=0.9949. All > 0.99.
 
+## Mesh Frame Sharding (Phase 4)
+
+Replaces serialized `for i in range(num_frames)` loops in Phase 2.5 and Phase 3 with single sharded TTNN calls across all N Blackhole chips.
+
+**New helpers in `animatediff_ttnn/ttnn_pipeline.py`:**
+- `shard_frames_to_device(frame_tensors, device, dtype, layout)` — stacks N same-shaped CPU tensors along `dim=0` and sends via `ShardTensorToMesh(dim=0)`. UNet use: N `[2, 4, lh, lw]` CFG-doubled tensors → chip K gets `[2, 4, lh, lw]` matching the compiled `batch_size=2` kernel. VAE use: N `[1, lh, lw, 4]` NHWC tensors.
+- `gather_frames_from_device(tensor, device, num_frames, batch_per_frame=2)` — pulls via `ConcatMeshToTensor(dim=0)`, splits into N tensors of `[batch_per_frame, ...]`. Use `batch_per_frame=1` for VAE decode (not CFG-doubled).
+
+**Constraint:** `num_frames % num_chips == 0` — enforced by `ValueError` guards at the start of `generate_frames_temporal` and `generate_frames_motion`. Valid frame counts for QB2 (4 chips): 4, 8, 12, 16.
+
+**What's sharded:**
+- Phase 2.5 UNet denoising loop (`generate_frames_temporal`) — ~4× speedup on 4 chips
+- Phase 2.5 VAE decode (`generate_frames_temporal`) — ~4× speedup
+- Phase 3 VAE decode (`generate_frames_motion`) — ~4× speedup
+- Phase 3 UNet block loops (`forward_unet_staged`) — NOT sharded (blocks use on-device TTNN tensors; CPU-side shard helper incompatible)
+
+**Expected speedup (4-chip QB2, 8 frames, 25 steps):**
+- Phase 2.5 overall: ~3.2–4× vs 1-chip serial
+- Phase 3 overall: ~2.5–2.9× (bottlenecked by `_apply_temporal` CPU calls at 7 injection points)
+
+**Hardware smoke test:** `scripts/mesh_sharding_hw_test.py` — compares 1-chip vs 4-chip on 4-frame / 4-step generation, asserts PCC > 0.99, prints timing breakdown.
+
 ### LCM distillation (closed)
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
