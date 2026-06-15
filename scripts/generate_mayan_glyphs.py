@@ -341,7 +341,7 @@ TIERS = {
     "Q1": {
         "label": "Best Quality",
         "badge": "Q1 · Best",
-        "desc": "4-chip Blackhole · PNDM 25-step · 8 frames · mesh-sharded",
+        "desc": "4-chip Blackhole · PNDM 25-step · 8 frames · 4 glyphs in parallel",
         "frames": 8,
         "steps": 25,
         "lightning": False,
@@ -352,7 +352,7 @@ TIERS = {
     "Q2": {
         "label": "Fast",
         "badge": "Q2 · Fast",
-        "desc": "4-chip Blackhole · Lightning 8-step · 8 frames · mesh-sharded",
+        "desc": "4-chip Blackhole · Lightning 8-step · 8 frames · 4 glyphs in parallel",
         "frames": 8,
         "steps": 8,
         "lightning": True,
@@ -366,6 +366,7 @@ TIERS = {
 # ── Generation helpers ─────────────────────────────────────────────────────
 
 def _build_cmd(glyph: dict, tier_key: str, chip: int) -> tuple[list[str], Path]:
+    """Build generate.py command for one glyph pinned to a specific chip."""
     tier = TIERS[tier_key]
     slug = glyph["slug"]
     out_path = OUT / tier_key / f"{slug}.gif"
@@ -386,11 +387,20 @@ def _build_cmd(glyph: dict, tier_key: str, chip: int) -> tuple[list[str], Path]:
     return cmd, out_path
 
 
-def run_tier(tier_key: str, glyphs: list, dry_run: bool = False, stagger: int = 360):
-    """Run all glyphs in a tier, 4 at a time (one per chip).
+def run_tier(tier_key: str, glyphs: list, dry_run: bool = False, stagger: int = 60,
+             live_results: dict | None = None):
+    """Run all glyphs in a tier, 4 at a time (one per chip, parallel).
 
-    stagger: seconds between process launches to avoid TTNN JIT cache lock
-    contention when multiple processes hit the file-lock simultaneously.
+    The TTNN SD 1.4 UNet (wormhole-targeted) calls to_torch() internally without
+    a mesh_composer, so it cannot run sharded across multiple chips in a single
+    process. Instead, each chip runs a separate process, using all 4 chips in
+    parallel — 4 glyphs simultaneously, each on its own dedicated Blackhole chip.
+
+    stagger: seconds between process launches to avoid TTNN JIT cache file-lock
+    races when multiple processes hit the compiled kernel cache simultaneously.
+
+    live_results: shared dict passed from main() so the manifest is written after
+    every batch, not just at the end of the full run.
     """
     tier = TIERS[tier_key]
     chips = tier["chips"]
@@ -400,7 +410,7 @@ def run_tier(tier_key: str, glyphs: list, dry_run: bool = False, stagger: int = 
     print(f"║  Tier {tier_key}: {tier['label']}")
     print(f"║  {tier['desc']}")
     if stagger:
-        print(f"║  Stagger: {stagger}s between launches (JIT lock avoidance)")
+        print(f"║  Stagger: {stagger}s between launches (JIT cache lock avoidance)")
     print(f"{'═' * 60}")
 
     pending = list(glyphs)
@@ -417,13 +427,13 @@ def run_tier(tier_key: str, glyphs: list, dry_run: bool = False, stagger: int = 
 
             if out_path.exists():
                 print(f"  [skip] {out_path.name} already exists")
-                results[f"{g['slug']}-{tier_key}"] = {"path": out_path, "elapsed": None, "skipped": True}
+                results[f"{g['slug']}-{tier_key}"] = {"path": str(out_path), "elapsed": None, "skipped": True}
                 continue
 
             print(f"  [chip {chip}] Starting: {g['slug']} ({g['name']})")
             if dry_run:
                 print(f"    cmd tail: {' '.join(cmd[-8:])}")
-                results[f"{g['slug']}-{tier_key}"] = {"path": out_path, "elapsed": 0}
+                results[f"{g['slug']}-{tier_key}"] = {"path": str(out_path), "elapsed": 0}
                 continue
 
             procs.append((g, chip, out_path, subprocess.Popen(
@@ -445,6 +455,11 @@ def run_tier(tier_key: str, glyphs: list, dry_run: bool = False, stagger: int = 
                 print(f"  [chip {chip}] ERROR: {g['slug']} (exit {proc.returncode})")
                 print(stderr[-300:] if stderr else "  (no stderr)")
                 results[f"{g['slug']}-{tier_key}"] = {"path": None, "elapsed": elapsed, "error": stderr[-120:]}
+
+        # Write manifest after each batch so the page reflects live progress
+        if live_results is not None and not dry_run:
+            live_results.update(results)
+            build_manifest(live_results)
 
     return results
 
@@ -473,8 +488,8 @@ def main():
     parser.add_argument("--tier", choices=["Q1", "Q2", "all"], default="Q1",
                         help="Quality tier to run (default: Q1)")
     parser.add_argument("--glyph", help="Run only this glyph slug (e.g. imix, ajaw)")
-    parser.add_argument("--stagger", type=int, default=360,
-                        help="Seconds between chip launches (default: 360)")
+    parser.add_argument("--stagger", type=int, default=60,
+                        help="Seconds between chip launches (default: 60, avoids JIT cache races)")
     args = parser.parse_args()
 
     tiers_to_run = list(TIERS.keys()) if args.tier == "all" else [args.tier]
@@ -488,7 +503,8 @@ def main():
     all_results = {}
 
     for tier_key in tiers_to_run:
-        results = run_tier(tier_key, glyphs_to_run, dry_run=args.dry_run, stagger=args.stagger)
+        results = run_tier(tier_key, glyphs_to_run, dry_run=args.dry_run,
+                           stagger=args.stagger, live_results=all_results)
         all_results.update(results)
 
     build_manifest(all_results)
