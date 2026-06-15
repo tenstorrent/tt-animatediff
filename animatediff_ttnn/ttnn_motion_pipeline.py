@@ -33,13 +33,6 @@ try:
 except Exception:
     to_device = None  # type: ignore[assignment]
 
-# torch.compile cache: module id → compiled callable.
-# Populated on the first _apply_temporal call for each unique module object.
-# torch.compile has a cold-start penalty (~1-2s per module on first call) but
-# subsequent calls are significantly faster, especially for the large spatial
-# stages (up1 C=1280 32×32, up2 C=640 64×64) that dominate Phase 3 runtime.
-_COMPILED_MODULES: dict[int, object] = {}
-
 
 def _apply_temporal(
     samples: list,
@@ -113,19 +106,28 @@ def _apply_temporal(
     frame_tensors = list(frames_nchw)
 
     # ── Step 2: temporal attention via compiled modules ───────────────────────
-    # AnimateDiffTransformer3D.forward expects [B*N, C, H, W]; B=2 (CFG pair).
+    # AnimateDiffTransformer3D.forward expects [batch_size * num_frames, C, H, W]
+    # where batch_size=2 (CFG uncond+cond).  The module reshapes internally as:
+    #   hidden_states.reshape(batch_size=2, num_frames, C, H, W)
+    # So the required memory layout is:
+    #   [uncond_fr0, uncond_fr1, ..., uncond_frN-1, cond_fr0, ..., cond_frN-1]
+    # frame_tensors[i] shape: [2, C, H, W] where dim-0 is [uncond, cond].
+    # torch.stack(frame_tensors, dim=1) → [2, N, C, H, W] (CFG outer, frame inner).
+    # .reshape(2*N, C, H, W) produces the correct ordering above.
     pre_energy = frames_nchw.norm().item()
     for module in module_list:
         stacked = torch.stack(frame_tensors, dim=1).reshape(2 * num_frames, C, spatial_h, spatial_w)
 
-        # Fetch or create the compiled version of this module.
-        mid = id(module)
-        if mid not in _COMPILED_MODULES:
-            _COMPILED_MODULES[mid] = torch.compile(module.forward, fullgraph=False)
-
+        # torch.compile hits the recompile guard limit (8 recompiles) on diffusers
+        # AnimateDiffTransformer3D because the attention processor object ID changes
+        # between calls.  Eager mode is used instead — the batched D→H transfer
+        # (Step 1) already accounts for the majority of the speedup.
         with torch.no_grad():
-            attended = _COMPILED_MODULES[mid](stacked, num_frames=num_frames)  # [2*N, C, H, W]
+            attended = module.forward(stacked, num_frames=num_frames)  # [2*N, C, H, W]
 
+        # Unstack: reverse the stack+reshape above.
+        # attended layout: [uncond_fr0, ..., uncond_frN-1, cond_fr0, ..., cond_frN-1]
+        # .reshape(2, N, C, H, W).permute(1, 0, 2, 3, 4) → [N, 2, C, H, W]
         attended_frames = attended.reshape(2, num_frames, C, spatial_h, spatial_w).permute(1, 0, 2, 3, 4)
         attended_list = list(attended_frames)  # N tensors of [2, C, H, W]
 
@@ -142,24 +144,23 @@ def _apply_temporal(
           f"energy: {pre_energy:.1f} → {post_energy:.1f}"
           f"  ratio={post_energy/max(pre_energy,1e-6):.3f}  alpha={injection_alpha}")
 
-    # ── Step 3: batched H→D transfer ─────────────────────────────────────────
-    # Reconstruct [N, 1, 2*S, C] from frame_tensors, push as one tensor, split.
-    result_batch = (
-        torch.stack(frame_tensors, dim=0)                          # [N, 2, C, H, W]
-        .reshape(num_frames, 2, C, spatial_h * spatial_w)          # [N, 2, C, S]
-        .permute(0, 1, 3, 2)                                        # [N, 2, S, C]
-        .reshape(num_frames, 1, 2 * spatial_h * spatial_w, C)      # [N, 1, 2*S, C]
-    )
-
-    # to_device expects a CPU tensor; push all frames at once then split.
-    batched_dev = to_device(result_batch, device, dtype=orig_dtype, layout=ttnn.TILE_LAYOUT)
-    out = list(ttnn.split(batched_dev, num_frames, dim=0))  # N × [1, 1, 2*S, C]
-    batched_dev.deallocate(True)
-
-    # Restore original memory configs (sharding) and deallocate inputs.
-    for i, (t_dev, mc) in enumerate(zip(out, orig_memory_configs)):
+    # ── Step 3: H→D transfer — per frame ─────────────────────────────────────
+    # Push each frame individually back to device.  A single batched push +
+    # ttnn.split was attempted but ttnn.split produces views whose memory config
+    # cannot be rerouted by the subsequent resnet reshard kernel (shard-grid error).
+    # Per-frame to_device() is the safe path and matches the original baseline.
+    # The batched D→H (Step 1) still saves N-1 round-trips on the read side.
+    out = []
+    for i, nchw in enumerate(frame_tensors):
+        # [2, C, H, W] → [1, 1, 2*S, C] (exact reverse of input reshape)
+        # Forward: [2*S, C] → reshape(2, S, C) → permute(0,2,1) → [2, C, S] → reshape(2, C, H, W)
+        # Inverse: [2, C, H, W] → reshape(2, C, S) → permute(0, 2, 1) → [2, S, C] → reshape(1,1,2*S,C)
+        sc = nchw.reshape(2, C, -1).permute(0, 2, 1).reshape(1, 1, 2 * spatial_h * spatial_w, C)
+        t_device = to_device(sc, device, dtype=orig_dtype, layout=ttnn.TILE_LAYOUT)
+        mc = orig_memory_configs[i]
         if mc.is_sharded():
-            out[i] = ttnn.to_memory_config(t_dev, mc)
+            t_device = ttnn.to_memory_config(t_device, mc)
+        out.append(t_device)
         samples[i].deallocate(True)
 
     return out

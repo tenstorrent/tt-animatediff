@@ -69,24 +69,29 @@ def _run_apply_temporal(fake_samples, real_tensors, module_list, N, C, H, W, alp
         return m
 
     def mock_to_device_fn(t, *a, **kw):
-        # Wrap the torch tensor in a mock so callers can call .deallocate(True).
-        m = MagicMock()
-        m.torch_data = t
-        m.shape = t.shape
-        m.deallocate = MagicMock()
-        return m
+        # Return the tensor directly. The output of to_device in the H→D path
+        # is stored in `out` and returned — it is never .deallocate()d by the
+        # production code (only the original samples[] are deallocated).
+        return t
 
     def mock_split(tensor, num_splits, dim=0):
         # tensor is our MagicMock wrapper; extract the actual torch data.
         actual = getattr(tensor, "torch_data", tensor)
         chunk_size = actual.shape[dim] // num_splits
+        # Return plain tensors — to_memory_config mock will wrap them.
         return list(torch.split(actual, chunk_size, dim=dim))
+
+    def mock_to_memory_config(t, config):
+        # Pass-through: in tests, memory configs are not meaningful.
+        # Return whatever we got (torch.Tensor or MagicMock).
+        return t
 
     with patch("animatediff_ttnn.ttnn_motion_pipeline.ttnn") as mock_ttnn, \
          patch("animatediff_ttnn.ttnn_motion_pipeline.to_device") as mock_to_device:
         mock_ttnn.to_torch.side_effect = mock_to_torch
         mock_ttnn.concat.side_effect = mock_concat
         mock_ttnn.split.side_effect = mock_split
+        mock_ttnn.to_memory_config.side_effect = mock_to_memory_config
         # get_memory_config → not sharded
         mc = MagicMock()
         mc.is_sharded.return_value = False
