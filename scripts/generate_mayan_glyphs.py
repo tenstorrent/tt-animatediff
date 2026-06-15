@@ -465,6 +465,16 @@ def run_tier(tier_key: str, glyphs: list, dry_run: bool = False, stagger: int = 
 
 
 def build_manifest(results: dict):
+    # Merge with existing manifest so partial-tier runs don't clobber other tiers
+    manifest_path = OUT / "manifest.json"
+    existing_results = {}
+    if manifest_path.exists():
+        try:
+            existing_results = json.loads(manifest_path.read_text()).get("results", {})
+        except Exception:
+            pass
+    merged = {**existing_results, **results}
+
     manifest = {
         "glyphs": {g["slug"]: {
             "name": g["name"],
@@ -474,9 +484,8 @@ def build_manifest(results: dict):
         } for g in GLYPHS},
         "tiers": TIERS,
         "results": {k: {"path": str(v["path"]) if v.get("path") else None, "elapsed": v.get("elapsed")}
-                    for k, v in results.items()},
+                    for k, v in merged.items()},
     }
-    manifest_path = OUT / "manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2))
     print(f"\nManifest: {manifest_path}")
