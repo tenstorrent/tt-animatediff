@@ -186,6 +186,12 @@ def _latent_preview(frame_latents: list, height: int, width: int):
     return frames
 
 
+def _tt_guide_cpu(tensor: torch.Tensor, guidance_scale: float) -> torch.Tensor:
+    """CFG guidance on a CPU [2, C, H, W] tensor (uncond=[:1], cond=[1:])."""
+    uncond, cond = tensor[:1], tensor[1:]
+    return uncond + guidance_scale * (cond - uncond)
+
+
 def generate_frames_temporal(
     device,
     ttnn_model,
@@ -263,7 +269,7 @@ def generate_frames_temporal(
 
     import ttnn
     from PIL import Image
-    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
+    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device, shard_frames_to_device, gather_frames_from_device
     from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
 
     lh, lw = height // 8, width // 8
@@ -347,18 +353,16 @@ def generate_frames_temporal(
         text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
     )
 
-    # Phase 2.5 note: the frame loop below is serialized in Python — one frame
-    # per TTNN call regardless of how many chips the MeshDevice contains. On a
-    # multi-chip system each `to_device` replicates the tensor to all chips, but
-    # only chip 0 produces the output used here, so extra chips pay replication
-    # cost without contributing throughput. Phase 3 will replace this with a
-    # ShardTensorToMesh mapper that dispatches N distinct frames to N chips in a
-    # single batched call. For now, use a single-chip MeshDevice (1×1) on QB2.
+    # Denoising loop: all N frames are CFG-doubled CPU-side, then sharded to
+    # device in a single shard_frames_to_device call so N chips process N frames
+    # in parallel (ShardTensorToMesh). gather_frames_from_device collects the
+    # results and CPU-side _tt_guide_cpu applies CFG — no serial UNet calls.
     num_steps_actual = len(timesteps)
 
     for step_idx, t in enumerate(timesteps):
-        # Collect TTNN noise predictions for all frames at timestep t
-        noise_preds = []
+        # CFG-double each frame CPU-side, then shard across chips in one call.
+        # Lightning: scale_model_input first (per-frame, CPU — Euler sigma normalization).
+        cfg_latents = []
         for i in range(num_frames):
             latent_cpu = frame_latents[i]
             if use_lightning:
@@ -366,31 +370,37 @@ def generate_frames_temporal(
                 # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
                 # there, but Euler's sigma starts at ~25 and must be normalized).
                 latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
-            lat = to_device(
-                latent_cpu, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-            )
-            # TTNN UNet expects batch=2 for CFG (unconditional + conditional)
-            lat_input = ttnn.concat([lat, lat], dim=0)
-            lat.deallocate(True)  # concat made a copy; original slab no longer needed
-            ttnn_out = ttnn_model(
-                lat_input,
-                timestep=_tlist[step_idx],
-                encoder_hidden_states=ttnn_text_emb,
-                class_labels=None,
-                attention_mask=None,
-                cross_attention_kwargs=None,
-                return_dict=True,
-                config=config,
-            )
-            guided = tt_guide(ttnn_out, guidance_scale)
-            noise_preds.append(from_device(guided, device).to(torch.float32))
-            # Deallocate immediately — from_device() pulls data to CPU but does
-            # not free the underlying L1 buffers. Freeing here keeps L1 usage
-            # bounded to one frame's worth of tensors rather than accumulating
-            # across all frames × steps before GC runs.
-            lat_input.deallocate(True)
-            ttnn_out.deallocate(True)
-            guided.deallocate(True)
+            cfg_latents.append(torch.cat([latent_cpu, latent_cpu], dim=0))  # [2, 4, lh, lw]
+
+        # Shard all N CFG-doubled frames to device in a single call.
+        # shard_frames_to_device stacks the list to [2N, 4, lh, lw] and maps each
+        # pair to a distinct chip via ShardTensorToMesh — replacing N serial to_device
+        # calls and N serial ttnn.concat([lat, lat], dim=0) operations.
+        stacked_dev = shard_frames_to_device(
+            cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+        ttnn_out = ttnn_model(
+            stacked_dev,
+            timestep=_tlist[step_idx],
+            encoder_hidden_states=ttnn_text_emb,
+            class_labels=None,
+            attention_mask=None,
+            cross_attention_kwargs=None,
+            return_dict=True,
+            config=config,
+        )
+        stacked_dev.deallocate(True)
+
+        # Gather all N frame outputs from device, apply CFG guidance per frame.
+        # gather_frames_from_device pulls [2N, 4, lh, lw] back to CPU and splits
+        # it into N tensors of shape [2, 4, lh, lw] — one per frame.
+        frame_outputs = gather_frames_from_device(ttnn_out, device, num_frames)
+        ttnn_out.deallocate(True)
+        noise_preds = []
+        for frame_out in frame_outputs:
+            # _tt_guide_cpu applies CFG on a CPU [2, C, H, W] tensor; result is
+            # [1, 4, lh, lw] — the guided noise prediction for this frame.
+            noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
 
         if use_lightning:
             # Lightning two-point blend with cosine-decay alpha:
