@@ -281,7 +281,7 @@
     <div class="lightning-header">
       <div class="badge">Lightning Mode</div>
       <h2>Same hardware. <em>4-step inference.</em></h2>
-      <p>LCM-distilled weights cut denoising steps from 25 to 4–8 with no change to the model architecture. Each row below is the same prompt, same seed — original Blackhole output on the left, then our distilled variants.</p>
+      <p>The Lightning scheduler cuts denoising steps from 25 to 4–8 with no change to the model architecture. Each row below is the same prompt, same seed — original Blackhole output on the left, lightning mode on the right.</p>
     </div>
 
     <div class="compare-grid">
@@ -295,12 +295,6 @@
         <div class="compare-cell">
           <img src="assets/lightning-aurora.gif" alt="aurora borealis — 8-step lightning" loading="lazy">
           <div class="compare-label lightning">⚡ 8 steps · lightning</div>
-          <div class="compare-prompt">aurora borealis over arctic ice</div>
-        </div>
-        <div class="compare-divider">→</div>
-        <div class="compare-cell">
-          <img src="assets/lcm-aurora.gif" alt="aurora borealis — 4-step LCM (our weights)" loading="lazy">
-          <div class="compare-label lcm">✦ 4 steps · LCM</div>
           <div class="compare-prompt">aurora borealis over arctic ice</div>
         </div>
       </div>
@@ -317,12 +311,6 @@
           <div class="compare-label lightning">⚡ 8 steps · lightning</div>
           <div class="compare-prompt">sacred mandala blooming from starfield</div>
         </div>
-        <div class="compare-divider">→</div>
-        <div class="compare-cell">
-          <img src="assets/lcm-mandala.gif" alt="sacred mandala — 4-step LCM (our weights)" loading="lazy">
-          <div class="compare-label lcm">✦ 4 steps · LCM</div>
-          <div class="compare-prompt">sacred mandala blooming from starfield</div>
-        </div>
       </div>
 
       <div class="compare-row">
@@ -335,12 +323,6 @@
         <div class="compare-cell">
           <img src="assets/lightning-mycelium.gif" alt="mycelium network — 8-step lightning" loading="lazy">
           <div class="compare-label lightning">⚡ 8 steps · lightning</div>
-          <div class="compare-prompt">mycelium network, bioluminescent spores</div>
-        </div>
-        <div class="compare-divider">→</div>
-        <div class="compare-cell">
-          <img src="assets/lcm-mycelium.gif" alt="mycelium network — 4-step LCM (our weights)" loading="lazy">
-          <div class="compare-label lcm">✦ 4 steps · LCM</div>
           <div class="compare-prompt">mycelium network, bioluminescent spores</div>
         </div>
       </div>
@@ -380,20 +362,13 @@
             <td>~20 s</td>
             <td class="hl">~6×</td>
           </tr>
-          <tr>
-            <td><span class="tag tag-lcm">LCM (ours)</span></td>
-            <td>4</td>
-            <td>~3 min</td>
-            <td>~24 min</td>
-            <td>CPU · no silicon</td>
-          </tr>
         </tbody>
       </table>
     </div>
 
     <p class="lightning-footer">
-      Distill your own weights on this hardware with one command →
-      <a href="https://github.com/tenstorrent/tt-animatediff/blob/main/docs/DISTILLATION_GUIDE.md">Distillation Guide</a>
+      Use <code>--steps 8 --scheduler lightning</code> on any supported hardware →
+      <a href="https://github.com/tenstorrent/tt-animatediff">GitHub</a>
     </p>
   </div>
 </section>

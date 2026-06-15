@@ -10,15 +10,19 @@ DNA continuity across independent prompts.
 Subject: retro red-and-cyan anaglyphic 3D glasses, a recognizable shape that
 threads through wildly different contexts and colour palettes.
 
+Uses ChainSession to keep the compiled Blackhole UNet resident across all
+hops — only the latent seed and text embeddings change per scene.  This
+eliminates the ~30s recompile overhead that the previous subprocess-per-hop
+approach paid on every scene.
+
 Usage:
     source ~/tt-metal/python_env/bin/activate
-    python scripts/generate_chain_demo.py
+    python scripts/generate_chain_demo.py [--only SLUG] [--list] [--dry-run]
 
 Skips scenes whose output GIF already exists (safe to resume after Ctrl-C).
 """
 
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -27,8 +31,6 @@ REPO = Path(__file__).parent.parent
 OUT = REPO / "docs" / "assets" / "chain"
 CHAIN_DIR = OUT / "latents"
 MANIFEST = OUT / "manifest.json"
-GENERATE = REPO / "examples" / "generate.py"
-PYTHON = Path.home() / "tt-metal" / "python_env" / "bin" / "python"
 
 NEG = (
     "blurry, low quality, distorted, text, watermark, people, faces, "
@@ -42,8 +44,8 @@ NEG = (
 #   - Colour descriptors placed close to their subjects
 #   - Style/quality tags at the end
 #
-# chain_alpha 0.20: blurred low-pass signal is sparse; 20% is enough for
-# composition bias without drowning the text conditioning.
+# chain_alpha 0.20: gentle layout bias — composition threads forward while
+# text conditioning fully controls colour and content of each new scene.
 SCENES = [
     {
         "slug": "glasses-neon",
@@ -129,58 +131,8 @@ def scene_done(slug, manifest):
     return manifest.get(slug) == "done" and p.exists() and p.stat().st_size > 0
 
 
-def run_scene(scene, prev_slug, manifest, idx, total):
-    slug = scene["slug"]
-    out_gif = OUT / f"{slug}.gif"
-    chain_pt = CHAIN_DIR / f"{slug}.pt"
-    prev_pt = CHAIN_DIR / f"{prev_slug}.pt" if prev_slug else None
-
-    lt = " ⚡" if scene["lightning"] else ""
-    print(f"\n{'='*60}")
-    print(f"  [{idx}/{total}] {slug}{lt}")
-    if prev_pt:
-        print(f"  chain_from={prev_pt.name}  chain_alpha={scene['chain_alpha']}")
-    print(f"  {scene['prompt'][:80]}...")
-    print(f"{'='*60}")
-    sys.stdout.flush()
-
-    manifest[slug] = "running"
-    save_manifest(manifest)
-
-    cmd = [
-        str(PYTHON), str(GENERATE),
-        "--mode", "blackhole",
-        "--prompt", scene["prompt"],
-        "--negative-prompt", NEG,
-        "--frames", "8",
-        "--steps", "25",
-        "--seed", str(scene["seed"]),
-        "--temporal-alpha", str(scene["alpha"]),
-        "--output", str(out_gif),
-        "--chain-save", str(chain_pt),
-    ]
-    if scene["lightning"]:
-        cmd.append("--lightning")
-    if prev_pt and prev_pt.exists():
-        cmd += ["--chain-from", str(prev_pt), "--chain-alpha", str(scene["chain_alpha"])]
-
-    t0 = time.time()
-    result = subprocess.run(cmd, cwd=str(REPO))
-    elapsed = time.time() - t0
-
-    if result.returncode == 0 and out_gif.exists() and out_gif.stat().st_size > 0:
-        manifest[slug] = "done"
-        print(f"  ✓ done in {elapsed:.0f}s → {out_gif.name}")
-    else:
-        manifest[slug] = "failed"
-        print(f"  ✗ FAILED (exit {result.returncode}) after {elapsed:.0f}s")
-        print(f"    Retry: python scripts/generate_chain_demo.py --only {slug}")
-
-    save_manifest(manifest)
-    return manifest[slug] == "done"
-
-
 def main():
+    dry_run = "--dry-run" in sys.argv
     only = None
     if "--only" in sys.argv:
         idx = sys.argv.index("--only")
@@ -209,10 +161,64 @@ def main():
         print("  All done!")
         return
 
-    for scene in pending:
-        scene_idx = SCENES.index(scene)
-        prev_slug = SCENES[scene_idx - 1]["slug"] if scene_idx > 0 else None
-        run_scene(scene, prev_slug, manifest, scene_idx + 1, len(SCENES))
+    if dry_run:
+        for s in pending:
+            print(f"  [dry-run] would run: {s['slug']}")
+        return
+
+    # Keep device + compiled UNet resident across all hops.
+    # Each hop pays only prompt-encode + denoising time (~2 min) rather than
+    # prompt-encode + 30s UNet compile + denoising.
+    sys.path.insert(0, str(REPO))
+    from animatediff_ttnn.generation_helpers import ChainSession
+    from animatediff_ttnn.pipeline import export_gif
+
+    with ChainSession(device_ids=[0]) as sess:
+        for scene in pending:
+            slug = scene["slug"]
+            out_gif = OUT / f"{slug}.gif"
+            chain_pt = CHAIN_DIR / f"{slug}.pt"
+            scene_idx = SCENES.index(scene)
+            prev_slug = SCENES[scene_idx - 1]["slug"] if scene_idx > 0 else None
+            prev_pt = CHAIN_DIR / f"{prev_slug}.pt" if prev_slug else None
+
+            lt = " ⚡" if scene["lightning"] else ""
+            print(f"\n{'='*60}")
+            print(f"  [{scene_idx+1}/{len(SCENES)}] {slug}{lt}")
+            if prev_pt and prev_pt.exists():
+                print(f"  chain_from={prev_pt.name}  chain_alpha={scene['chain_alpha']}")
+            print(f"  {scene['prompt'][:80]}...")
+            print(f"{'='*60}")
+            sys.stdout.flush()
+
+            manifest[slug] = "running"
+            save_manifest(manifest)
+
+            t0 = time.time()
+            try:
+                frames = sess.run_hop(
+                    prompt=scene["prompt"],
+                    negative_prompt=NEG,
+                    num_frames=8,
+                    num_steps=25,
+                    seed=scene["seed"],
+                    temporal_alpha=scene["alpha"],
+                    use_lightning=scene["lightning"],
+                    chain_from=str(prev_pt) if (prev_pt and prev_pt.exists()) else None,
+                    chain_save=str(chain_pt),
+                    chain_alpha=scene["chain_alpha"] or 0.0,
+                )
+                export_gif(frames, str(out_gif))
+                elapsed = time.time() - t0
+                manifest[slug] = "done"
+                print(f"  ✓ done in {elapsed:.0f}s → {out_gif.name}")
+            except Exception as exc:
+                elapsed = time.time() - t0
+                manifest[slug] = "failed"
+                print(f"  ✗ FAILED after {elapsed:.0f}s: {exc}")
+                print(f"    Retry: python scripts/generate_chain_demo.py --only {slug}")
+            finally:
+                save_manifest(manifest)
 
     done_count = sum(1 for s in SCENES if scene_done(s["slug"], manifest))
     failed = [s["slug"] for s in SCENES if manifest.get(s["slug"]) == "failed"]
