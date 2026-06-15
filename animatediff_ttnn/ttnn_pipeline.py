@@ -178,6 +178,12 @@ def gather_frames_from_device(tensor, device, num_frames: int) -> list:
 
     Returns:
         List of N CPU tensors, each [2, C, H, W].
+
+    Note:
+        The stride of 2 assumes CFG-doubled UNet tensors (batch_size=2 per frame).
+        A batch_per_frame parameter will be added in a follow-up task to support
+        VAE decode (batch_size=1 per frame). Do not use this function for non-CFG
+        tensors until that generalization lands.
     """
     import ttnn
     full = ttnn.to_torch(tensor, mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))

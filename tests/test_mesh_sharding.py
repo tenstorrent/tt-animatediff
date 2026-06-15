@@ -7,7 +7,7 @@ Run without Blackhole hardware — ttnn is fully mocked.
 import sys
 import torch
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 
 def _make_mesh_device(num_chips: int):
@@ -53,6 +53,8 @@ def test_shard_frames_to_device_shape():
     assert actual_tensor.shape == (2 * N, 4, lh, lw)
     # ShardTensorToMesh used as mesh_mapper
     ttnn_mock.ShardTensorToMesh.assert_called_once_with(device, dim=0)
+    call_kwargs = ttnn_mock.from_torch.call_args[1]
+    assert "mesh_mapper" in call_kwargs, "mesh_mapper must be passed as kwarg to from_torch"
 
 
 def test_shard_frames_to_device_single_chip():
