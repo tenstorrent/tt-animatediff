@@ -137,6 +137,53 @@ def from_device(tensor, device, batch: int = 1):
     return ttnn.to_torch(tensor)
 
 
+def shard_frames_to_device(frame_tensors: list, device, dtype=None, layout=None):
+    """Send N CFG-doubled frame tensors to device via frame-sharding.
+
+    Stacks N tensors of shape [2, C, H, W] into [2N, C, H, W] and sends with
+    ShardTensorToMesh(dim=0) so chip K receives frames [2K : 2K+2] — keeping
+    each chip at batch_size=2, matching the compiled TTNN UNet kernel.
+
+    Works correctly with a single-chip MeshDevice (shard == full tensor).
+
+    Args:
+        frame_tensors: List of N CPU tensors, each [2, C, H, W] (CFG-doubled).
+        device: TTNN MeshDevice from setup_blackhole().
+        dtype: Optional TTNN dtype (e.g. ttnn.bfloat16).
+        layout: Optional TTNN layout (e.g. ttnn.TILE_LAYOUT).
+
+    Returns:
+        Single TTNN tensor sharded across chips, logical shape [2N, C, H, W].
+    """
+    import ttnn
+    stacked = torch.cat(frame_tensors, dim=0)
+    kwargs = {"mesh_mapper": ttnn.ShardTensorToMesh(device, dim=0)}
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    if layout is not None:
+        kwargs["layout"] = layout
+    return ttnn.from_torch(stacked, device=device, **kwargs)
+
+
+def gather_frames_from_device(tensor, device, num_frames: int) -> list:
+    """Retrieve N frame tensors from a sharded device tensor.
+
+    Pulls the full [2N, C, H, W] tensor to CPU via ConcatMeshToTensor(dim=0)
+    and splits into a list of N tensors of shape [2, C, H, W].
+
+    Args:
+        tensor: TTNN tensor sharded across chips (logical shape [2N, C, H, W]).
+        device: TTNN MeshDevice from setup_blackhole().
+        num_frames: N, the number of frames to split into.
+
+    Returns:
+        List of N CPU tensors, each [2, C, H, W].
+    """
+    import ttnn
+    full = ttnn.to_torch(tensor, mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))
+    return [full[2 * i : 2 * i + 2] for i in range(num_frames)]
+
+
 def build_tlist(ttnn_scheduler, torch_time_proj, device, latent_h: int = 64, latent_w: int = 64) -> list:
     """Build pre-computed time embeddings for each denoising timestep.
 
