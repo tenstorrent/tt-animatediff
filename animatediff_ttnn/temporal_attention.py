@@ -554,9 +554,17 @@ def generate_frames_motion(
     Returns:
         List of PIL Images, length num_frames
     """
+    import ttnn as _ttnn_guard
+    _num_chips_motion = device.get_num_devices() if isinstance(device, _ttnn_guard.MeshDevice) else 1
+    if num_frames % _num_chips_motion != 0:
+        raise ValueError(
+            f"num_frames ({num_frames}) must be divisible by num_chips ({_num_chips_motion}). "
+            f"Valid counts for {_num_chips_motion} chips: {[_num_chips_motion * k for k in range(1, 9)]}"
+        )
+
     import ttnn
     from PIL import Image
-    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
+    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device, shard_frames_to_device, gather_frames_from_device
     from animatediff_ttnn.ttnn_motion_pipeline import forward_unet_staged
     from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
 
@@ -690,20 +698,27 @@ def generate_frames_motion(
         torch.save(torch.cat(frame_latents, dim=0), save_path)
         print(f"  Chain: saved latents → {save_path}")
 
-    # VAE decode — identical to generate_frames_temporal
+    # Sharded VAE decode — identical pattern to generate_frames_temporal.
+    # Stack all N latents, decode in parallel across chips (batch_per_frame=1 —
+    # no CFG doubling for VAE, so each chip gets num_frames // num_chips frames).
+    lat_nhwc_list = [
+        (lat / 0.18215).permute(0, 2, 3, 1)
+        for lat in frame_latents
+    ]
+    stacked_lat = torch.cat(lat_nhwc_list, dim=0)
+    ttnn_lat = shard_frames_to_device(
+        [stacked_lat[i:i+1] for i in range(num_frames)],
+        device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+    )
+    ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+    ttnn_lat.deallocate(True)
+    decoded_all = gather_frames_from_device(ttnn_decoded, device, num_frames, batch_per_frame=1)
+    ttnn_decoded.deallocate(True)
     frames = []
-    for i, latent in enumerate(frame_latents):
-        latent_scaled = latent / 0.18215
-        ttnn_lat = to_device(
-            latent_scaled.permute(0, 2, 3, 1),
-            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-        )
-        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
-        ttnn_lat.deallocate(True)
-        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
-        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2])).float()
-        ttnn_decoded.deallocate(True)
-        img = (decoded / 2 + 0.5).clamp(0, 1)
+    for i in range(num_frames):
+        dec = decoded_all[i]  # [1, lh, lw, 3] — batch_per_frame=1 already ensures single frame
+        dec = dec.permute(0, 3, 1, 2).float()  # NHWC → NCHW [1, 3, H, W]
+        img = (dec / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
         frames.append(Image.fromarray(img))
         print(f"  Frame {i + 1}/{num_frames} decoded")

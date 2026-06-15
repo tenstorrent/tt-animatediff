@@ -180,6 +180,29 @@ def test_gather_frames_single_batch_per_frame():
         assert torch.equal(t, stacked[i:i+1]), f"Frame {i} slice mismatch"
 
 
+def test_num_frames_not_divisible_raises_motion():
+    """generate_frames_motion raises ValueError if num_frames % num_chips != 0."""
+    ttnn_mock = _make_ttnn_mock()
+    ttnn_mock.MeshDevice = type("MeshDevice", (), {})
+    device = ttnn_mock.MeshDevice()
+    device.get_num_devices = MagicMock(return_value=4)
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        from animatediff_ttnn.temporal_attention import generate_frames_motion
+        with pytest.raises(ValueError, match="num_frames.*divisible"):
+            generate_frames_motion(
+                device=device,
+                ttnn_model=MagicMock(),
+                ttnn_vae=MagicMock(),
+                config=MagicMock(),
+                torch_time_proj=MagicMock(),
+                text_embeddings=torch.zeros(2, 96, 768),
+                temporal_kernels={},
+                num_frames=7,   # 7 % 4 != 0
+                num_steps=1,
+            )
+
+
 def test_forward_unet_staged_guard_raises():
     """forward_unet_staged raises ValueError if num_frames % num_chips != 0."""
     import importlib.util
