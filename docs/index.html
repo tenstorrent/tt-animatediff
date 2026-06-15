@@ -434,7 +434,7 @@
       <div class="mermaid">
 flowchart TD
     P([Prompt + seed]) --> CHAIN{"--chain-from?"}
-    CHAIN -->|yes| BLEND["low-pass blend prev latents\ninto seed noise — CPU"]
+    CHAIN -->|yes| BLEND["frame-mean blend prev latents\ninto seed noise — CPU\n(renorm to unit std)"]
     CHAIN -->|no| ENC
     BLEND --> ENC["CLIP encode — CPU"]
     ENC --> MODE{Mode?}
@@ -454,7 +454,7 @@ flowchart TD
     SAVE --> BH_VAE["TTNN VAE decode on Blackhole\nUNet L1 freed before decode"]
     BH_VAE --> GIF
       </div>
-      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) with the same TTNN UNet — no distilled adapter loaded on Blackhole/sim; step count is still controlled by <code>--steps</code>. CPU Lightning loads ByteDance's distilled adapter (CFG=1.0) and requires 2/4/8 steps. <code>--chain</code> blends a low-pass version of the previous run's latents into seed noise before the loop begins.</p>
+      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) with the same TTNN UNet — no distilled adapter loaded on Blackhole/sim; step count is still controlled by <code>--steps</code>. CPU Lightning loads ByteDance's distilled adapter (CFG=1.0) and requires 2/4/8 steps. <code>--chain</code> blends the frame-mean of the previous run's denoised latents (renormalized to unit std) into seed noise before the loop begins.</p>
     </div>
 
     <div id="diag-arch" class="arch-diagram">

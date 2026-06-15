@@ -67,17 +67,16 @@ python examples/generate.py --mode sim --frames 2 --steps 4
 
 ---
 
-## Lightning Mode (4-step / 8-step)
+## Lightning Mode
 
-Distill your own lightning weights on Tenstorrent Blackhole hardware:
+On **Blackhole/sim**: `--lightning` switches to `EulerDiscreteScheduler` (trailing, linear)
+with the base SD 1.4 TTNN UNet — no distilled weights loaded, CFG=7.5 retained, any step count.
 
-```bash
-python scripts/distill_lcm.py --steps 8 --num_train_steps 5000
-python scripts/distill_motion_adapter.py --steps 8 --unet weights/unet_lcm_8step.pt
-python scripts/validate_parallel.py
-```
+On **CPU**: loads `ByteDance/AnimateDiff-Lightning` (genuine 4-step distilled adapter, CFG=1.0
+baked in). Use `--lightning-steps 2|4|8` to match the distillation checkpoint.
 
-Full guide: [docs/DISTILLATION_GUIDE.md](docs/DISTILLATION_GUIDE.md)
+LCM distillation (4-run attempt, flat LR on sharp loss landscape) was closed — broken weights
+archived as `weights/*.broken`. Use Lightning mode for fast inference.
 
 ---
 

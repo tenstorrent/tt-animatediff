@@ -149,12 +149,12 @@ def _ensure_bh_device(mode: str, sim_path: str):
 
 
 def _ensure_motion_kernels(num_frames: int):
-    """Load MotionAdapter weights once per session (reloads if num_frames changes)."""
+    """Load MotionAdapter weights once per session."""
     global _motion_kernels
     if _motion_kernels is not None:
         return _motion_kernels
-    from animatediff_ttnn.motion_weights import load_motion_kernels
-    _motion_kernels = load_motion_kernels(DEFAULT_MOTION_MODEL, num_frames=num_frames)
+    from animatediff_ttnn.motion_weights import load_motion_modules
+    _motion_kernels = load_motion_modules(DEFAULT_MOTION_MODEL)
     return _motion_kernels
 
 
@@ -173,7 +173,7 @@ def generate(
     motion_adapter: bool = False,
     chain_from: str = "",
     chain_save: str = "",
-    chain_alpha: float = 0.6,
+    chain_alpha: float = 0.35,
 ):
     """Generator: yields preview GIF paths as denoising progresses, then final GIF.
 
@@ -408,7 +408,7 @@ with gr.Blocks(title="tt-animatediff") as demo:
                         label="Chain save (path to .pt)", placeholder="chain.pt"
                     )
                 chain_alpha_slider = gr.Slider(
-                    0.0, 1.0, value=0.6, step=0.05,
+                    0.0, 1.0, value=0.35, step=0.05,
                     label="Chain alpha (0 = ignore, 1 = replace seed noise)",
                 )
 
