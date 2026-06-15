@@ -261,7 +261,13 @@ def generate_frames_temporal(
     # would reject the mis-sized shard with a cryptic kernel-dispatch error. Fail
     # early with a message that includes valid frame counts for the current rig.
     _num_chips = device.get_num_devices() if isinstance(device, _ttnn.MeshDevice) else 1
-    if num_frames % _num_chips != 0:
+    # Mesh sharding is only valid when num_chips >= num_frames: each chip handles
+    # exactly (num_frames / num_chips) CFG-doubled rows [batch=2]. If num_chips <
+    # num_frames all rows land on a single chip as a batch > 2 tensor — the TTNN
+    # UNet (compiled for batch=2) silently corrupts L1, breaking all subsequent VAE
+    # decodes. Fall back to the serial per-frame path in that case.
+    _use_sharding = (_num_chips >= num_frames) and (num_frames % _num_chips == 0)
+    if not _use_sharding and _num_chips > 1 and num_frames % _num_chips != 0:
         raise ValueError(
             f"num_frames ({num_frames}) must be divisible by num_chips ({_num_chips}). "
             f"Valid counts for {_num_chips} chips: {[_num_chips * k for k in range(1, 9)]}"
@@ -353,54 +359,80 @@ def generate_frames_temporal(
         text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
     )
 
-    # Denoising loop: all N frames are CFG-doubled CPU-side, then sharded to
-    # device in a single shard_frames_to_device call so N chips process N frames
-    # in parallel (ShardTensorToMesh). gather_frames_from_device collects the
-    # results and CPU-side _tt_guide_cpu applies CFG — no serial UNet calls.
+    # Denoising loop: when num_chips >= num_frames, frames are CFG-doubled and
+    # sharded across chips via ShardTensorToMesh (one chip per frame, batch=2).
+    # When num_chips < num_frames (e.g. single-chip run), fall back to the serial
+    # per-frame path — the TTNN UNet is compiled for batch=2 and would corrupt L1
+    # if fed a larger batch, breaking subsequent VAE decodes.
     num_steps_actual = len(timesteps)
 
     for step_idx, t in enumerate(timesteps):
-        # CFG-double each frame CPU-side, then shard across chips in one call.
-        # Lightning: scale_model_input first (per-frame, CPU — Euler sigma normalization).
-        cfg_latents = []
-        for i in range(num_frames):
-            latent_cpu = frame_latents[i]
-            if use_lightning:
-                # Euler schedulers require scaling the latent by 1/sqrt(sigma^2+1)
-                # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
-                # there, but Euler's sigma starts at ~25 and must be normalized).
-                latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
-            cfg_latents.append(torch.cat([latent_cpu, latent_cpu], dim=0))  # [2, 4, lh, lw]
+        if _use_sharding:
+            # CFG-double each frame CPU-side, then shard across chips in one call.
+            # Lightning: scale_model_input first (per-frame, CPU — Euler sigma normalization).
+            cfg_latents = []
+            for i in range(num_frames):
+                latent_cpu = frame_latents[i]
+                if use_lightning:
+                    # Euler schedulers require scaling the latent by 1/sqrt(sigma^2+1)
+                    # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
+                    # there, but Euler's sigma starts at ~25 and must be normalized).
+                    latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
+                cfg_latents.append(torch.cat([latent_cpu, latent_cpu], dim=0))  # [2, 4, lh, lw]
 
-        # Shard all N CFG-doubled frames to device in a single call.
-        # shard_frames_to_device stacks the list to [2N, 4, lh, lw] and maps each
-        # pair to a distinct chip via ShardTensorToMesh — replacing N serial to_device
-        # calls and N serial ttnn.concat([lat, lat], dim=0) operations.
-        stacked_dev = shard_frames_to_device(
-            cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-        )
-        ttnn_out = ttnn_model(
-            stacked_dev,
-            timestep=_tlist[step_idx],
-            encoder_hidden_states=ttnn_text_emb,
-            class_labels=None,
-            attention_mask=None,
-            cross_attention_kwargs=None,
-            return_dict=True,
-            config=config,
-        )
-        stacked_dev.deallocate(True)
+            # Shard all N CFG-doubled frames to device in a single call.
+            # shard_frames_to_device stacks the list to [2N, 4, lh, lw] and maps each
+            # pair to a distinct chip via ShardTensorToMesh — replacing N serial to_device
+            # calls and N serial ttnn.concat([lat, lat], dim=0) operations.
+            stacked_dev = shard_frames_to_device(
+                cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+            )
+            ttnn_out = ttnn_model(
+                stacked_dev,
+                timestep=_tlist[step_idx],
+                encoder_hidden_states=ttnn_text_emb,
+                class_labels=None,
+                attention_mask=None,
+                cross_attention_kwargs=None,
+                return_dict=True,
+                config=config,
+            )
+            stacked_dev.deallocate(True)
 
-        # Gather all N frame outputs from device, apply CFG guidance per frame.
-        # gather_frames_from_device pulls [2N, 4, lh, lw] back to CPU and splits
-        # it into N tensors of shape [2, 4, lh, lw] — one per frame.
-        frame_outputs = gather_frames_from_device(ttnn_out, device, num_frames)
-        ttnn_out.deallocate(True)
-        noise_preds = []
-        for frame_out in frame_outputs:
-            # _tt_guide_cpu applies CFG on a CPU [2, C, H, W] tensor; result is
-            # [1, 4, lh, lw] — the guided noise prediction for this frame.
-            noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
+            # Gather all N frame outputs from device, apply CFG guidance per frame.
+            # gather_frames_from_device pulls [2N, 4, lh, lw] back to CPU and splits
+            # it into N tensors of shape [2, 4, lh, lw] — one per frame.
+            frame_outputs = gather_frames_from_device(ttnn_out, device, num_frames)
+            ttnn_out.deallocate(True)
+            noise_preds = []
+            for frame_out in frame_outputs:
+                # _tt_guide_cpu applies CFG on a CPU [2, C, H, W] tensor; result is
+                # [1, 4, lh, lw] — the guided noise prediction for this frame.
+                noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
+        else:
+            # Serial path: one UNet call per frame, batch=2 CFG-doubled.
+            # Used when num_chips < num_frames (e.g. --device-id on a single chip).
+            noise_preds = []
+            for i in range(num_frames):
+                latent_cpu = frame_latents[i]
+                if use_lightning:
+                    latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
+                cfg_lat = torch.cat([latent_cpu, latent_cpu], dim=0)  # [2, 4, lh, lw]
+                lat_dev = to_device(cfg_lat, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+                ttnn_out_i = ttnn_model(
+                    lat_dev,
+                    timestep=_tlist[step_idx],
+                    encoder_hidden_states=ttnn_text_emb,
+                    class_labels=None,
+                    attention_mask=None,
+                    cross_attention_kwargs=None,
+                    return_dict=True,
+                    config=config,
+                )
+                lat_dev.deallocate(True)
+                frame_out = from_device(ttnn_out_i, device, batch=2)
+                ttnn_out_i.deallocate(True)
+                noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
 
         if use_lightning:
             # Lightning two-point blend with cosine-decay alpha:
@@ -465,30 +497,23 @@ def generate_frames_temporal(
         torch.save(torch.cat(frame_latents, dim=0), save_path)
         print(f"  Chain: saved latents → {save_path}")
 
-    # Sharded VAE decode — stack all N latents, decode in parallel across chips.
-    # Each chip decodes num_frames // num_chips frames. The TTNN VAE conv kernels
-    # are not batch-size-fixed, so any N/num_chips batch is valid.
-    lat_nhwc_list = [
-        (lat / 0.18215).permute(0, 2, 3, 1)  # [1, lh, lw, 4] NHWC
-        for lat in frame_latents
-    ]
-    # Stack to [N, lh, lw, 4] then shard: chip K gets [N//num_chips, lh, lw, 4]
-    stacked_lat = torch.cat(lat_nhwc_list, dim=0)        # [N, lh, lw, 4]
-    ttnn_lat = shard_frames_to_device(
-        [stacked_lat[i:i+1] for i in range(num_frames)], # list of N [1, lh, lw, 4]
-        device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-    )
-    ttnn_decoded = ttnn_vae.decode(ttnn_lat)
-    ttnn_lat.deallocate(True)
-
-    # Gather [N, lh, lw, 3] from all chips (batch_per_frame=1 — no CFG doubling for VAE)
-    decoded_all = gather_frames_from_device(ttnn_decoded, device, num_frames, batch_per_frame=1)
-    ttnn_decoded.deallocate(True)
+    # VAE decode — serial per frame. The TTNN VAE only supports batch=1 input
+    # ([1, lh, lw, 4] NHWC). Output is [1, 1, H*W, 3] flat; reshape before PIL.
     frames = []
-    for i in range(num_frames):
-        dec = decoded_all[i]  # [1, lh, lw, 3] — batch_per_frame=1 already ensures single frame
-        dec = dec.permute(0, 3, 1, 2).float()             # [1, 3, H, W]
-        img = (dec / 2 + 0.5).clamp(0, 1)
+    for i, latent in enumerate(frame_latents):
+        latent_scaled = latent / 0.18215
+        ttnn_lat = to_device(
+            latent_scaled.permute(0, 2, 3, 1),  # [1, lh, lw, 4] NHWC
+            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+        ttnn_lat.deallocate(True)
+        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
+        ttnn_decoded_perm = ttnn.permute(ttnn_decoded, [0, 3, 1, 2])
+        ttnn_decoded.deallocate(True)
+        decoded = from_device(ttnn_decoded_perm, device, batch=1).float()
+        ttnn_decoded_perm.deallocate(True)
+        img = (decoded / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
         frames.append(Image.fromarray(img))
         print(f"  Frame {i + 1}/{num_frames} decoded")
@@ -698,27 +723,23 @@ def generate_frames_motion(
         torch.save(torch.cat(frame_latents, dim=0), save_path)
         print(f"  Chain: saved latents → {save_path}")
 
-    # Sharded VAE decode — identical pattern to generate_frames_temporal.
-    # Stack all N latents, decode in parallel across chips (batch_per_frame=1 —
-    # no CFG doubling for VAE, so each chip gets num_frames // num_chips frames).
-    lat_nhwc_list = [
-        (lat / 0.18215).permute(0, 2, 3, 1)
-        for lat in frame_latents
-    ]
-    stacked_lat = torch.cat(lat_nhwc_list, dim=0)
-    ttnn_lat = shard_frames_to_device(
-        [stacked_lat[i:i+1] for i in range(num_frames)],
-        device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-    )
-    ttnn_decoded = ttnn_vae.decode(ttnn_lat)
-    ttnn_lat.deallocate(True)
-    decoded_all = gather_frames_from_device(ttnn_decoded, device, num_frames, batch_per_frame=1)
-    ttnn_decoded.deallocate(True)
+    # VAE decode — serial per frame. The TTNN VAE only supports batch=1 input
+    # ([1, lh, lw, 4] NHWC). Output is [1, 1, H*W, 3] flat; reshape before PIL.
     frames = []
-    for i in range(num_frames):
-        dec = decoded_all[i]  # [1, lh, lw, 3] — batch_per_frame=1 already ensures single frame
-        dec = dec.permute(0, 3, 1, 2).float()  # NHWC → NCHW [1, 3, H, W]
-        img = (dec / 2 + 0.5).clamp(0, 1)
+    for i, latent in enumerate(frame_latents):
+        latent_scaled = latent / 0.18215
+        ttnn_lat = to_device(
+            latent_scaled.permute(0, 2, 3, 1),  # [1, lh, lw, 4] NHWC
+            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+        ttnn_lat.deallocate(True)
+        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
+        ttnn_decoded_perm = ttnn.permute(ttnn_decoded, [0, 3, 1, 2])
+        ttnn_decoded.deallocate(True)
+        decoded = from_device(ttnn_decoded_perm, device, batch=1).float()
+        ttnn_decoded_perm.deallocate(True)
+        img = (decoded / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
         frames.append(Image.fromarray(img))
         print(f"  Frame {i + 1}/{num_frames} decoded")
