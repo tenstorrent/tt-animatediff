@@ -329,46 +329,46 @@
     </div>
 
     <div class="speed-table-wrap">
-      <h4>Inference speed · 8 frames (Blackhole P300C unless noted)</h4>
+      <h4>Inference speed · 8 frames · Blackhole P300C · warm model</h4>
       <table class="speed-table">
         <thead>
           <tr>
             <th>Mode</th>
             <th>Steps</th>
-            <th>Time / frame</th>
+            <th>s / frame</th>
             <th>Total (8 frames)</th>
-            <th>Speedup</th>
+            <th>vs Phase 3</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><span class="tag tag-original">Original</span></td>
+            <td>Phase 3 · MotionAdapter</td>
             <td>25</td>
-            <td>~15 s</td>
-            <td>~120 s</td>
+            <td>~101 s</td>
+            <td>~806 s</td>
             <td>1×</td>
           </tr>
           <tr>
-            <td><span class="tag tag-lightning">Lightning</span></td>
-            <td>8</td>
-            <td>~5 s</td>
-            <td>~40 s</td>
-            <td class="hl">~3×</td>
+            <td><span class="tag tag-original">Phase 2.5</span> cross-frame</td>
+            <td>25</td>
+            <td>~12.5 s</td>
+            <td>~100 s</td>
+            <td class="hl">8×</td>
           </tr>
           <tr>
-            <td><span class="tag tag-lightning">Lightning</span></td>
-            <td>4</td>
-            <td>~2.5 s</td>
-            <td>~20 s</td>
-            <td class="hl">~6×</td>
+            <td><span class="tag tag-lightning">Lightning</span> cross-frame</td>
+            <td>8</td>
+            <td>~12 s</td>
+            <td>~96 s</td>
+            <td class="hl">~8.4×</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <p class="lightning-footer">
-      Use <code>--steps 8 --scheduler lightning</code> on any supported hardware →
-      <a href="https://github.com/tenstorrent/tt-animatediff">GitHub</a>
+      Lightning and PNDM 25-step take nearly the same wall-clock time — the CPU temporal blend is the bottleneck, not step count. →
+      <a href="benchmarks.html">Full benchmarks</a>
     </p>
   </div>
 </section>
@@ -406,7 +406,7 @@
     <div class="what-cols">
       <div class="what-col">
         <h4>Hardware path</h4>
-        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~15 s/frame on P300C vs ~2 min/frame on CPU.</p>
+        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~12.5 s/frame on P300C (Phase 2.5, 25-step) vs ~2 min/frame on CPU.</p>
       </div>
       <div class="what-col">
         <h4>Temporal attention</h4>
@@ -446,7 +446,7 @@ flowchart TD
     CPU_VAE --> GIF([Output GIF])
 
     MODE -->|blackhole / sim| LOOP["Denoising loop — one scheduler per frame\nPNDM standard · Euler for Lightning"]
-    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~4–15 s / frame"]
+    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~12.5 s / frame (Phase 2.5)"]
     BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all N frames — CPU"]
     CFA --> STEP["scheduler.step — one per frame"]
     STEP --> NEXT{more steps?}
@@ -498,7 +498,7 @@ function showDiagram(name, btn) {
       <div class="lightning-col">
         <h4>AnimateDiff-Lightning on Blackhole</h4>
         <p>Lightning mode is available across all three backends, but works differently per mode. On <strong>CPU</strong>: loads <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) — genuine 4-step distillation, CFG=1.0 baked in. On <strong>Blackhole/sim</strong>: switches to <code>TtEulerScheduler</code> (Euler, trailing, linear) with the base SD 1.4 TTNN UNet — no distilled adapter, CFG=7.5 retained, any step count. Enable with:</p>
-        <pre class="lightning-code"># Blackhole hardware — ~4.3 s/frame
+        <pre class="lightning-code"># Blackhole hardware — ~12 s/frame (warm, Phase 2.5)
 python examples/generate.py --lightning
 
 # CPU — ~20 s/frame, no hardware required
@@ -515,7 +515,7 @@ python app.py
       </div>
     </div>
 
-    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~15 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~12 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
     <div class="lightning-gallery">
       <figure class="lgif">
         <img src="assets/study/lightning-mandala.gif" alt="supernova explosion in deep space, purple and orange nebula" loading="lazy">
@@ -637,6 +637,7 @@ python examples/generate.py \
   <a href="gallery.html">Gallery</a> ·
   <a href="worlds-fair.html">World's Fair</a> ·
   <a href="mayan-glyphs.html">Maya Glyphs</a> ·
+  <a href="benchmarks.html">Benchmarks</a> ·
   Apache 2.0 ·
   Built on <a href="https://github.com/tenstorrent/tt-metal">TT-Metalium</a> ·
   Original work by <a href="https://arxiv.org/abs/2307.04725">Guo et al. 2023</a>
