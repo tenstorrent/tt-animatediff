@@ -465,23 +465,30 @@ def generate_frames_temporal(
         torch.save(torch.cat(frame_latents, dim=0), save_path)
         print(f"  Chain: saved latents → {save_path}")
 
-    # Decode all latents with TTNN VAE on Blackhole.
-    # Input: (1, 4, lh, lw) CPU tensor → permute to NHWC for TTNN conv layout.
-    # Output: (1, H, W, 3) TTNN tensor → permute back to NCHW → to torch.
+    # Sharded VAE decode — stack all N latents, decode in parallel across chips.
+    # Each chip decodes num_frames // num_chips frames. The TTNN VAE conv kernels
+    # are not batch-size-fixed, so any N/num_chips batch is valid.
+    lat_nhwc_list = [
+        (lat / 0.18215).permute(0, 2, 3, 1)  # [1, lh, lw, 4] NHWC
+        for lat in frame_latents
+    ]
+    # Stack to [N, lh, lw, 4] then shard: chip K gets [N//num_chips, lh, lw, 4]
+    stacked_lat = torch.cat(lat_nhwc_list, dim=0)        # [N, lh, lw, 4]
+    ttnn_lat = shard_frames_to_device(
+        [stacked_lat[i:i+1] for i in range(num_frames)], # list of N [1, lh, lw, 4]
+        device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+    )
+    ttnn_decoded = ttnn_vae.decode(ttnn_lat)
+    ttnn_lat.deallocate(True)
+
+    # Gather [N, lh, lw, 3] from all chips (batch_per_frame=1 — no CFG doubling for VAE)
+    decoded_all = gather_frames_from_device(ttnn_decoded, device, num_frames, batch_per_frame=1)
+    ttnn_decoded.deallocate(True)
     frames = []
-    for i, latent in enumerate(frame_latents):
-        latent_scaled = latent / 0.18215  # VAE scaling factor
-        ttnn_lat = to_device(
-            latent_scaled.permute(0, 2, 3, 1),  # NCHW → NHWC for TTNN conv
-            device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-        )
-        ttnn_decoded = ttnn_vae.decode(ttnn_lat)
-        ttnn_lat.deallocate(True)
-        # Reshape to (1, H, W, 3) then permute to (1, 3, H, W)
-        ttnn_decoded = ttnn.reshape(ttnn_decoded, [1, height, width, 3])
-        decoded = ttnn.to_torch(ttnn.permute(ttnn_decoded, [0, 3, 1, 2])).float()
-        ttnn_decoded.deallocate(True)
-        img = (decoded / 2 + 0.5).clamp(0, 1)
+    for i in range(num_frames):
+        dec = decoded_all[i][:1]                           # [1, lh, lw, 3]
+        dec = dec.permute(0, 3, 1, 2).float()             # [1, 3, H, W]
+        img = (dec / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
         frames.append(Image.fromarray(img))
         print(f"  Frame {i + 1}/{num_frames} decoded")

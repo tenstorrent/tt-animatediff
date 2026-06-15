@@ -165,29 +165,30 @@ def shard_frames_to_device(frame_tensors: list, device, dtype=None, layout=None)
     return ttnn.from_torch(stacked, device=device, **kwargs)
 
 
-def gather_frames_from_device(tensor, device, num_frames: int) -> list:
+def gather_frames_from_device(tensor, device, num_frames: int, batch_per_frame: int = 2) -> list:
     """Retrieve N frame tensors from a sharded device tensor.
 
-    Pulls the full [2N, C, H, W] tensor to CPU via ConcatMeshToTensor(dim=0)
-    and splits into a list of N tensors of shape [2, C, H, W].
+    Pulls the full [batch_per_frame*N, ...] tensor to CPU via ConcatMeshToTensor(dim=0)
+    and splits into a list of N tensors of shape [batch_per_frame, ...].
 
     Args:
-        tensor: TTNN tensor sharded across chips (logical shape [2N, C, H, W]).
+        tensor: TTNN tensor sharded across chips.
         device: TTNN MeshDevice from setup_blackhole().
         num_frames: N, the number of frames to split into.
+        batch_per_frame: Batch size per frame. 2 for CFG-doubled UNet output tensors
+                         (uncond + cond stacked). 1 for VAE decode tensors (single
+                         latent per frame, not CFG-doubled). Default 2.
+
+    Note: For UNet sharding (Tasks 1-3) the stride of 2 matches the CFG-doubling of
+          [2, 4, lh, lw] per frame. For VAE decode (Task 4) use batch_per_frame=1.
 
     Returns:
-        List of N CPU tensors, each [2, C, H, W].
-
-    Note:
-        The stride of 2 assumes CFG-doubled UNet tensors (batch_size=2 per frame).
-        A batch_per_frame parameter will be added in a follow-up task to support
-        VAE decode (batch_size=1 per frame). Do not use this function for non-CFG
-        tensors until that generalization lands.
+        List of N CPU tensors, each [batch_per_frame, ...].
     """
     import ttnn
     full = ttnn.to_torch(tensor, mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))
-    return [full[2 * i : 2 * i + 2] for i in range(num_frames)]
+    B = batch_per_frame
+    return [full[B * i : B * i + B] for i in range(num_frames)]
 
 
 def build_tlist(ttnn_scheduler, torch_time_proj, device, latent_h: int = 64, latent_w: int = 64) -> list:

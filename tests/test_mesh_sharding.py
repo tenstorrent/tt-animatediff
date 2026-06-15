@@ -161,6 +161,24 @@ def test_num_frames_divisible_does_not_raise_guard():
             pass  # other errors from mocked ttnn are expected
 
 
+def test_gather_frames_single_batch_per_frame():
+    """gather_frames_from_device with batch_per_frame=1 splits [N,C,H,W] into N [1,C,H,W]."""
+    from animatediff_ttnn.ttnn_pipeline import gather_frames_from_device
+
+    N, lh, lw = 4, 8, 8
+    stacked = torch.randn(N, 4, lh, lw)   # N frames, NOT CFG-doubled
+    ttnn_mock = _make_ttnn_mock()
+    ttnn_mock.to_torch.return_value = stacked
+    device = _make_mesh_device(num_chips=4)
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        result = gather_frames_from_device(MagicMock(), device, num_frames=N, batch_per_frame=1)
+
+    assert len(result) == N
+    for t in result:
+        assert t.shape == (1, 4, lh, lw)
+
+
 def test_forward_unet_staged_guard_raises():
     """forward_unet_staged raises ValueError if num_frames % num_chips != 0."""
     import importlib.util
