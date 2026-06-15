@@ -165,7 +165,8 @@
   .gif-pair {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    flex: 1;
+    /* no flex:1 — let the pair size to its content so the frame's
+       aspect-ratio:1 drives the height, not the card's flex stretch */
   }
   .gif-col {
     display: flex;
@@ -182,6 +183,7 @@
     text-transform: uppercase;
     border-bottom: 1px solid var(--border);
     background: rgba(0,0,0,.2);
+    flex-shrink: 0;
   }
   .label-q1 { color: var(--teal); }
   .label-q2 { color: var(--gold); }
@@ -191,16 +193,19 @@
     aspect-ratio: 1;
     background: var(--bg2);
     overflow: hidden;
+    width: 100%;
   }
   .gif-frame img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
   }
   .gif-pending {
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -421,16 +426,20 @@ const GLYPHS = [
   { slug:"ajaw",    name:"Ajaw",      number:20, meaning:"Lord / Sun / Completion" },
 ];
 
-/* ── Pending SVG — clock icon ── */
-const PENDING_SVG = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-  stroke="currentColor" stroke-width="1.5" style="opacity:.25">
-  <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
-</svg>`;
-
 /* ── Helpers ── */
 function fmtSec(s) {
   if (s == null) return null;
   return s >= 60 ? `${(s / 60).toFixed(1)} min` : `${Math.round(s)}s`;
+}
+
+/* Called via onerror so inline handler never needs to embed SVG attribute quotes */
+function showMissing(el) {
+  el.parentElement.innerHTML =
+    '<div class="gif-pending">' +
+    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" style="opacity:.25">' +
+    '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>' +
+    '<span>Missing</span></div>';
 }
 
 function frameHtml(slug, tier, result) {
@@ -438,7 +447,7 @@ function frameHtml(slug, tier, result) {
   if (hasGif) {
     return `<img src="assets/mayan-glyphs/${tier}/${slug}.gif"
                  alt="${slug} ${tier}" loading="lazy"
-                 onerror="this.parentElement.innerHTML='<div class=gif-pending>${PENDING_SVG}<span>Missing</span></div>'">`;
+                 onerror="showMissing(this)">`;
   }
   const label = (result && result.error) ? "Error" : "Pending";
   return `<div class="gif-pending"><div class="spinner"></div><span>${label}</span></div>`;
