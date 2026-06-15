@@ -112,7 +112,6 @@ def test_gather_frames_from_device_values():
 
 def test_num_frames_not_divisible_raises_temporal():
     """generate_frames_temporal raises ValueError if num_frames % num_chips != 0."""
-    import importlib
     ttnn_mock = _make_ttnn_mock()
     # Make isinstance(device, ttnn.MeshDevice) return True
     ttnn_mock.MeshDevice = type("MeshDevice", (), {})
