@@ -175,8 +175,9 @@ def test_gather_frames_single_batch_per_frame():
         result = gather_frames_from_device(MagicMock(), device, num_frames=N, batch_per_frame=1)
 
     assert len(result) == N
-    for t in result:
+    for i, t in enumerate(result):
         assert t.shape == (1, 4, lh, lw)
+        assert torch.equal(t, stacked[i:i+1]), f"Frame {i} slice mismatch"
 
 
 def test_forward_unet_staged_guard_raises():

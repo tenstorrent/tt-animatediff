@@ -138,22 +138,27 @@ def from_device(tensor, device, batch: int = 1):
 
 
 def shard_frames_to_device(frame_tensors: list, device, dtype=None, layout=None):
-    """Send N CFG-doubled frame tensors to device via frame-sharding.
+    """Send N same-shaped CPU tensors to device via frame-sharding.
 
-    Stacks N tensors of shape [2, C, H, W] into [2N, C, H, W] and sends with
-    ShardTensorToMesh(dim=0) so chip K receives frames [2K : 2K+2] — keeping
-    each chip at batch_size=2, matching the compiled TTNN UNet kernel.
+    Stacks N tensors along dim=0 into one tensor and sends via
+    ShardTensorToMesh(dim=0) so chip K receives rows [K*S : K*S+S] where
+    S = len(frame_tensors) // num_chips.
+
+    Common call patterns:
+      - UNet denoising (CFG-doubled): N [2, 4, lh, lw] tensors → [2N, 4, lh, lw].
+        Each chip gets [2, 4, lh, lw] matching the compiled batch_size=2 kernel.
+      - VAE decode (not CFG-doubled): N [1, lh, lw, 4] NHWC tensors → [N, lh, lw, 4].
 
     Works correctly with a single-chip MeshDevice (shard == full tensor).
 
     Args:
-        frame_tensors: List of N CPU tensors, each [2, C, H, W] (CFG-doubled).
+        frame_tensors: List of N CPU tensors, all the same shape.
         device: TTNN MeshDevice from setup_blackhole().
         dtype: Optional TTNN dtype (e.g. ttnn.bfloat16).
         layout: Optional TTNN layout (e.g. ttnn.TILE_LAYOUT).
 
     Returns:
-        Single TTNN tensor sharded across chips, logical shape [2N, C, H, W].
+        Single TTNN tensor sharded across chips, logical shape [N*frame_shape...].
     """
     import ttnn
     stacked = torch.cat(frame_tensors, dim=0)

@@ -486,7 +486,7 @@ def generate_frames_temporal(
     ttnn_decoded.deallocate(True)
     frames = []
     for i in range(num_frames):
-        dec = decoded_all[i][:1]                           # [1, lh, lw, 3]
+        dec = decoded_all[i]  # [1, lh, lw, 3] — batch_per_frame=1 already ensures single frame
         dec = dec.permute(0, 3, 1, 2).float()             # [1, 3, H, W]
         img = (dec / 2 + 0.5).clamp(0, 1)
         img = (img.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8")
