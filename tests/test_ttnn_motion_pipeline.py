@@ -49,28 +49,50 @@ def _make_fake_ttnn_tensors(N: int, spatial_h: int, spatial_w: int, C: int):
 def _run_apply_temporal(fake_samples, real_tensors, module_list, N, C, H, W, alpha=1.0):
     """Call _apply_temporal with fully mocked ttnn/to_device.
 
-    fake_samples: MagicMock objects passed as samples
-    real_tensors: list of actual tensors returned by ttnn.to_torch per sample
+    fake_samples: MagicMock objects passed as samples (each has .cpu_data torch tensor)
+    real_tensors: unused — kept for call-site compatibility
     """
     from animatediff_ttnn.ttnn_motion_pipeline import _apply_temporal
 
     mock_device = MagicMock()
-    idx = [0]
 
     def mock_to_torch(t):
-        # Return the underlying tensor for each fake sample in order
-        tensor = t.cpu_data
-        return tensor
+        # Works for both individual fake samples and the concatenated mock.
+        return t.cpu_data
+
+    def mock_concat(tensors, dim=0):
+        # Concatenate the underlying cpu_data tensors, wrap in a mock.
+        joined = torch.cat([t.cpu_data for t in tensors], dim=dim)
+        m = MagicMock()
+        m.cpu_data = joined
+        m.deallocate = MagicMock()
+        return m
+
+    def mock_to_device_fn(t, *a, **kw):
+        # Wrap the torch tensor in a mock so callers can call .deallocate(True).
+        m = MagicMock()
+        m.torch_data = t
+        m.shape = t.shape
+        m.deallocate = MagicMock()
+        return m
+
+    def mock_split(tensor, num_splits, dim=0):
+        # tensor is our MagicMock wrapper; extract the actual torch data.
+        actual = getattr(tensor, "torch_data", tensor)
+        chunk_size = actual.shape[dim] // num_splits
+        return list(torch.split(actual, chunk_size, dim=dim))
 
     with patch("animatediff_ttnn.ttnn_motion_pipeline.ttnn") as mock_ttnn, \
          patch("animatediff_ttnn.ttnn_motion_pipeline.to_device") as mock_to_device:
         mock_ttnn.to_torch.side_effect = mock_to_torch
+        mock_ttnn.concat.side_effect = mock_concat
+        mock_ttnn.split.side_effect = mock_split
         # get_memory_config → not sharded
         mc = MagicMock()
         mc.is_sharded.return_value = False
         mock_ttnn.get_memory_config.return_value = mc
-        # to_device: round-trip — just return the tensor unchanged
-        mock_to_device.side_effect = lambda t, *a, **kw: t
+        # to_device: wrap in a mock that supports .deallocate()
+        mock_to_device.side_effect = mock_to_device_fn
 
         result = _apply_temporal(fake_samples, module_list, mock_device, N, C, H, W, alpha)
     return result

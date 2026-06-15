@@ -33,6 +33,13 @@ try:
 except Exception:
     to_device = None  # type: ignore[assignment]
 
+# torch.compile cache: module id → compiled callable.
+# Populated on the first _apply_temporal call for each unique module object.
+# torch.compile has a cold-start penalty (~1-2s per module on first call) but
+# subsequent calls are significantly faster, especially for the large spatial
+# stages (up1 C=1280 32×32, up2 C=640 64×64) that dominate Phase 3 runtime.
+_COMPILED_MODULES: dict[int, object] = {}
+
 
 def _apply_temporal(
     samples: list,
@@ -46,13 +53,19 @@ def _apply_temporal(
 ) -> list:
     """Bridge between TTNN device tensors and diffusers AnimateDiffTransformer3D.
 
-    Pulls N TTNN hidden states to CPU, reshapes to [B*N, C, H, W] (the format
-    AnimateDiffTransformer3D.forward expects), runs the full diffusers temporal
-    attention module (LayerNorm, QKV, positional embedding, feedforward), then
-    pushes back to device with the same dtype/layout.
+    Pulls N TTNN hidden states to CPU in a single batched transfer, reshapes to
+    [B*N, C, H, W] (the format AnimateDiffTransformer3D.forward expects), runs
+    the full diffusers temporal attention module (LayerNorm, QKV, positional
+    embedding, feedforward) via a torch.compiled callable, then pushes all frames
+    back to device in a single batched transfer.
 
-    Using the full diffusers module rather than a partial QKV-only kernel ensures
-    all components (norm, proj_in/out, bias, positional embedding) are applied.
+    Two optimisations vs the naive N-separate-transfers approach:
+      1. Batched transfer: all N frames are concatenated into a single TTNN tensor
+         [N, 1, 2*S, C] before ttnn.to_torch(), eliminating N-1 extra D→H PCIe
+         round-trips per injection point per step.
+      2. torch.compile: each AnimateDiffTransformer3D module is compiled on its
+         first call and cached in _COMPILED_MODULES.  Subsequent calls skip Python
+         overhead in the GroupNorm / LayerNorm / GEGLU / attention paths.
 
     Args:
         samples:     List of N TTNN tensors, each [1, 1, 2*S, C] where S=H*W.
@@ -70,9 +83,8 @@ def _apply_temporal(
         List of N TTNN tensors, same shape as input, with temporal attention applied.
         Original input tensors are deallocated.
     """
-    # Step 1: pull all N frames to CPU as float32.
-    # TTNN layout: [1, 1, 2*H*W, C] (batch=2 folded into spatial).
-    # We need [2, C, H, W] per frame (CFG pair per-frame NCHW).
+    # ── Step 1: batched D→H transfer ─────────────────────────────────────────
+    # Move sharded samples to DRAM first (ttnn.concat requires same memory config).
     orig_dtype = samples[0].dtype
     orig_memory_configs = [ttnn.get_memory_config(s) for s in samples]
 
@@ -80,30 +92,40 @@ def _apply_temporal(
         ttnn.to_memory_config(s, ttnn.DRAM_MEMORY_CONFIG) if ttnn.get_memory_config(s).is_sharded() else s
         for s in samples
     ]
-    raw_tensors = [ttnn.to_torch(s).float() for s in dram_samples]
-    orig_shape = raw_tensors[0].shape  # [1, 1, 2*S, C] — save for reconstruction
 
-    # Reshape [1, 1, 2*S, C] → [2, C, H, W] per frame.
-    # S = H * W; CFG batch=2 was folded into spatial by pre_process_input.
-    # raw[0,0, 0:S, :] = uncond frame i, raw[0,0, S:2S, :] = cond frame i.
-    frame_tensors = []
-    for raw in raw_tensors:
-        flat = raw.reshape(2, spatial_h * spatial_w, C)           # [2, S, C]
-        nchw = flat.permute(0, 2, 1).reshape(2, C, spatial_h, spatial_w)  # [2, C, H, W]
-        frame_tensors.append(nchw)
+    # Concatenate all N frames along dim=0 → [N, 1, 2*S, C], pull once.
+    batched = ttnn.concat(dram_samples, dim=0)          # [N, 1, 2*S, C]
+    raw_batch = ttnn.to_torch(batched).float()           # [N, 1, 2*S, C]
+    batched.deallocate(True)
 
-    # Step 2: apply each AnimateDiffTransformer3D module sequentially.
-    # Module expects [B*N, C, H, W]; B=2 (uncond+cond), N frames.
-    # Stack N frames along batch → [2*N, C, H, W], run module, unstack.
-    pre_energy = sum(t.norm().item() for t in frame_tensors)
+    orig_shape = raw_batch.shape[1:]   # (1, 2*S, C) — per-frame shape for reconstruction
+
+    # Reshape each frame [1, 2*S, C] → [2, C, H, W] and stack → [N, 2, C, H, W].
+    # S = H*W; CFG batch=2 was folded into spatial by pre_process_input.
+    frames_nchw = (
+        raw_batch                                                 # [N, 1, 2*S, C]
+        .squeeze(1)                                               # [N, 2*S, C]
+        .reshape(num_frames, 2, spatial_h * spatial_w, C)        # [N, 2, S, C]
+        .permute(0, 1, 3, 2)                                      # [N, 2, C, S]
+        .reshape(num_frames, 2, C, spatial_h, spatial_w)          # [N, 2, C, H, W]
+    )
+    # frame_tensors[i] = frames_nchw[i]: shape [2, C, H, W]
+    frame_tensors = list(frames_nchw)
+
+    # ── Step 2: temporal attention via compiled modules ───────────────────────
+    # AnimateDiffTransformer3D.forward expects [B*N, C, H, W]; B=2 (CFG pair).
+    pre_energy = frames_nchw.norm().item()
     for module in module_list:
-        # Stack: [2*N, C, H, W]
         stacked = torch.stack(frame_tensors, dim=1).reshape(2 * num_frames, C, spatial_h, spatial_w)
 
-        with torch.no_grad():
-            attended = module.forward(stacked, num_frames=num_frames)  # [2*N, C, H, W]
+        # Fetch or create the compiled version of this module.
+        mid = id(module)
+        if mid not in _COMPILED_MODULES:
+            _COMPILED_MODULES[mid] = torch.compile(module.forward, fullgraph=False)
 
-        # Unstack back to N tensors of [2, C, H, W]
+        with torch.no_grad():
+            attended = _COMPILED_MODULES[mid](stacked, num_frames=num_frames)  # [2*N, C, H, W]
+
         attended_frames = attended.reshape(2, num_frames, C, spatial_h, spatial_w).permute(1, 0, 2, 3, 4)
         attended_list = list(attended_frames)  # N tensors of [2, C, H, W]
 
@@ -120,22 +142,24 @@ def _apply_temporal(
           f"energy: {pre_energy:.1f} → {post_energy:.1f}"
           f"  ratio={post_energy/max(pre_energy,1e-6):.3f}  alpha={injection_alpha}")
 
-    # Step 3: reshape back to [1, 1, 2*S, C] and push to device.
-    out = []
-    for i in range(num_frames):
-        # [2, C, H, W] → [1, 1, 2*S, C]
-        nchw = frame_tensors[i]                                        # [2, C, H, W]
-        sc = nchw.reshape(2, C, -1).permute(0, 2, 1).reshape(orig_shape)  # [1,1,2*S,C]
-        t_device = to_device(
-            sc,
-            device,
-            dtype=orig_dtype,
-            layout=ttnn.TILE_LAYOUT,
-        )
-        mc = orig_memory_configs[i]
+    # ── Step 3: batched H→D transfer ─────────────────────────────────────────
+    # Reconstruct [N, 1, 2*S, C] from frame_tensors, push as one tensor, split.
+    result_batch = (
+        torch.stack(frame_tensors, dim=0)                          # [N, 2, C, H, W]
+        .reshape(num_frames, 2, C, spatial_h * spatial_w)          # [N, 2, C, S]
+        .permute(0, 1, 3, 2)                                        # [N, 2, S, C]
+        .reshape(num_frames, 1, 2 * spatial_h * spatial_w, C)      # [N, 1, 2*S, C]
+    )
+
+    # to_device expects a CPU tensor; push all frames at once then split.
+    batched_dev = to_device(result_batch, device, dtype=orig_dtype, layout=ttnn.TILE_LAYOUT)
+    out = list(ttnn.split(batched_dev, num_frames, dim=0))  # N × [1, 1, 2*S, C]
+    batched_dev.deallocate(True)
+
+    # Restore original memory configs (sharding) and deallocate inputs.
+    for i, (t_dev, mc) in enumerate(zip(out, orig_memory_configs)):
         if mc.is_sharded():
-            t_device = ttnn.to_memory_config(t_device, mc)
-        out.append(t_device)
+            out[i] = ttnn.to_memory_config(t_dev, mc)
         samples[i].deallocate(True)
 
     return out
