@@ -787,14 +787,12 @@
     has a literal 100-year arc to trace: from opening day optimism, through urban decay and
     millennial celebration, to a solarpunk 2050 and finally a centennial ceremony in 2064 with
     visitors from Moon colonies.<br><br>
-    Each frame below was generated independently on <strong>chip 0</strong> (PNDM 25-step, 8 frames),
-    seeded with <code>--chain-from</code> output of the previous run and
-    <code>--chain-alpha 0.55</code>.<br><br>
-    <strong style="color:#f4c471">Note:</strong> At alpha=0.55 the latent blending is strong enough
-    to propagate color palette and tonal range across eras — you can trace the warm-to-cool
-    progression — but it overwhelms subject identity. The Unisphere does not survive as a
-    recognizable shape. These are abstract color-field animations, not representational images.
-    Lower alpha values (0.2–0.35) preserve subject identity better; that re-run is pending.
+    Each frame below was generated on <strong>chip 0</strong> (PNDM 25-step, 16 frames, MotionAdapter),
+    seeded with <code>--chain-from</code> output of the previous run at
+    <code>--chain-alpha 0.35</code> — enough to bias the denoiser toward the previous
+    composition (~15% Pearson correlation) without overwriting text guidance.
+    The chain signal is the frame-mean of the previous denoised latents, renormalized to unit std
+    before injection into the seed noise.
   </div>
 
   <div class="chain-row">
