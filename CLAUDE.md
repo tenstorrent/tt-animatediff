@@ -22,7 +22,7 @@ See ~/CLAUDE.md "tt-animatediff" section for details.
 - ARC firmware hang on chip 3 (P300C board 0000046131924055) — see ~/qb2-debug/
   setup_blackhole() now reads hwmon sentinel values to skip dead chips
 - ttnn_pipeline.py uses open_mesh_device (not open_device) — all chips claimed upfront
-- VAE decode must stay on CPU: TTNN VAE conv_out OOMs on Blackhole L1 grid
+- VAE decode: Phase 4 mesh sharding sends VAE latents to TTNN device. If TTNN VAE conv_out OOMs on L1, fall back to CPU decode via `ttnn.to_torch` + diffusers VAE.
 
 ## Phase 3 MotionAdapter — two bugs fixed (2026-06-14)
 
