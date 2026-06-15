@@ -95,6 +95,23 @@ Replaces serialized `for i in range(num_frames)` loops in Phase 2.5 and Phase 3 
 
 **Hardware smoke test:** `scripts/mesh_sharding_hw_test.py` — compares 1-chip vs 4-chip on 4-frame / 4-step generation, asserts PCC > 0.99, prints timing breakdown.
 
+## Phase 3 batched D→H transfer (2026-06-15)
+
+`_apply_temporal` now pulls all N frame tensors from device in a single `ttnn.concat → ttnn.to_torch` call instead of N separate transfers. H→D path stays per-frame (`to_device` per frame) — `ttnn.split` produces parent-buffer views whose memory config is incompatible with the downstream resnet reshard kernel.
+
+**Measured speedup (QB2, 4×P300c, 8 frames, 25 steps):**
+- Before: ~806s (~101 s/frame)
+- After:   416s (~52 s/frame)
+- Speedup: 1.94×
+
+`torch.compile` was removed — `AnimateDiffTransformer3D` triggers the recompile guard limit (8) on every unique attention processor object ID, falling back to eager with warnings. Batched D→H accounts for the full measured speedup.
+
+**Key correctness constraints for future changes to `_apply_temporal`:**
+- Module forward expects `[2*N, C, H, W]` with layout `[uncond_fr0, …, uncond_frN-1, cond_fr0, …, cond_frN-1]`.
+  Stack: `torch.stack(frames, dim=1)` (not dim=0) → `[2, N, C, H, W]` → `.reshape(2*N, C, H, W)`.
+- Unstack: `attended.reshape(2, N, C, H, W).permute(1,0,2,3,4)` → `[N, 2, C, H, W]`.
+- Output inverse reshape: `[2,C,H,W].reshape(2,C,S).permute(0,2,1).reshape(1,1,2*S,C)` (NOT permute(0,2,3,1)).
+
 ### LCM distillation (closed)
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
