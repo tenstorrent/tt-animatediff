@@ -108,3 +108,100 @@ def test_gather_frames_from_device_values():
     assert torch.allclose(result[0], stacked[0:2])
     assert torch.allclose(result[1], stacked[2:4])
     assert torch.allclose(result[2], stacked[4:6])
+
+
+def test_num_frames_not_divisible_raises_temporal():
+    """generate_frames_temporal raises ValueError if num_frames % num_chips != 0."""
+    import importlib
+    ttnn_mock = _make_ttnn_mock()
+    # Make isinstance(device, ttnn.MeshDevice) return True
+    ttnn_mock.MeshDevice = type("MeshDevice", (), {})
+    device = ttnn_mock.MeshDevice()
+    device.get_num_devices = MagicMock(return_value=4)
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        from animatediff_ttnn.temporal_attention import generate_frames_temporal
+        with pytest.raises(ValueError, match="num_frames.*divisible"):
+            generate_frames_temporal(
+                device=device,
+                ttnn_model=MagicMock(),
+                ttnn_vae=MagicMock(),
+                config=MagicMock(),
+                torch_time_proj=MagicMock(),
+                text_embeddings=torch.zeros(2, 96, 768),
+                num_frames=7,   # 7 % 4 != 0
+                num_steps=1,
+            )
+
+
+def test_num_frames_divisible_does_not_raise_guard():
+    """generate_frames_temporal does NOT raise for num_frames divisible by num_chips."""
+    ttnn_mock = _make_ttnn_mock()
+    ttnn_mock.MeshDevice = type("MeshDevice", (), {})
+    device = ttnn_mock.MeshDevice()
+    device.get_num_devices = MagicMock(return_value=4)
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        from animatediff_ttnn.temporal_attention import generate_frames_temporal
+        # Should NOT raise ValueError for the divisibility guard.
+        # It will raise something else (ttnn call fails on mock), but not our guard.
+        try:
+            generate_frames_temporal(
+                device=device,
+                ttnn_model=MagicMock(),
+                ttnn_vae=MagicMock(),
+                config=MagicMock(),
+                torch_time_proj=MagicMock(),
+                text_embeddings=torch.zeros(2, 96, 768),
+                num_frames=8,   # 8 % 4 == 0
+                num_steps=1,
+            )
+        except ValueError as e:
+            assert "divisible" not in str(e), f"Guard should not fire: {e}"
+        except Exception:
+            pass  # other errors from mocked ttnn are expected
+
+
+def test_forward_unet_staged_guard_raises():
+    """forward_unet_staged raises ValueError if num_frames % num_chips != 0."""
+    import importlib.util
+    import os
+
+    ttnn_mock = _make_ttnn_mock()
+    ttnn_mock.MeshDevice = type("MeshDevice", (), {})
+    device = ttnn_mock.MeshDevice()
+    device.get_num_devices = MagicMock(return_value=4)
+
+    # Load ttnn_motion_pipeline.py directly by file path to bypass
+    # animatediff_ttnn/__init__.py (which imports pipeline.py → diffusers
+    # AnimateDiffPipeline → CLIPImageProcessor, unavailable in CI).
+    module_path = os.path.join(
+        os.path.dirname(__file__), "..", "animatediff_ttnn", "ttnn_motion_pipeline.py"
+    )
+    spec = importlib.util.spec_from_file_location("ttnn_motion_pipeline_direct", module_path)
+    mod = importlib.util.module_from_spec(spec)
+
+    # Stub out the module-level ttnn import and to_device so the module loads cleanly.
+    stub_modules = {
+        "ttnn": ttnn_mock,
+        "animatediff_ttnn.ttnn_pipeline": MagicMock(),
+    }
+    with patch.dict(sys.modules, stub_modules):
+        spec.loader.exec_module(mod)
+
+    forward_unet_staged = mod.forward_unet_staged
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        # Patch the module-level ttnn reference used by the guard inside forward_unet_staged.
+        mod.ttnn = ttnn_mock
+        with pytest.raises(ValueError, match="num_frames.*divisible"):
+            forward_unet_staged(
+                ttnn_model=MagicMock(),
+                frame_samples=[MagicMock()] * 5,  # 5 % 4 != 0
+                timestep=MagicMock(),
+                encoder_hidden_states=MagicMock(),
+                config=MagicMock(),
+                temporal_kernels={},
+                device=device,
+                num_frames=5,
+            )

@@ -249,6 +249,18 @@ def generate_frames_temporal(
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
     """
+    import ttnn as _ttnn
+    # Guard: num_frames must be evenly divisible by the number of chips.
+    # A remainder means one shard would have fewer frames than the others — TTNN
+    # would reject the mis-sized shard with a cryptic kernel-dispatch error. Fail
+    # early with a message that includes valid frame counts for the current rig.
+    _num_chips = device.get_num_devices() if isinstance(device, _ttnn.MeshDevice) else 1
+    if num_frames % _num_chips != 0:
+        raise ValueError(
+            f"num_frames ({num_frames}) must be divisible by num_chips ({_num_chips}). "
+            f"Valid counts for {_num_chips} chips: {[_num_chips * k for k in range(1, 9)]}"
+        )
+
     import ttnn
     from PIL import Image
     from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
