@@ -168,11 +168,33 @@ def test_chunked_sharding_runs_ceil_passes():
         shard_calls.append(len(frame_tensors))
         return MagicMock(name="sharded")
 
-    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), \
+    # Stub tt-metal paths that generate_frames_temporal imports lazily but that
+    # are absent in CI (no tt-metal wheel).  Stubs live only for the duration of
+    # this test; they don't pollute other tests.
+    pndm_stub = MagicMock()
+    pndm_stub.TtPNDMScheduler = MagicMock(
+        return_value=MagicMock(timesteps=torch.tensor([1]), set_timesteps=MagicMock())
+    )
+    tt_metal_stubs = {
+        "models": MagicMock(),
+        "models.demos": MagicMock(),
+        "models.demos.vision": MagicMock(),
+        "models.demos.vision.generative": MagicMock(),
+        "models.demos.vision.generative.stable_diffusion": MagicMock(),
+        "models.demos.vision.generative.stable_diffusion.wormhole": MagicMock(),
+        "models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs": MagicMock(),
+        "models.demos.vision.generative.stable_diffusion.wormhole.sd_pndm_scheduler": pndm_stub,
+    }
+
+    # Use a real PNDMScheduler so timesteps/init_noise_sigma come back as real tensors.
+    from diffusers import PNDMScheduler as _RealPNDM
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock, **tt_metal_stubs}), \
          patch.object(tp, "shard_frames_to_device", _fake_shard), \
          patch.object(tp, "gather_frames_from_device", _fake_gather), \
          patch.object(tp, "to_device", MagicMock(return_value=MagicMock())), \
-         patch.object(tp, "from_device", MagicMock(return_value=torch.randn(1, 4, lh, lh))):
+         patch.object(tp, "from_device", MagicMock(return_value=torch.randn(1, 4, lh, lh))), \
+         patch.object(tp, "build_tlist", MagicMock(return_value=[MagicMock()])):
         from animatediff_ttnn.temporal_attention import generate_frames_temporal
         try:
             generate_frames_temporal(
