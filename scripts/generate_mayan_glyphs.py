@@ -13,7 +13,7 @@ The 20 day glyphs (in traditional Yucatec Maya order):
 
 Usage:
   source ~/tt-metal/python_env/bin/activate
-  python scripts/generate_mayan_glyphs.py [--dry-run] [--tier Q1|Q2] [--glyph <slug>]
+  python scripts/generate_mayan_glyphs.py [--dry-run] [--tier Q1|Q2|Q3|Q4|all] [--glyph <slug>] [--sample]
   python3 -m http.server 8080 --directory docs/
 """
 from __future__ import annotations

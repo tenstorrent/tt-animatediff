@@ -388,8 +388,10 @@ def _open_device():
             l1_small_size=SD_L1_SMALL_SIZE,
         )
     else:
-        # SD 1.4 TTNN UNet (Wormhole-targeted) uses ttnn.to_torch() without a
-        # mesh_composer, which crashes if tensor is sharded across >1 chip.
+        # TTNN SD 1.4 UNet (wormhole-targeted) calls ttnn.to_torch() internally
+        # without a mesh_composer — crashes if tensor is sharded across >1 chip.
+        # Multi-chip throughput is achieved by running separate processes with
+        # --device-id 0/1/2/3 in parallel (one process per chip).
         chip = [args.device_id] if args.device_id is not None else [0]
         return setup_blackhole(device_ids=chip)
 
@@ -438,6 +440,14 @@ def run_ttnn():
         print(f"Generating {args.frames} frame(s)...")
         t1 = time.time()
         if args.motion_adapter and args.mode == "blackhole":
+            # Validate --motion-adapter-skip keys early so user gets a clear error.
+            _VALID_SKIP_KEYS = {"down0", "down1", "down2", "mid", "up0", "up1", "up2"}
+            bad_keys = set(args.motion_adapter_skip) - _VALID_SKIP_KEYS
+            if bad_keys:
+                parser.error(
+                    f"--motion-adapter-skip: unknown keys {sorted(bad_keys)}. "
+                    f"Valid keys: {sorted(_VALID_SKIP_KEYS)}"
+                )
             # Phase 3: MotionAdapter-injected temporal attention
             print(f"  [motion] Loading MotionAdapter from {args.motion_adapter} ...")
             from animatediff_ttnn.motion_weights import load_motion_modules

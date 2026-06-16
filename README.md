@@ -82,7 +82,6 @@ archived as `weights/*.broken`. Use Lightning mode for fast inference.
 
 ## Gradio UI
 
-## Gradio UI
 Launch a web interface for point-and-click generation.
 
 ### Local — Blackhole hardware
@@ -167,7 +166,7 @@ See [docs/benchmarks.html](https://tenstorrent.github.io/tt-animatediff/benchmar
 Lightning on Blackhole uses `EulerDiscreteScheduler` (trailing, linear) with the base SD 1.4 TTNN UNet — different solver, not fewer steps, CFG=7.5 retained.
 CPU Lightning uses the real 4-step distilled adapter (CFG=1.0 baked in) and is ~6× faster than CPU standard.
 Phase 3 `--motion-adapter` runs `AnimateDiffTransformer3D.forward()` at 7 UNet injection points per denoising step. A batched D→H transfer (all N frames pulled in one `ttnn.concat → ttnn.to_torch` call) delivers a 1.94× speedup over the naive per-frame implementation.
-`--motion-adapter-skip up1 up2` bypasses the two costliest decoder injection points (64×64 and 32×32 at C=640), dropping from ~52 s/frame to ~7.7 s/frame — faster than Phase 2.5 — with a minor reduction in decoder-side temporal coherence.
+`--motion-adapter-skip up1 up2` bypasses the two costliest decoder injection points (up1: 32×32 C=1280, up2: 64×64 C=640), dropping from ~52 s/frame to ~7.7 s/frame — faster than Phase 2.5 — with a minor reduction in decoder-side temporal coherence.
 
 ---
 
@@ -216,7 +215,7 @@ point, then returned to Blackhole. Enable with `--motion-adapter`.
 | Batched D→H (`ttnn.concat → to_torch`) | ~52 | **~416s** | 1.94× speedup — current default |
 | Skip up1+up2 (`--motion-adapter-skip up1 up2`) | **~7.7** | **~62s** | 6.75× vs full; faster than Phase 2.5 |
 
-The two decoder injection points (up1 32×32, up2 64×64, both C=640) account for ~80% of the
+The two decoder injection points (up1 32×32 C=1280, up2 64×64 C=640) account for ~80% of the
 CPU transformer cost. Skipping them retains encoder and mid-block temporal attention with
 only a minor reduction in decoder-side coherence. See the
 [benchmark page](https://tenstorrent.github.io/tt-animatediff/benchmarks.html) and
@@ -370,7 +369,7 @@ flowchart TD
     PHASE -->|yes — Phase 3| SKIP{"--motion-adapter-skip?"}
 
     SKIP -->|no — full\n~52 s/frame| MA_FULL["7 × AnimateDiffTransformer3D\nbatched D→H transfer\nCPU · ~4 s each"]
-    SKIP -->|up1 up2 — fast\n~7.7 s/frame| MA_SKIP["5 × AnimateDiffTransformer3D\ndown0-3 + mid only\nCPU · encoder points"]
+    SKIP -->|up1 up2 — fast\n~7.7 s/frame| MA_SKIP["5 × AnimateDiffTransformer3D\ndown0/1/2, mid, up0 only\nCPU · encoder points"]
 
     MA_FULL --> CFA
     MA_SKIP --> CFA
@@ -436,7 +435,7 @@ application plugin, or Python library — see
   (`ttnn.split` produces parent-buffer views incompatible with the downstream resnet reshard kernel).
   `torch.compile` removed — hits 8-recompile guard limit on attention processor object ID changes.
 - **`--motion-adapter-skip up1 up2` fast path** — skipping the two costliest decoder injection
-  points (up1 32×32 + up2 64×64, C=640) drops wall-clock from ~52 s/frame to **~7.7 s/frame**,
+  points (up1 32×32 C=1280, up2 64×64 C=640) drops wall-clock from ~52 s/frame to **~7.7 s/frame**,
   a 6.75× speedup over full Phase 3 and faster than Phase 2.5 (12.5 s/frame). Measured on QB2.
   Lightning + MotionAdapter tested and confirmed no benefit (~50.6 s/frame, ≈ same as 25-step
   PNDM) — CPU bridge calls per step dominate, not step count.

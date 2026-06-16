@@ -49,16 +49,17 @@ def _apply_temporal(
     Pulls N TTNN hidden states to CPU in a single batched transfer, reshapes to
     [B*N, C, H, W] (the format AnimateDiffTransformer3D.forward expects), runs
     the full diffusers temporal attention module (LayerNorm, QKV, positional
-    embedding, feedforward) via a torch.compiled callable, then pushes all frames
-    back to device in a single batched transfer.
+    embedding, feedforward) on CPU, then pushes all frames back to device in a
+    per-frame loop (ttnn.split views are incompatible with the downstream reshard kernel).
 
-    Two optimisations vs the naive N-separate-transfers approach:
-      1. Batched transfer: all N frames are concatenated into a single TTNN tensor
-         [N, 1, 2*S, C] before ttnn.to_torch(), eliminating N-1 extra D→H PCIe
-         round-trips per injection point per step.
-      2. torch.compile: each AnimateDiffTransformer3D module is compiled on its
-         first call and cached in _COMPILED_MODULES.  Subsequent calls skip Python
-         overhead in the GroupNorm / LayerNorm / GEGLU / attention paths.
+    Key optimisation vs the naive N-separate-transfers approach:
+      Batched D→H transfer: all N frames are concatenated into a single TTNN tensor
+      [N, 1, 2*S, C] before ttnn.to_torch(), eliminating N-1 extra D→H PCIe
+      round-trips per injection point per step. This accounts for the 1.94× speedup.
+
+    torch.compile was tried but removed: AnimateDiffTransformer3D hits the 8-recompile
+    guard limit on every unique attention processor object ID change, falling back to
+    eager with warnings. Batched D→H accounts for the full measured speedup.
 
     Args:
         samples:     List of N TTNN tensors, each [1, 1, 2*S, C] where S=H*W.

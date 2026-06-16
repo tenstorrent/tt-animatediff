@@ -555,50 +555,40 @@
   <!-- ── SAMPLE COMPARISON ────────────────────────────────────────────── -->
   <section class="section">
     <span class="section-label">Quality vs speed</span>
-    <h2>What does 4× faster look like?</h2>
+    <h2>What does 6.75× faster look like?</h2>
     <p>
-      Phase 2.5 is 4× faster than Phase 3 (after the batched D→H optimisation) because the full MotionAdapter temporal transformer
-      is not running — instead a weighted blend of denoised noise predictions across frames
-      produces coherence. The tradeoff: Phase 3 outputs have stronger motion structure;
-      Phase 2.5 has crisper per-frame detail.
+      Phase 3 skip (up1+up2) versus full Phase 3 — same prompt, same seed, same hardware.
+      Skipping the two decoder injection points removes ~85% of the CPU transformer cost.
+      The tradeoff: full Phase 3 has stronger overall temporal coherence across all 7 attention
+      points; skip retains down-path and mid attention, which drives the main motion structure.
     </p>
 
     <div class="compare-section">
-      <div class="compare-label">Aurora borealis — same prompt, three modes</div>
+      <div class="compare-label">Maya glyph imix — Phase 3 skip vs full</div>
       <div class="compare-row">
         <div class="compare-cell">
-          <span class="compare-badge"><span class="tag tag-p25">Phase 2.5</span></span>
-          <img src="assets/study/aurora-B-phase25.gif" alt="Aurora Phase 2.5 PNDM">
-          <div class="compare-time"><strong>~103s</strong> · 25-step PNDM</div>
+          <span class="compare-badge"><span class="tag tag-skip">Phase 3 skip</span></span>
+          <img src="assets/mayan-glyphs/Q4/imix.gif" alt="imix Phase 3 skip">
+          <div class="compare-time"><strong>~62s</strong> · skip up1+up2 · 7.7 s/frame</div>
         </div>
         <div class="compare-cell">
-          <span class="compare-badge"><span class="tag tag-lit">Lightning</span></span>
-          <img src="assets/study/aurora-C-lightning.gif" alt="Aurora Lightning">
-          <div class="compare-time"><strong>~96s</strong> · 8-step Euler</div>
-        </div>
-        <div class="compare-cell">
-          <span class="compare-badge"><span class="tag tag-p3">Phase 3</span></span>
-          <img src="assets/study/aurora-D-highalpha.gif" alt="Aurora Phase 3 high alpha">
-          <div class="compare-time"><strong>~416s</strong> · full MotionAdapter (optimised)</div>
+          <span class="compare-badge"><span class="tag tag-p3">Phase 3 full</span></span>
+          <img src="assets/mayan-glyphs/Q3/imix.gif" alt="imix Phase 3 full">
+          <div class="compare-time"><strong>~416s</strong> · full 7 injection points · 52 s/frame</div>
         </div>
       </div>
 
-      <div class="compare-label">Lava flow — same prompt, three modes</div>
+      <div class="compare-label">Maya glyph ajaw — Phase 3 skip vs full</div>
       <div class="compare-row">
         <div class="compare-cell">
-          <span class="compare-badge"><span class="tag tag-p25">Phase 2.5</span></span>
-          <img src="assets/study/lava-B-phase25.gif" alt="Lava Phase 2.5 PNDM">
-          <div class="compare-time"><strong>~98s</strong> · 25-step PNDM</div>
+          <span class="compare-badge"><span class="tag tag-skip">Phase 3 skip</span></span>
+          <img src="assets/mayan-glyphs/Q4/ajaw.gif" alt="ajaw Phase 3 skip">
+          <div class="compare-time"><strong>~62s</strong> · skip up1+up2 · 7.7 s/frame</div>
         </div>
         <div class="compare-cell">
-          <span class="compare-badge"><span class="tag tag-lit">Lightning</span></span>
-          <img src="assets/study/lava-C-lightning.gif" alt="Lava Lightning">
-          <div class="compare-time"><strong>~95s</strong> · 8-step Euler</div>
-        </div>
-        <div class="compare-cell">
-          <span class="compare-badge"><span class="tag tag-p3">Phase 3</span></span>
-          <img src="assets/study/lava-D-highalpha.gif" alt="Lava Phase 3 high alpha">
-          <div class="compare-time"><strong>~416s</strong> · full MotionAdapter (optimised)</div>
+          <span class="compare-badge"><span class="tag tag-p3">Phase 3 full</span></span>
+          <img src="assets/mayan-glyphs/Q3/ajaw.gif" alt="ajaw Phase 3 full">
+          <div class="compare-time"><strong>~416s</strong> · full 7 injection points · 52 s/frame</div>
         </div>
       </div>
     </div>
@@ -691,9 +681,9 @@ flowchart TB
     P25 -->|"4.2× slower"| P3
         </div>
         <p class="arch-caption">
-          Skipping up1 (32×32, C=640) and up2 (64×64, C=640) removes the two costliest
+          Skipping up1 (32×32, C=1280) and up2 (64×64, C=640) removes the two costliest
           injection points, which together account for ~80% of Phase 3 CPU overhead. The
-          five remaining points (down0-3 + mid) operate at smaller spatial dimensions and
+          five remaining points (down0/1/2, mid, up0) operate at smaller spatial dimensions and
           complete quickly. Result: 7.7 s/frame — faster than Phase 2.5 — with weaker
           decoder-side temporal coherence as the tradeoff.
         </p>
@@ -739,7 +729,7 @@ flowchart TB
         <p>
           Phase 3 runs <code>AnimateDiffTransformer3D.forward()</code> at 7 UNet injection
           points per denoising step. At 25 steps that's 175 full transformer forward passes on
-          CPU. The two decoder points up1 (32×32, C=640) and up2 (64×64, C=640) account for
+          CPU. The two decoder points up1 (32×32, C=1280) and up2 (64×64, C=640) account for
           ~80% of that cost — skipping just those two drops from 52 s/frame to 7.7 s/frame,
           faster than Phase 2.5. Tradeoff: weaker decoder-side temporal coherence.
         </p>
@@ -779,7 +769,7 @@ flowchart TB
 
   <div class="footnotes">
     <p>¹ All timings are wall-clock elapsed for warm runs (TTNN JIT kernel already compiled from a previous run in the same process chain). Cold-start (first run) includes a 60–90s compilation overhead.</p>
-    <p>² All 2026-06-15 benchmark runs: 8 frames, 512×512, warm model, prompt "a majestic waterfall in a lush rainforest, cinematic lighting". Phase 3 full (416s, 25 PNDM steps, batched D→H); Phase 3 skip up1+up2 (62s, 25 PNDM steps, 5 injection points); Lightning + MotionAdapter (405s, 8 Euler steps, all 7 points). Phase 3 baseline (787–847s) from World's Fair run (6 scenes). Phase 2.5 / Lightning timings from comparison study (3 prompts) and Maya Tzolk'in Q2 (chip 3, 5 batches).</p>
+    <p>² All 2026-06-15 benchmark runs: 8 frames, 512×512, warm model, prompt "a majestic waterfall in a lush rainforest, cinematic lighting". Phase 3 full (416s, 25 PNDM steps, batched D→H); Phase 3 skip up1+up2 (62s, 25 PNDM steps, 5 injection points); Lightning + MotionAdapter (404s, 8 Euler steps, all 7 points). Phase 3 baseline (787–847s) from World's Fair run (6 scenes). Phase 2.5 / Lightning timings from comparison study (3 prompts) and Maya Tzolk'in Q2 (chip 3, 5 batches).</p>
     <p>³ "Lightning" on Blackhole/sim = EulerDiscreteScheduler (trailing, linear β) + base SD 1.4 TTNN UNet. Not the ByteDance distilled adapter — that requires CPU mode with <code>--mode cpu --lightning --lightning-steps 4</code>.</p>
     <p>⁴ Hardware: Tenstorrent QB2 board, 4 × P300C Blackhole chips, measured June 2026.</p>
   </div>
