@@ -114,6 +114,7 @@
   .bar-fill.phase3  { background: var(--pink); }
   .bar-fill.phase25 { background: var(--teal); }
   .bar-fill.light   { background: var(--gold); }
+  .bar-fill.p3skip  { background: var(--green); }
 
   /* ── speedup badges ── */
   .speedup-grid {
@@ -174,9 +175,10 @@
     padding: .15rem .45rem;
     border-radius: 3px;
   }
-  .tag-p3  { background: rgba(236,150,184,.18); color: var(--pink); border: 1px solid rgba(236,150,184,.35); }
-  .tag-p25 { background: rgba(79,209,197,.15); color: var(--teal); border: 1px solid rgba(79,209,197,.3); }
-  .tag-lit { background: rgba(244,196,113,.15); color: var(--gold); border: 1px solid rgba(244,196,113,.3); }
+  .tag-p3   { background: rgba(236,150,184,.18); color: var(--pink); border: 1px solid rgba(236,150,184,.35); }
+  .tag-p25  { background: rgba(79,209,197,.15); color: var(--teal); border: 1px solid rgba(79,209,197,.3); }
+  .tag-lit  { background: rgba(244,196,113,.15); color: var(--gold); border: 1px solid rgba(244,196,113,.3); }
+  .tag-skip { background: rgba(39,174,96,.15); color: var(--green); border: 1px solid rgba(39,174,96,.3); }
 
   /* ── diagram tabs ── */
   .diag-tabs { display: flex; gap: .4rem; margin-bottom: 1rem; flex-wrap: wrap; }
@@ -353,20 +355,22 @@
       Phase 3 (full MotionAdapter) was ~8× slower because it round-tripped 7 injection
       points through full <code>AnimateDiffTransformer3D</code> blocks on CPU at each step.
       A batched D→H transfer optimisation (all N frames pulled in a single <code>ttnn.concat → ttnn.to_torch</code>)
-      cut Phase 3 to <strong>52 s/frame</strong> — a 1.94× speedup.
+      cut Phase 3 to <strong>52 s/frame</strong> — a 1.94× speedup. Skipping the two
+      costliest injection points (up1 + up2) cuts it further to <strong>7.7 s/frame</strong>,
+      beating Phase 2.5 outright.
     </p>
 
     <div class="bar-chart">
-      <!-- Phase 3 optimised: 416s / 8 frames = 52 s/frame, 2026-06-15 benchmark -->
+      <!-- Phase 3 skip up1+up2: 62s / 8 frames = 7.7 s/frame, 2026-06-15 benchmark -->
       <div class="bar-row">
         <div class="bar-label">
-          <strong>Phase 3 · MotionAdapter</strong>
-          <small>PNDM 25-step · full AnimateDiff · batched D→H</small>
+          <strong>Phase 3 · skip up1+up2</strong>
+          <small>PNDM 25-step · 5 of 7 injection points · batched D→H</small>
         </div>
         <div class="bar-track">
-          <div class="bar-fill phase3" style="width:100%">52 s/frame</div>
+          <div class="bar-fill p3skip" style="width:14.8%">7.7 s/frame</div>
         </div>
-        <div class="bar-value hl-pink">~416 s total</div>
+        <div class="bar-value" style="color:var(--green)">~62 s total</div>
       </div>
       <!-- Phase 2.5 PNDM: 100s / 8 frames = 12.5 s/frame, n=6 comparison runs -->
       <div class="bar-row">
@@ -390,17 +394,35 @@
         </div>
         <div class="bar-value hl-gold">~96 s total</div>
       </div>
+      <!-- Phase 3 optimised: 416s / 8 frames = 52 s/frame, 2026-06-15 benchmark -->
+      <div class="bar-row">
+        <div class="bar-label">
+          <strong>Phase 3 · full MotionAdapter</strong>
+          <small>PNDM 25-step · 7 injection points · batched D→H</small>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill phase3" style="width:100%">52 s/frame</div>
+        </div>
+        <div class="bar-value hl-pink">~416 s total</div>
+      </div>
     </div>
 
     <div class="insight">
       <strong>Unexpected result:</strong> Lightning 8-step and PNDM 25-step take almost
       identical wall-clock time (~96s vs ~100s). The bottleneck is the cross-frame temporal
-      attention pass (CPU NumPy, run once per denoising step across all 8 frames), not the
+      attention pass (CPU, run once per denoising step across all 8 frames), not the
       TTNN UNet calls themselves. Reducing steps 25→8 saves ~68% of UNet compute but the
-      temporal blend overhead dominates, leaving total time roughly flat.
+      temporal blend overhead dominates, leaving total time roughly flat. The same effect
+      applies to Phase 3 — Lightning + MotionAdapter measured at 404s (50.6 s/frame), nearly
+      identical to the 25-step 416s run. Fewer steps don't help when CPU bridge calls dominate.
     </div>
 
     <div class="speedup-grid">
+      <div class="speedup-card">
+        <div class="speedup-num" style="color:var(--green)">6.75×</div>
+        <div class="speedup-label">skip up1+up2 vs full Phase 3</div>
+        <div class="speedup-sub">62s vs 416s · 8 frames · 25 steps</div>
+      </div>
       <div class="speedup-card">
         <div class="speedup-num" style="color:var(--pink)">1.94×</div>
         <div class="speedup-label">Phase 3 speedup<br>batched D→H transfer</div>
@@ -408,13 +430,8 @@
       </div>
       <div class="speedup-card">
         <div class="speedup-num" style="color:var(--teal)">4.2×</div>
-        <div class="speedup-label">Phase 2.5 vs Phase 3<br>PNDM 25-step</div>
+        <div class="speedup-label">Phase 2.5 vs full Phase 3<br>PNDM 25-step</div>
         <div class="speedup-sub">100s vs 416s · 8 frames</div>
-      </div>
-      <div class="speedup-card">
-        <div class="speedup-num" style="color:var(--teal2)">1.04×</div>
-        <div class="speedup-label">Lightning vs Phase 2.5 PNDM</div>
-        <div class="speedup-sub">Nearly identical · ~4s difference</div>
       </div>
       <div class="speedup-card">
         <div class="speedup-num" style="color:var(--gold)">4×</div>
@@ -445,12 +462,32 @@
       </thead>
       <tbody>
         <tr>
-          <td><span class="tag tag-p3">Phase 3</span> MotionAdapter <small>(optimised)</small></td>
+          <td><span class="tag tag-skip">Phase 3</span> skip up1+up2</td>
+          <td>PNDM</td>
+          <td>25</td>
+          <td>8</td>
+          <td class="hl" style="color:var(--green)">62</td>
+          <td class="hl" style="color:var(--green)">7.7</td>
+          <td>1</td>
+          <td>Benchmark 2026-06-15</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p3">Phase 3</span> MotionAdapter · full · batched D→H</td>
           <td>PNDM</td>
           <td>25</td>
           <td>8</td>
           <td class="hl-pink">416</td>
           <td class="hl-pink">~52</td>
+          <td>1</td>
+          <td>Benchmark 2026-06-15</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p3">Phase 3</span> Lightning + MotionAdapter</td>
+          <td>Euler (trailing)</td>
+          <td>8</td>
+          <td>8</td>
+          <td class="hl-pink">405</td>
+          <td class="hl-pink">~51</td>
           <td>1</td>
           <td>Benchmark 2026-06-15</td>
         </tr>
@@ -632,10 +669,10 @@ flowchart TD
       <div class="arch-diagram">
         <div class="mermaid">
 flowchart TB
-    subgraph P3["Phase 3 — MotionAdapter · ~52 s/frame (optimised)"]
+    subgraph SK["Phase 3 skip up1+up2 · ~7.7 s/frame"]
         direction LR
-        P3U["TTNN UNet\n~0.5s"] --> P3T["× 7 injection points\nAnimateDiffTransformer3D\nCPU · ~4s each"] --> P3S["scheduler.step"]
-        P3S -->|"× 25 steps"| P3U
+        SKU["TTNN UNet\n~0.5s"] --> SKT["× 5 injection points\ndown0-3 + mid\nCPU · ~1–2s each"] --> SKS["scheduler.step"]
+        SKS -->|"× 25 steps"| SKU
     end
 
     subgraph P25["Phase 2.5 — cross-frame blend · ~12.5 s/frame"]
@@ -644,20 +681,21 @@ flowchart TB
         P2S -->|"× 25 steps"| P2U
     end
 
-    subgraph LT["Phase 2.5 Lightning — · ~12.0 s/frame"]
+    subgraph P3["Phase 3 — full MotionAdapter · ~52 s/frame"]
         direction LR
-        LU["TTNN UNet\n8 frames serial"] --> LC["cross_frame_attention\nblend α=0.35 — CPU"] --> LS["EulerDiscrete.step"]
-        LS -->|"× 8 steps"| LU
+        P3U["TTNN UNet\n~0.5s"] --> P3T["× 7 injection points\nAnimateDiffTransformer3D\nCPU · ~4s each"] --> P3S["scheduler.step"]
+        P3S -->|"× 25 steps"| P3U
     end
 
-    P3 -->|"8× slower"| P25
-    P25 -->|"≈ same speed"| LT
+    SK -->|"1.6× slower"| P25
+    P25 -->|"4.2× slower"| P3
         </div>
         <p class="arch-caption">
-          Phase 2.5 and Lightning are structurally identical — both run the TTNN UNet followed
-          by a CPU cross-frame blend. The only difference is scheduler (PNDM vs Euler) and step
-          count (25 vs 8). Since the CPU temporal blend is the bottleneck, fewer steps don't
-          help as much as you'd expect: 25-step PNDM takes ~100s, 8-step Lightning takes ~96s.
+          Skipping up1 (32×32, C=640) and up2 (64×64, C=640) removes the two costliest
+          injection points, which together account for ~80% of Phase 3 CPU overhead. The
+          five remaining points (down0-3 + mid) operate at smaller spatial dimensions and
+          complete quickly. Result: 7.7 s/frame — faster than Phase 2.5 — with weaker
+          decoder-side temporal coherence as the tradeoff.
         </p>
       </div>
     </div>
@@ -701,9 +739,19 @@ flowchart TB
         <p>
           Phase 3 runs <code>AnimateDiffTransformer3D.forward()</code> at 7 UNet injection
           points per denoising step. At 25 steps that's 175 full transformer forward passes on
-          CPU, each operating on <code>[8, C, H, W]</code> spatial tensors. This is the
-          ~700s overhead on top of the ~100s Phase 2.5 baseline. Energy ratios after the
-          Phase 3 fix: all injection points &lt;1.25× vs baseline.
+          CPU. The two decoder points up1 (32×32, C=640) and up2 (64×64, C=640) account for
+          ~80% of that cost — skipping just those two drops from 52 s/frame to 7.7 s/frame,
+          faster than Phase 2.5. Tradeoff: weaker decoder-side temporal coherence.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>Lightning doesn't help Phase 3</h4>
+        <p>
+          Tried 8-step Euler + MotionAdapter: 404s, 50.6 s/frame — nearly identical to
+          25-step PNDM at 416s. With 7 CPU bridge calls per denoising step, cutting steps
+          25→8 saves TTNN time (~15s) but barely dents the total. The bottleneck is the
+          CPU <code>AnimateDiffTransformer3D</code> at each step, not the denoiser count.
+          Injection-point skipping is the only lever that moves the needle.
         </p>
       </div>
       <div class="obs-card">
@@ -731,7 +779,7 @@ flowchart TB
 
   <div class="footnotes">
     <p>¹ All timings are wall-clock elapsed for warm runs (TTNN JIT kernel already compiled from a previous run in the same process chain). Cold-start (first run) includes a 60–90s compilation overhead.</p>
-    <p>² Phase 3 optimised timing (416s) is from the 2026-06-15 benchmark run (1 run, 8 frames, 25 PNDM steps, batched D→H). Phase 3 baseline (787–847s) is from the World's Fair benchmark (6 scenes). Phase 2.5 / Lightning timings are from the comparison study (3 prompts, sequential warm runs) and Maya Tzolk'in Q2 (chip 3, 5 batches).</p>
+    <p>² All 2026-06-15 benchmark runs: 8 frames, 512×512, warm model, prompt "a majestic waterfall in a lush rainforest, cinematic lighting". Phase 3 full (416s, 25 PNDM steps, batched D→H); Phase 3 skip up1+up2 (62s, 25 PNDM steps, 5 injection points); Lightning + MotionAdapter (405s, 8 Euler steps, all 7 points). Phase 3 baseline (787–847s) from World's Fair run (6 scenes). Phase 2.5 / Lightning timings from comparison study (3 prompts) and Maya Tzolk'in Q2 (chip 3, 5 batches).</p>
     <p>³ "Lightning" on Blackhole/sim = EulerDiscreteScheduler (trailing, linear β) + base SD 1.4 TTNN UNet. Not the ByteDance distilled adapter — that requires CPU mode with <code>--mode cpu --lightning --lightning-steps 4</code>.</p>
     <p>⁴ Hardware: Tenstorrent QB2 board, 4 × P300C Blackhole chips, measured June 2026.</p>
   </div>
