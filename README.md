@@ -55,11 +55,11 @@ python examples/generate.py --lightning
 # CPU + Lightning (~20 s/frame, 4-step distilled adapter, no hardware required)
 python examples/generate.py --mode cpu --lightning --lightning-steps 4
 
-# Blackhole + MotionAdapter Phase 3 (full temporal attention, 16 frames)
-python examples/generate.py --motion-adapter --frames 16
+# Blackhole + MotionAdapter Phase 3 full (7 injection pts, ~52 s/frame)
+python examples/generate.py --motion-adapter --frames 8
 
-# Blackhole + MotionAdapter + Lightning (fast path, 8 frames)
-python examples/generate.py --motion-adapter --lightning --frames 8
+# Blackhole + MotionAdapter Phase 3 fast (skip up1+up2, ~7.7 s/frame — faster than Phase 2.5)
+python examples/generate.py --motion-adapter --motion-adapter-skip up1 up2 --frames 8
 
 # Simulator — no hardware, bit-exact Blackhole
 python examples/generate.py --mode sim --frames 2 --steps 4
@@ -151,20 +151,23 @@ file or add a setup script to download it at startup.
 
 ## Modes Reference
 
-| Mode | Hardware | Speed | Temporal attention |
+| Mode | Hardware | Speed (8 fr, 512²) | Temporal attention |
 |---|---|---|---|
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
-| `blackhole` | Blackhole P100/P300C | ~15 s/frame (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
-| `blackhole --lightning` | Blackhole P100/P300C | ~15 s/frame (25 steps, Euler) | Cross-frame blend (temporal-alpha) |
-| `blackhole --motion-adapter` | Blackhole P100/P300C | ~15 s/frame + CPU round-trip | Full MotionAdapter Phase 3 ✓ |
-| `blackhole --motion-adapter --lightning` | Blackhole P100/P300C | ~15 s/frame + CPU round-trip | Full MotionAdapter Phase 3 ✓ |
+| `blackhole` | Blackhole P300C | **~12.5 s/frame** (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (8-step Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
+| `blackhole --motion-adapter` | Blackhole P300C | **~52 s/frame** (7 injection pts, batched D→H) | Full MotionAdapter Phase 3 ✓ |
+| `blackhole --motion-adapter --motion-adapter-skip up1 up2` | Blackhole P300C | **~7.7 s/frame** (5 injection pts) | Full MotionAdapter Phase 3 ✓ |
 | `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |
 
-Both standard and Lightning on Blackhole use 25 steps and CFG=7.5 with the base SD 1.4 TTNN UNet.
-Lightning uses `EulerDiscreteScheduler` (trailing, linear) rather than `PNDMScheduler` — a different solver trajectory, not fewer steps.
-CPU Lightning (`--mode cpu --lightning`) uses the real 4-step distilled adapter (CFG=1.0 baked in) and is genuinely ~6× faster than CPU standard.
-Phase 3 (`--motion-adapter`) adds a CPU round-trip after each TTNN cross-attention block — ~50–200 ms extra per step depending on frame count and injection point.
+All timings measured on a QB2 board (4 × P300C), 8 frames at 512×512, warm model (TTNN JIT already compiled).
+See [docs/benchmarks.html](https://tenstorrent.github.io/tt-animatediff/benchmarks.html) for the full timing breakdown and comparison GIFs.
+
+Lightning on Blackhole uses `EulerDiscreteScheduler` (trailing, linear) with the base SD 1.4 TTNN UNet — different solver, not fewer steps, CFG=7.5 retained.
+CPU Lightning uses the real 4-step distilled adapter (CFG=1.0 baked in) and is ~6× faster than CPU standard.
+Phase 3 `--motion-adapter` runs `AnimateDiffTransformer3D.forward()` at 7 UNet injection points per denoising step. A batched D→H transfer (all N frames pulled in one `ttnn.concat → ttnn.to_torch` call) delivers a 1.94× speedup over the naive per-frame implementation.
+`--motion-adapter-skip up1 up2` bypasses the two costliest decoder injection points (64×64 and 32×32 at C=640), dropping from ~52 s/frame to ~7.7 s/frame — faster than Phase 2.5 — with a minor reduction in decoder-side temporal coherence.
 
 ---
 
@@ -201,9 +204,24 @@ For full details see [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.
 The `guoyww/animatediff-motion-adapter-v1-5-2` motion weights are loaded and injected
 at 7 points (down0/1/2, mid, up0/1/2) in the SD 1.4 TTNN UNet without modifying tt-metal
 source. After each TTNN cross-attention block, hidden states are round-tripped to CPU,
-passed through the full `AnimateDiffTransformer3D.forward()` (norm, proj_in/out, positional
-embedding, GEGLU feedforward) per injection point, then returned to Blackhole.
-Enable with `--motion-adapter` (any number of chips, any step count).
+passed through the full `AnimateDiffTransformer3D.forward()` (GroupNorm, proj_in/out,
+LayerNorm×3, positional embedding, GEGLU feedforward, output projection) per injection
+point, then returned to Blackhole. Enable with `--motion-adapter`.
+
+**Speed optimizations (measured on QB2, 8 frames, 25 steps):**
+
+| Configuration | s/frame | Total (8fr) | Notes |
+|---|---|---|---|
+| Baseline (per-frame D→H) | ~101 | ~806s | Original implementation |
+| Batched D→H (`ttnn.concat → to_torch`) | ~52 | **~416s** | 1.94× speedup — current default |
+| Skip up1+up2 (`--motion-adapter-skip up1 up2`) | **~7.7** | **~62s** | 6.75× vs full; faster than Phase 2.5 |
+
+The two decoder injection points (up1 32×32, up2 64×64, both C=640) account for ~80% of the
+CPU transformer cost. Skipping them retains encoder and mid-block temporal attention with
+only a minor reduction in decoder-side coherence. See the
+[benchmark page](https://tenstorrent.github.io/tt-animatediff/benchmarks.html) and
+[Maya glyph comparison](https://tenstorrent.github.io/tt-animatediff/mayan-glyphs.html)
+for measured numbers and side-by-side visual comparisons.
 
 ---
 
@@ -334,31 +352,34 @@ Blackhole/sim Lightning ignores `--lightning-steps` and uses `--steps` (default 
 
 ```mermaid
 flowchart TD
-    P([Prompt + seed]) --> ENC["CLIP encode\n(CPU, always)"]
+    P([Prompt + seed]) --> ENC["CLIP encode — CPU"]
     ENC --> MODE{Mode?}
 
-    MODE -->|cpu| CPU_SCHED["PNDMScheduler\nor EulerDiscreteScheduler\n(Lightning)"]
-    CPU_SCHED --> CPU_UNET["diffusers UNet2DConditionModel\n+ MotionAdapter\n(CPU — full temporal attention)"]
-    CPU_UNET --> CPU_VAE["VAE decode (CPU — diffusers)"]
-    CPU_VAE --> GIF([GIF])
+    MODE -->|cpu| CPU_SCHED["PNDM or Euler Lightning\n+ full AnimateDiff MotionAdapter\n~2 min/frame"]
+    CPU_SCHED --> GIF([GIF])
 
-    MODE -->|blackhole / sim| BH_SCHED["PNDMScheduler (standard)\nor EulerDiscreteScheduler (Lightning)\n— one per frame"]
-    BH_SCHED --> LOOP["For each step t:"]
-    LOOP --> BH_UNET["TTNN UNet2D — SD 1.4\nBlackhole P300C\n~15 s/frame"]
-    BH_UNET -->|--motion-adapter| MA["forward_unet_staged()\n7 × AnimateDiffTransformer3D\nCPU round-trip per block"]
-    BH_UNET -->|standard| CFA
-    MA --> CFA["cross_frame_attention()\nnoise_preds blended\n(CPU, tiny)"]
-    CFA --> STEP["scheduler.step()\n— one per frame"]
-    STEP -->|Lightning: +latent blend| LAT["cross_frame_attention()\nprev_sample blended\nα × 0.4, cosine decay"]
-    LAT --> LOOP
-    STEP -->|PNDM| LOOP
-    LOOP -->|done| BH_VAE["TTNN VAE decode\nBlackhole · L1 freed before decode"]
+    MODE -->|blackhole / sim| SCHED["Scheduler — CPU\nPNDM standard · Euler Lightning"]
+    SCHED --> LOOP["denoising loop"]
+    LOOP --> BH_UNET["TTNN UNet2D — SD 1.4\nBlackhole P300C · ~0.5 s/call"]
+    BH_UNET --> PHASE{"--motion-adapter?"}
+
+    PHASE -->|no — Phase 2.5\n~12.5 s/frame| CFA["cross_frame_attention\nnoise blend α=0.35 — CPU"]
+    PHASE -->|yes — Phase 3| SKIP{"--motion-adapter-skip?"}
+
+    SKIP -->|no — full\n~52 s/frame| MA_FULL["7 × AnimateDiffTransformer3D\nbatched D→H transfer\nCPU · ~4 s each"]
+    SKIP -->|up1 up2 — fast\n~7.7 s/frame| MA_SKIP["5 × AnimateDiffTransformer3D\ndown0-3 + mid only\nCPU · encoder points"]
+
+    MA_FULL --> CFA
+    MA_SKIP --> CFA
+    CFA --> STEP["scheduler.step — CPU"]
+    STEP --> LOOP
+    LOOP -->|done| BH_VAE["TTNN VAE decode — Blackhole"]
     BH_VAE --> GIF
 
     style BH_UNET fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
-    style MA fill:#0f2a35,stroke:#ec96b8,color:#e8f0f2
+    style MA_FULL fill:#0f2a35,stroke:#ec96b8,color:#e8f0f2
+    style MA_SKIP fill:#0f2a35,stroke:#27ae60,color:#e8f0f2
     style CFA fill:#0f2a35,stroke:#4fd1c5,color:#e8f0f2
-    style LAT fill:#0f2a35,stroke:#81e6d9,color:#e8f0f2
 ```
 
 ## Architecture Reference: Original vs Current
@@ -404,6 +425,23 @@ application plugin, or Python library — see
 ---
 
 ## Changelog
+
+### v0.9.0 — 2026-06-15
+- **Phase 3 batched D→H transfer** — `_apply_temporal` now pulls all N frame tensors from
+  device in a single `ttnn.concat → ttnn.to_torch` call instead of N separate transfers.
+  Measured speedup: **1.94×** (806s → 416s, 8 frames × 25 steps on QB2). H→D stays per-frame
+  (`ttnn.split` produces parent-buffer views incompatible with the downstream resnet reshard kernel).
+  `torch.compile` removed — hits 8-recompile guard limit on attention processor object ID changes.
+- **`--motion-adapter-skip up1 up2` fast path** — skipping the two costliest decoder injection
+  points (up1 32×32 + up2 64×64, C=640) drops wall-clock from ~52 s/frame to **~7.7 s/frame**,
+  a 6.75× speedup over full Phase 3 and faster than Phase 2.5 (12.5 s/frame). Measured on QB2.
+  Lightning + MotionAdapter tested and confirmed no benefit (~50.6 s/frame, ≈ same as 25-step
+  PNDM) — CPU bridge calls per step dominate, not step count.
+- **Maya glyph Q3/Q4 tiers** — `generate_mayan_glyphs.py` adds Q3 (full MotionAdapter) and Q4
+  (skip up1+up2) tiers with `--sample` flag (4 representative glyphs). Side-by-side comparison
+  section added to `docs/mayan-glyphs.html` showing Q2 / Q4 / Q3 stacked per glyph.
+- **Benchmarks page updated** — new bar, table rows, speedup cards, and observation cards for
+  skip and Lightning+MA results. Mode diagram reordered fastest→slowest.
 
 ### v0.8.0 — 2026-06-14
 - **Phase 3 bug fixes** — two root-cause fixes for energy explosion that made all Phase 3
