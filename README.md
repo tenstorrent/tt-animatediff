@@ -119,9 +119,7 @@ python app.py
 
 ### HuggingFace Spaces
 
-Also available at [huggingface.co/spaces/tenstorrent/tt-animatediff](https://huggingface.co/spaces/tenstorrent/tt-animatediff) — runs on ttsim, no hardware required.
-
-To self-host:
+The `spaces/` directory contains deployment files for hosting on HuggingFace Spaces (ttsim mode, no hardware required). To deploy:
 
 1. Create a new Space (SDK: Gradio)
 2. Copy `spaces/` contents into the Space repo root
@@ -135,7 +133,7 @@ file or add a setup script to download it at startup.
 
 | Parameter | Range | Default | Notes |
 |---|---|---|---|
-| Mode | cpu / blackhole / sim | blackhole | sim on HF Spaces |
+| Mode | cpu / blackhole / sim | blackhole | use sim for HF Spaces deployment |
 | Prompt | text | — | See [Prompt Guide](#prompt-guide) |
 | Negative prompt | text | standard exclusions | |
 | Frames | 2–24 | 8 | 2–4 recommended for sim |
@@ -253,11 +251,8 @@ scripts/
   distill_lcm.py            LCM UNet distillation (experimental, closed)
   distill_motion_adapter.py LCM MotionAdapter distillation (experimental, closed)
 
-app.py                      Gradio UI (local + HF Spaces, MotionAdapter + World's Fair presets)
+app.py                      Gradio UI (local; spaces/ contains HF Spaces deployment files)
 spaces/                     HuggingFace Spaces deployment files
-
-app.py                     Gradio UI (local + HF Spaces)
-spaces/                    HuggingFace Spaces deployment files
 
 tests/
   test_pipeline.py               Phase 1 unit tests
