@@ -92,7 +92,27 @@ Replaces the serialized `for i in range(num_frames)` UNet loop in Phase 2.5 with
 - Phase 2.5 UNet denoising: ~3.2–4× vs 1-chip serial (VAE decode stays serial, so overall wall-clock gain is lower)
 - Phase 3 (`generate_frames_motion`): no mesh sharding — `forward_unet_staged` and VAE both run serial per-frame; the divisibility guard exists only for forward parity with Phase 2.5
 
-**Hardware smoke test:** `scripts/mesh_sharding_hw_test.py` — compares 1-chip vs 4-chip on 4-frame / 4-step generation, asserts PCC > 0.99, prints timing breakdown.
+**Hardware smoke test:** `scripts/mesh_sharding_hw_test.py` — see hardware findings below.
+
+**HARDWARE FINDING (2026-06-16): ShardTensorToMesh fails on SD demo UNet.**
+The tt-metal SD demo UNet (wormhole) is a single-device model. Its `__init__`
+calls `ttnn.to_torch(weight)` without a `mesh_composer` inside `permute_conv_weights()`.
+When `preprocess_model_parameters(device=4-chip-mesh)` puts weights on all 4 chips,
+this call fails with `TT_FATAL: buffers.size() == 1`.
+
+**Correct approach: `create_submeshes(MeshShape(1,1))`.**
+Open a `MeshDevice(1×4)`, call `.create_submeshes(MeshShape(1,1))` to get 4
+independent 1×1 MeshDevices (one per chip), load one `UNet2D` per submesh.
+Dispatch one frame per chip. Verified 2026-06-16:
+- All 4 chips pass PCC=1.0 vs reference (chip 0 single-chip run)
+- Each chip produces identical output — deterministic seeded noise
+- Model load per chip: ~9s (from compile cache), 1 frame/chip
+
+`scripts/mesh_sharding_hw_test.py` updated to use this approach.
+
+`shard_frames_to_device` / `gather_frames_from_device` remain useful utilities
+for any future TTNN ops that natively support mesh input (e.g. custom kernels
+not using the SD demo UNet wrapper).
 
 ## Phase 3 batched D→H transfer (2026-06-15)
 
