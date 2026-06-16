@@ -39,61 +39,6 @@ NEG_DEFAULT = "blurry, low quality, distorted, text, people, faces, modern build
 _cpu_pipes: dict = {}  # keyed by (lightning: bool, lightning_steps: int)
 _bh_device = None      # cached Blackhole/sim MeshDevice
 _bh_models = None      # cached (ttnn_model, ttnn_vae, config, torch_time_proj)
-_motion_kernels: dict | None = None  # loaded once per session
-
-DEFAULT_MOTION_MODEL = "guoyww/animatediff-motion-adapter-v1-5-2"
-
-# ── World's Fair preset prompts ────────────────────────────────────────────
-_WORLDS_FAIR_PRESETS = [
-    ["Paris 1889 — Eiffel Tower Opening",
-     "The Eiffel Tower at the 1889 Paris Exposition Universelle, iron lattice glowing under gas "
-     "lamps at dusk, crowds of visitors in Victorian dress, the Seine reflecting amber light, "
-     "Belle Époque grandeur, painterly impressionist",
-     "modern, cars, neon, digital, blurry, low quality"],
-    ["Chicago 1893 — White City",
-     "The White City at the 1893 Chicago World's Columbian Exposition, neoclassical white marble "
-     "palaces reflected in the Grand Basin, electric lights illuminating the Court of Honor at "
-     "night for the first time, crowds in Gilded Age attire, moonlit clouds, majestic and ethereal",
-     "modern, neon, digital, blurry, low quality"],
-    ["New York 1939 — World of Tomorrow",
-     "The 1939 New York World's Fair at night, the Trylon and Perisphere glowing white against a "
-     "violet sky, art deco streamlined pavilions, fountains lit in vivid color, visitors in 1930s "
-     "dress gazing at the future, retro-futurist wonder, cinematic",
-     "modern, digital, blurry, low quality"],
-    ["Brussels 1958 — Atomium",
-     "The Atomium at the 1958 Brussels World Expo, nine steel spheres magnifying an iron crystal "
-     "atom 165 billion times, golden evening light, Cold War era optimism, swooping modernist "
-     "pavilions in the background, atomic age, silver and chrome",
-     "blurry, low quality, digital artifacts"],
-    ["New York 1964 — Unisphere",
-     "The Unisphere at the 1964 New York World's Fair, massive stainless steel globe rising from "
-     "Flushing Meadows, three orbital rings glinting in summer sunlight, IBM and Ford pavilions "
-     "in background, mid-century modern optimism, Space Age, cinematic wide shot, warm afternoon light",
-     "blurry, low quality, modern, digital"],
-    ["Osaka 1970 — Tower of the Sun",
-     "The Tower of the Sun by Taro Okamoto at Expo '70 Osaka, massive expressionist sculpture "
-     "with golden face and white face, festival plaza teeming with visitors, futuristic space-frame "
-     "roof structure, Japan's economic miracle, vivid colors, 1970s psychedelic energy, cinematic",
-     "blurry, low quality, modern, digital"],
-    ["2064 — Lunar World's Fair",
-     "The 2064 World's Fair on the Moon, glass dome pavilions in the Sea of Tranquility, Earth "
-     "rising on the horizon, bioluminescent architecture glowing against the lunar regolith, "
-     "delegations from forty nations and three orbital habitats, low gravity fountains arcing "
-     "impossibly high, retro-futurist meets deep future, awe-inspiring",
-     "blurry, low quality, Earth gravity, trees, clouds"],
-    ["2064 — Pacific Deepwater Expo",
-     "The 2064 Pacific Deepwater World Expo at 500 meters depth, coral-lattice arcologies lit by "
-     "bioluminescent algae, submersibles docking at crystal pavilions, whale song translated into "
-     "light, kelp forests framing the grand promenade, ethereal blue-green dreamscape, wonder and "
-     "reverence for the ocean",
-     "blurry, low quality, surface, sky, land"],
-    ["2064 — Orbital Ring World's Fair",
-     "The 2064 World's Fair aboard the Orbital Ring station, a gleaming torus circling Earth at "
-     "36,000 km, nations of the world building spinning pavilions along the inner hull, Earth a "
-     "blue marble through vast observation windows, zero-gravity dancers in the atrium, humanity's "
-     "greatest achievement on display, cinematic 4K",
-     "blurry, low quality, gravity, surface, ugly"],
-]
 
 
 def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
@@ -148,16 +93,6 @@ def _ensure_bh_device(mode: str, sim_path: str):
     return _bh_device, _bh_models
 
 
-def _ensure_motion_kernels(num_frames: int):
-    """Load MotionAdapter weights once per session."""
-    global _motion_kernels
-    if _motion_kernels is not None:
-        return _motion_kernels
-    from animatediff_ttnn.motion_weights import load_motion_modules
-    _motion_kernels = load_motion_modules(DEFAULT_MOTION_MODEL)
-    return _motion_kernels
-
-
 
 def generate(
     mode: str,
@@ -170,10 +105,9 @@ def generate(
     sim_path: str,
     lightning: bool = False,
     lightning_steps: int = 4,
-    motion_adapter: bool = False,
     chain_from: str = "",
     chain_save: str = "",
-    chain_alpha: float = 0.35,
+    chain_alpha: float = 0.6,
 ):
     """Generator: yields preview GIF paths as denoising progresses, then final GIF.
 
@@ -228,11 +162,6 @@ def generate(
     device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
     text_embeddings = encode_prompt(prompt, negative_prompt)
 
-    # Resolve MotionAdapter kernels if requested (Phase 3)
-    temporal_kernels = None
-    if motion_adapter and mode in ("blackhole", "sim"):
-        temporal_kernels = _ensure_motion_kernels(num_frames=frames)
-
     # Queue carries (preview_gif_path | None, error | None)
     # None preview + None error = done, final result is ready
     step_q: queue.Queue = queue.Queue()
@@ -256,50 +185,26 @@ def generate(
 
     def worker():
         try:
-            if temporal_kernels is not None:
-                from animatediff_ttnn.temporal_attention import generate_frames_motion
-                fl = generate_frames_motion(
-                    device=device,
-                    ttnn_model=ttnn_model,
-                    ttnn_vae=ttnn_vae,
-                    config=config,
-                    torch_time_proj=torch_time_proj,
-                    text_embeddings=text_embeddings,
-                    temporal_kernels=temporal_kernels,
-                    num_frames=frames,
-                    num_steps=steps,
-                    guidance_scale=1.0 if lightning else 7.5,
-                    seed=seed,
-                    use_lightning=lightning,
-                    chain_from=chain_from_path,
-                    chain_save=chain_save_path,
-                    chain_alpha=chain_alpha,
-                    temporal_alpha=temporal_alpha,
-                    on_step=on_step,
-                    height=height,
-                    width=width,
-                )
-            else:
-                fl = generate_frames_temporal(
-                    device=device,
-                    ttnn_model=ttnn_model,
-                    ttnn_vae=ttnn_vae,
-                    config=config,
-                    torch_time_proj=torch_time_proj,
-                    text_embeddings=text_embeddings,
-                    num_frames=frames,
-                    num_steps=steps,
-                    guidance_scale=7.5,
-                    seed=seed,
-                    temporal_alpha=temporal_alpha,
-                    use_lightning=lightning,
-                    chain_from=chain_from_path,
-                    chain_save=chain_save_path,
-                    chain_alpha=chain_alpha,
-                    on_step=on_step,
-                    height=height,
-                    width=width,
-                )
+            fl = generate_frames_temporal(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                num_frames=frames,
+                num_steps=steps,
+                guidance_scale=7.5,
+                seed=seed,
+                temporal_alpha=temporal_alpha,
+                use_lightning=lightning,
+                chain_from=chain_from_path,
+                chain_save=chain_save_path,
+                chain_alpha=chain_alpha,
+                on_step=on_step,
+                height=height,
+                width=width,
+            )
             result_holder.append(fl)
         except Exception as exc:
             error_holder.append(exc)
@@ -337,10 +242,8 @@ _DESCRIPTION = """
 - **sim** — runs on ttsim virtual device (bit-exact, slower)
 - **cpu** — runs on CPU via diffusers AnimateDiffPipeline (~2 min/frame)
 
-Enable **MotionAdapter (Phase 3)** for full temporal coherence using
-`guoyww/animatediff-motion-adapter-v1-5-2` weights (blackhole/sim only).
 Preview updates stream in real time as each denoising step completes.
-See the [World's Fair showcase](https://tenstorrent.github.io/tt-animatediff/worlds-fair.html) for examples.
+See the [prompt guide](https://tenstorrent.github.io/tt-animatediff/#prompt-guide) for tips.
 """
 
 with gr.Blocks(title="tt-animatediff") as demo:
@@ -390,11 +293,6 @@ with gr.Blocks(title="tt-animatediff") as demo:
                     info="CPU Lightning only: must match the distilled checkpoint (4 recommended)",
                 )
 
-            motion_adapter = gr.Checkbox(
-                label="🎞 MotionAdapter Phase 3 (blackhole/sim only — loads guoyww/animatediff-motion-adapter-v1-5-2)",
-                value=False,
-            )
-
             with gr.Accordion("Chain continuity (blackhole/sim only)", open=False):
                 gr.Markdown(
                     "Thread visual DNA from one generation into the next. "
@@ -408,7 +306,7 @@ with gr.Blocks(title="tt-animatediff") as demo:
                         label="Chain save (path to .pt)", placeholder="chain.pt"
                     )
                 chain_alpha_slider = gr.Slider(
-                    0.0, 1.0, value=0.35, step=0.05,
+                    0.0, 1.0, value=0.6, step=0.05,
                     label="Chain alpha (0 = ignore, 1 = replace seed noise)",
                 )
 
@@ -426,28 +324,11 @@ with gr.Blocks(title="tt-animatediff") as demo:
         inputs=[
             mode, prompt, negative_prompt,
             frames_slider, steps_slider, seed_num, temporal_alpha_slider,
-            sim_path, lightning, lightning_steps, motion_adapter,
+            sim_path, lightning, lightning_steps,
             chain_from_box, chain_save_box, chain_alpha_slider,
         ],
         outputs=output_gif,
     )
-
-    # ── World's Fair presets ───────────────────────────────────────────────
-    gr.Markdown("---\n### World's Fair Presets\nClick a row to load prompt and negative prompt.")
-
-    def _load_preset(evt: gr.SelectData):
-        row = _WORLDS_FAIR_PRESETS[evt.index[0]]
-        return row[1], row[2]  # prompt, negative_prompt
-
-    wf_table = gr.Dataframe(
-        value=[[r[0]] for r in _WORLDS_FAIR_PRESETS],
-        headers=["Preset"],
-        datatype=["str"],
-        interactive=False,
-        row_count=(len(_WORLDS_FAIR_PRESETS), "fixed"),
-        col_count=(1, "fixed"),
-    )
-    wf_table.select(fn=_load_preset, outputs=[prompt, negative_prompt])
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False)

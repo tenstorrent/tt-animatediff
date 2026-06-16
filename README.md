@@ -80,7 +80,7 @@ archived as `weights/*.broken`. Use Lightning mode for fast inference.
 
 ---
 
-## Phase 2 — Blackhole-Accelerated Frame Generation
+## Gradio UI
 
 ## Gradio UI
 Launch a web interface for point-and-click generation.
@@ -256,6 +256,9 @@ scripts/
 
 app.py                      Gradio UI (local + HF Spaces, MotionAdapter + World's Fair presets)
 spaces/                     HuggingFace Spaces deployment files
+
+app.py                     Gradio UI (local + HF Spaces)
+spaces/                    HuggingFace Spaces deployment files
 
 tests/
   test_pipeline.py               Phase 1 unit tests
