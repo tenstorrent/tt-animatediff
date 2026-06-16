@@ -110,6 +110,91 @@ def test_gather_frames_from_device_values():
     assert torch.allclose(result[2], stacked[4:6])
 
 
+def test_plan_frame_sharding_single_chip():
+    """Single chip → serial path, no sharding."""
+    from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
+    assert plan_frame_sharding(num_frames=8, num_chips=1) == (False, 1)
+
+
+def test_plan_frame_sharding_equal():
+    """num_frames == num_chips → one sharded pass, chunk == num_chips."""
+    from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
+    assert plan_frame_sharding(num_frames=4, num_chips=4) == (True, 4)
+
+
+@pytest.mark.parametrize("num_frames,num_chips,chunk", [(8, 4, 4), (12, 4, 4), (16, 4, 4), (4, 2, 2)])
+def test_plan_frame_sharding_multipass(num_frames, num_chips, chunk):
+    """num_frames > num_chips → sharding enabled with chunk == num_chips.
+
+    The previous guard (_num_chips >= num_frames) disabled sharding here, silently
+    dropping to the serial path. The chunked planner keeps it enabled.
+    """
+    from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
+    use_sharding, c = plan_frame_sharding(num_frames, num_chips)
+    assert use_sharding is True
+    assert c == chunk
+    assert num_frames % c == 0  # clean chunks, no partial final pass
+
+
+def test_plan_frame_sharding_not_divisible_raises():
+    """num_frames not a multiple of num_chips → ValueError with valid counts."""
+    from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
+    with pytest.raises(ValueError, match="num_frames.*divisible"):
+        plan_frame_sharding(num_frames=7, num_chips=4)
+
+
+def test_chunked_sharding_runs_ceil_passes():
+    """generate_frames_temporal shards in ceil(num_frames/num_chips) passes.
+
+    num_frames=4 on a 2-chip mesh → 2 sharded passes per step. We patch the
+    device-transfer helpers (no hardware) and count shard calls. Earlier behaviour
+    (num_chips >= num_frames guard) would have taken the serial path and called
+    shard_frames_to_device zero times.
+    """
+    import animatediff_ttnn.ttnn_pipeline as tp
+
+    ttnn_mock = _make_ttnn_mock()
+    ttnn_mock.MeshDevice = type("MeshDevice", (), {})
+    device = ttnn_mock.MeshDevice()
+    device.get_num_devices = MagicMock(return_value=2)
+
+    num_frames, num_chips, lh = 4, 2, 8
+    # gather returns one chunk's worth (== num_chips) of real CFG-doubled tensors.
+    def _fake_gather(tensor, dev, n, batch_per_frame=2):
+        return [torch.randn(2, 4, lh, lh) for _ in range(n)]
+
+    shard_calls = []
+    def _fake_shard(frame_tensors, dev, dtype=None, layout=None):
+        shard_calls.append(len(frame_tensors))
+        return MagicMock(name="sharded")
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), \
+         patch.object(tp, "shard_frames_to_device", _fake_shard), \
+         patch.object(tp, "gather_frames_from_device", _fake_gather), \
+         patch.object(tp, "to_device", MagicMock(return_value=MagicMock())), \
+         patch.object(tp, "from_device", MagicMock(return_value=torch.randn(1, 4, lh, lh))):
+        from animatediff_ttnn.temporal_attention import generate_frames_temporal
+        try:
+            generate_frames_temporal(
+                device=device,
+                ttnn_model=MagicMock(return_value=MagicMock()),
+                ttnn_vae=MagicMock(),
+                config=MagicMock(),
+                torch_time_proj=MagicMock(),
+                text_embeddings=torch.zeros(2, 96, 768),
+                num_frames=num_frames,
+                num_steps=1,
+                height=64, width=64,
+            )
+        except Exception:
+            # VAE decode runs on mocked ttnn and will fail at Image.fromarray —
+            # that is after the denoising loop, so all shard calls have happened.
+            pass
+
+    # 1 step × ceil(4/2)=2 chunks → 2 shard calls, each with num_chips frames.
+    assert shard_calls == [num_chips, num_chips], f"expected 2 chunked passes, got {shard_calls}"
+
+
 def test_num_frames_not_divisible_raises_temporal():
     """generate_frames_temporal raises ValueError if num_frames % num_chips != 0."""
     ttnn_mock = _make_ttnn_mock()

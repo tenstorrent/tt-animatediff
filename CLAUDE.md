@@ -75,23 +75,22 @@ Hardware results (dual P300c): C=320 PCC=0.9998, C=640 PCC=0.9989, C=1280 PCC=0.
 
 ## Mesh Frame Sharding (Phase 4)
 
-Replaces serialized `for i in range(num_frames)` loops in Phase 2.5 and Phase 3 with single sharded TTNN calls across all N Blackhole chips.
+Replaces the serialized `for i in range(num_frames)` UNet loop in Phase 2.5 with sharded TTNN calls across the Blackhole mesh. Frames are sharded one-per-chip in chunks of `num_chips` frames, so `num_frames > num_chips` runs `ceil(num_frames / num_chips)` sharded passes (driven by `plan_frame_sharding`).
 
 **New helpers in `animatediff_ttnn/ttnn_pipeline.py`:**
 - `shard_frames_to_device(frame_tensors, device, dtype, layout)` — stacks N same-shaped CPU tensors along `dim=0` and sends via `ShardTensorToMesh(dim=0)`. UNet use: N `[2, 4, lh, lw]` CFG-doubled tensors → chip K gets `[2, 4, lh, lw]` matching the compiled `batch_size=2` kernel. VAE use: N `[1, lh, lw, 4]` NHWC tensors.
 - `gather_frames_from_device(tensor, device, num_frames, batch_per_frame=2)` — pulls via `ConcatMeshToTensor(dim=0)`, splits into N tensors of `[batch_per_frame, ...]`. Use `batch_per_frame=1` for VAE decode (not CFG-doubled).
 
-**Constraint:** `num_frames % num_chips == 0` — enforced by `ValueError` guards at the start of `generate_frames_temporal` and `generate_frames_motion`. Valid frame counts for QB2 (4 chips): 4, 8, 12, 16.
+**Constraint:** `num_frames % num_chips == 0` — enforced by `plan_frame_sharding` (Phase 2.5) and the `ValueError` guard in `generate_frames_motion`. A partial final chunk would place fewer than `num_chips` frames on the mesh, producing a mis-sized shard the batch=2 kernel rejects. Valid frame counts for QB2 (4 chips): 4, 8, 12, 16 (8/12/16 run 2/3/4 sharded passes).
 
 **What's sharded:**
-- Phase 2.5 UNet denoising loop (`generate_frames_temporal`) — ~4× speedup on 4 chips
-- Phase 2.5 VAE decode (`generate_frames_temporal`) — ~4× speedup
-- Phase 3 VAE decode (`generate_frames_motion`) — ~4× speedup
+- Phase 2.5 UNet denoising loop (`generate_frames_temporal`) — chunked sharding, ~4× speedup on 4 chips when `num_frames` is a multiple of `num_chips`
+- VAE decode (both phases) — NOT sharded; serial per-frame (the TTNN VAE takes batch=1 NHWC input, so frames are decoded one at a time)
 - Phase 3 UNet block loops (`forward_unet_staged`) — NOT sharded (blocks use on-device TTNN tensors; CPU-side shard helper incompatible)
 
 **Expected speedup (4-chip QB2, 8 frames, 25 steps):**
-- Phase 2.5 overall: ~3.2–4× vs 1-chip serial
-- Phase 3 overall: ~2.5–2.9× (bottlenecked by `_apply_temporal` CPU calls at 7 injection points)
+- Phase 2.5 UNet denoising: ~3.2–4× vs 1-chip serial (VAE decode stays serial, so overall wall-clock gain is lower)
+- Phase 3 (`generate_frames_motion`): no mesh sharding — `forward_unet_staged` and VAE both run serial per-frame; the divisibility guard exists only for forward parity with Phase 2.5
 
 **Hardware smoke test:** `scripts/mesh_sharding_hw_test.py` — compares 1-chip vs 4-chip on 4-frame / 4-step generation, asserts PCC > 0.99, prints timing breakdown.
 

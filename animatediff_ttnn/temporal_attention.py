@@ -256,22 +256,16 @@ def generate_frames_temporal(
         List of PIL Images, length num_frames, with temporal coherence
     """
     import ttnn as _ttnn
-    # Guard: num_frames must be evenly divisible by the number of chips.
-    # A remainder means one shard would have fewer frames than the others — TTNN
-    # would reject the mis-sized shard with a cryptic kernel-dispatch error. Fail
-    # early with a message that includes valid frame counts for the current rig.
+    from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
+    # Plan how frames map onto chips. On a mesh we shard one CFG-doubled frame per
+    # chip per pass, running ceil(num_frames / num_chips) passes for num_frames >
+    # num_chips (each chip is compiled for batch=2, so it must receive exactly one
+    # frame's uncond+cond rows). On a single chip we fall back to the serial
+    # per-frame path. plan_frame_sharding raises ValueError (with valid counts) when
+    # num_frames is not a multiple of num_chips — a partial chunk would produce a
+    # mis-sized shard the batch=2 kernel rejects.
     _num_chips = device.get_num_devices() if isinstance(device, _ttnn.MeshDevice) else 1
-    # Mesh sharding is only valid when num_chips >= num_frames: each chip handles
-    # exactly (num_frames / num_chips) CFG-doubled rows [batch=2]. If num_chips <
-    # num_frames all rows land on a single chip as a batch > 2 tensor — the TTNN
-    # UNet (compiled for batch=2) silently corrupts L1, breaking all subsequent VAE
-    # decodes. Fall back to the serial per-frame path in that case.
-    _use_sharding = (_num_chips >= num_frames) and (num_frames % _num_chips == 0)
-    if not _use_sharding and _num_chips > 1 and num_frames % _num_chips != 0:
-        raise ValueError(
-            f"num_frames ({num_frames}) must be divisible by num_chips ({_num_chips}). "
-            f"Valid counts for {_num_chips} chips: {[_num_chips * k for k in range(1, 9)]}"
-        )
+    _use_sharding, _chunk = plan_frame_sharding(num_frames, _num_chips)
 
     import ttnn
     from PIL import Image
@@ -359,59 +353,63 @@ def generate_frames_temporal(
         text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
     )
 
-    # Denoising loop: when num_chips >= num_frames, frames are CFG-doubled and
-    # sharded across chips via ShardTensorToMesh (one chip per frame, batch=2).
-    # When num_chips < num_frames (e.g. single-chip run), fall back to the serial
-    # per-frame path — the TTNN UNet is compiled for batch=2 and would corrupt L1
-    # if fed a larger batch, breaking subsequent VAE decodes.
+    # Denoising loop: on a mesh, frames are CFG-doubled and sharded across chips via
+    # ShardTensorToMesh in chunks of _chunk (== num_chips) frames — one frame per
+    # chip per pass, batch=2 each. num_frames > num_chips runs multiple sharded
+    # passes. On a single chip, fall back to the serial per-frame path — the TTNN
+    # UNet is compiled for batch=2 and would corrupt L1 if fed a larger batch.
     num_steps_actual = len(timesteps)
 
     for step_idx, t in enumerate(timesteps):
         if _use_sharding:
-            # CFG-double each frame CPU-side, then shard across chips in one call.
-            # Lightning: scale_model_input first (per-frame, CPU — Euler sigma normalization).
-            cfg_latents = []
-            for i in range(num_frames):
-                latent_cpu = frame_latents[i]
-                if use_lightning:
-                    # Euler schedulers require scaling the latent by 1/sqrt(sigma^2+1)
-                    # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
-                    # there, but Euler's sigma starts at ~25 and must be normalized).
-                    latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
-                cfg_latents.append(torch.cat([latent_cpu, latent_cpu], dim=0))  # [2, 4, lh, lw]
-
-            # Shard all N CFG-doubled frames to device in a single call.
-            # shard_frames_to_device stacks the list to [2N, 4, lh, lw] and maps each
-            # pair to a distinct chip via ShardTensorToMesh — replacing N serial to_device
-            # calls and N serial ttnn.concat([lat, lat], dim=0) operations.
-            stacked_dev = shard_frames_to_device(
-                cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-            )
-            ttnn_out = ttnn_model(
-                stacked_dev,
-                timestep=_tlist[step_idx],
-                encoder_hidden_states=ttnn_text_emb,
-                class_labels=None,
-                attention_mask=None,
-                cross_attention_kwargs=None,
-                return_dict=True,
-                config=config,
-            )
-            stacked_dev.deallocate(True)
-
-            # Gather all N frame outputs from device, apply CFG guidance per frame.
-            # gather_frames_from_device pulls [2N, 4, lh, lw] back to CPU and splits
-            # it into N tensors of shape [2, 4, lh, lw] — one per frame.
-            frame_outputs = gather_frames_from_device(ttnn_out, device, num_frames)
-            ttnn_out.deallocate(True)
+            # Shard in chunks of _chunk (== num_chips) frames: one CFG-doubled frame
+            # per chip per pass, ceil(num_frames / _chunk) passes total. Frames are
+            # processed in order so noise_preds stays frame-aligned.
             noise_preds = []
-            for frame_out in frame_outputs:
-                # _tt_guide_cpu applies CFG on a CPU [2, C, H, W] tensor; result is
-                # [1, 4, lh, lw] — the guided noise prediction for this frame.
-                noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
+            for c0 in range(0, num_frames, _chunk):
+                # CFG-double each frame in this chunk CPU-side, then shard across chips.
+                # Lightning: scale_model_input first (per-frame, CPU — Euler sigma norm).
+                cfg_latents = []
+                for i in range(c0, c0 + _chunk):
+                    latent_cpu = frame_latents[i]
+                    if use_lightning:
+                        # Euler schedulers require scaling the latent by 1/sqrt(sigma^2+1)
+                        # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
+                        # there, but Euler's sigma starts at ~25 and must be normalized).
+                        latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
+                    cfg_latents.append(torch.cat([latent_cpu, latent_cpu], dim=0))  # [2, 4, lh, lw]
+
+                # Shard this chunk's frames to device in a single call.
+                # shard_frames_to_device stacks the list to [2*_chunk, 4, lh, lw] and maps
+                # each pair to a distinct chip via ShardTensorToMesh — replacing _chunk
+                # serial to_device calls and _chunk serial ttnn.concat operations.
+                stacked_dev = shard_frames_to_device(
+                    cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+                )
+                ttnn_out = ttnn_model(
+                    stacked_dev,
+                    timestep=_tlist[step_idx],
+                    encoder_hidden_states=ttnn_text_emb,
+                    class_labels=None,
+                    attention_mask=None,
+                    cross_attention_kwargs=None,
+                    return_dict=True,
+                    config=config,
+                )
+                stacked_dev.deallocate(True)
+
+                # Gather this chunk's frame outputs, apply CFG guidance per frame.
+                # gather_frames_from_device pulls [2*_chunk, 4, lh, lw] back to CPU and
+                # splits it into _chunk tensors of shape [2, 4, lh, lw] — one per frame.
+                frame_outputs = gather_frames_from_device(ttnn_out, device, _chunk)
+                ttnn_out.deallocate(True)
+                for frame_out in frame_outputs:
+                    # _tt_guide_cpu applies CFG on a CPU [2, C, H, W] tensor; result is
+                    # [1, 4, lh, lw] — the guided noise prediction for this frame.
+                    noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
         else:
             # Serial path: one UNet call per frame, batch=2 CFG-doubled.
-            # Used when num_chips < num_frames (e.g. --device-id on a single chip).
+            # Used on a single chip (num_chips == 1); meshes take the sharded path above.
             noise_preds = []
             for i in range(num_frames):
                 latent_cpu = frame_latents[i]

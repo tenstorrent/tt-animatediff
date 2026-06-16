@@ -25,15 +25,20 @@ import torch
 from PIL import Image
 
 
-TT_METAL_PATH = Path.home() / "tt-metal"
+# tt-metal checkout location. Defaults to ~/tt-metal but honours the standard
+# TT_METAL_HOME env var so the runtime works against a checkout elsewhere (e.g.
+# a shared dev tree) without editing source.
+TT_METAL_PATH = Path(os.environ.get("TT_METAL_HOME", str(Path.home() / "tt-metal")))
 
 
 def _ensure_tt_metal_path() -> None:
-    """Add ~/tt-metal to sys.path so SD demo module imports work."""
+    """Add the tt-metal checkout to sys.path so SD demo module imports work."""
     if not TT_METAL_PATH.exists():
         raise RuntimeError(
-            f"~/tt-metal not found. Activate the tt-metal environment first:\n"
-            f"  cd ~/tt-metal && source python_env/bin/activate"
+            f"tt-metal not found at {TT_METAL_PATH}. Set TT_METAL_HOME to your "
+            f"checkout, or place it at ~/tt-metal, then activate the env:\n"
+            f"  export TT_METAL_HOME=/path/to/tt-metal\n"
+            f"  source $TT_METAL_HOME/python_env/bin/activate"
         )
     tt_metal_str = str(TT_METAL_PATH)
     if tt_metal_str not in sys.path:
@@ -135,6 +140,42 @@ def from_device(tensor, device, batch: int = 1):
     if isinstance(device, ttnn.MeshDevice):
         return ttnn.to_torch(tensor, mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))[:batch]
     return ttnn.to_torch(tensor)
+
+
+def plan_frame_sharding(num_frames: int, num_chips: int) -> tuple[bool, int]:
+    """Decide how to distribute frames across chips for the UNet denoising loop.
+
+    The compiled TTNN UNet expects exactly ``batch_size=2`` (CFG uncond+cond) per
+    chip, so each sharded pass places exactly one CFG-doubled frame on every chip.
+    To handle ``num_frames > num_chips`` we run ceil(num_frames / num_chips) passes,
+    each sharding a chunk of ``num_chips`` frames — rather than collapsing to the
+    fully serial path (the previous behaviour, which only sharded when
+    num_chips == num_frames and silently lost the speedup for 8/12/16 frames).
+
+    Args:
+        num_frames: Total frames to generate.
+        num_chips: Number of Blackhole chips in the mesh.
+
+    Returns:
+        (use_sharding, chunk_size):
+          - (False, 1) for a single chip — caller uses the serial per-frame path.
+          - (True, num_chips) for a mesh — caller shards in chunks of num_chips
+            frames (one CFG-doubled frame per chip per pass).
+
+    Raises:
+        ValueError: if num_chips > 1 and num_frames is not a multiple of num_chips.
+            A partial final chunk would place fewer than num_chips frames on the
+            mesh, producing a mis-sized shard the batch=2 kernel rejects with a
+            cryptic dispatch error. Fail early with valid counts instead.
+    """
+    if num_chips <= 1:
+        return False, 1
+    if num_frames % num_chips != 0:
+        raise ValueError(
+            f"num_frames ({num_frames}) must be divisible by num_chips ({num_chips}). "
+            f"Valid counts for {num_chips} chips: {[num_chips * k for k in range(1, 9)]}"
+        )
+    return True, num_chips
 
 
 def shard_frames_to_device(frame_tensors: list, device, dtype=None, layout=None):
