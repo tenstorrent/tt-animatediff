@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import List
 
 import torch
+import animatediff_ttnn.ttnn_pipeline as _tp  # module-ref so patch.object works in tests
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -269,7 +270,7 @@ def generate_frames_temporal(
 
     import ttnn
     from PIL import Image
-    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device, shard_frames_to_device, gather_frames_from_device
+    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
     from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
 
     lh, lw = height // 8, width // 8
@@ -383,7 +384,7 @@ def generate_frames_temporal(
                 # shard_frames_to_device stacks the list to [2*_chunk, 4, lh, lw] and maps
                 # each pair to a distinct chip via ShardTensorToMesh — replacing _chunk
                 # serial to_device calls and _chunk serial ttnn.concat operations.
-                stacked_dev = shard_frames_to_device(
+                stacked_dev = _tp.shard_frames_to_device(
                     cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
                 )
                 ttnn_out = ttnn_model(
@@ -401,7 +402,7 @@ def generate_frames_temporal(
                 # Gather this chunk's frame outputs, apply CFG guidance per frame.
                 # gather_frames_from_device pulls [2*_chunk, 4, lh, lw] back to CPU and
                 # splits it into _chunk tensors of shape [2, 4, lh, lw] — one per frame.
-                frame_outputs = gather_frames_from_device(ttnn_out, device, _chunk)
+                frame_outputs = _tp.gather_frames_from_device(ttnn_out, device, _chunk)
                 ttnn_out.deallocate(True)
                 for frame_out in frame_outputs:
                     # _tt_guide_cpu applies CFG on a CPU [2, C, H, W] tensor; result is
@@ -587,7 +588,7 @@ def generate_frames_motion(
 
     import ttnn
     from PIL import Image
-    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device, shard_frames_to_device, gather_frames_from_device
+    from animatediff_ttnn.ttnn_pipeline import build_tlist, to_device, from_device
     from animatediff_ttnn.ttnn_motion_pipeline import forward_unet_staged
     from models.demos.vision.generative.stable_diffusion.wormhole.sd_helper_funcs import tt_guide
 
