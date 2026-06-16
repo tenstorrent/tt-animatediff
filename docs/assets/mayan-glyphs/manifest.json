@@ -130,6 +130,8 @@
       "steps": 25,
       "lightning": false,
       "temporal_alpha": 0.35,
+      "motion_adapter": null,
+      "motion_adapter_skip": [],
       "chips": [
         0,
         1,
@@ -146,6 +148,8 @@
       "steps": 8,
       "lightning": true,
       "temporal_alpha": 0.35,
+      "motion_adapter": null,
+      "motion_adapter_skip": [],
       "chips": [
         0,
         1,
@@ -153,6 +157,45 @@
         3
       ],
       "color": "#f4c471"
+    },
+    "Q3": {
+      "label": "Phase 3 \u00b7 Full MotionAdapter",
+      "badge": "Q3 \u00b7 Phase 3",
+      "desc": "4-chip Blackhole \u00b7 PNDM 25-step \u00b7 8 frames \u00b7 full AnimateDiff \u00b7 ~52 s/frame",
+      "frames": 8,
+      "steps": 25,
+      "lightning": false,
+      "temporal_alpha": 1.0,
+      "motion_adapter": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "motion_adapter_skip": [],
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#ec96b8"
+    },
+    "Q4": {
+      "label": "Phase 3 \u00b7 Skip up1+up2",
+      "badge": "Q4 \u00b7 Skip up1+up2",
+      "desc": "4-chip Blackhole \u00b7 PNDM 25-step \u00b7 8 frames \u00b7 5 injection points \u00b7 ~7.7 s/frame",
+      "frames": 8,
+      "steps": 25,
+      "lightning": false,
+      "temporal_alpha": 1.0,
+      "motion_adapter": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "motion_adapter_skip": [
+        "up1",
+        "up2"
+      ],
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#27ae60"
     }
   },
   "results": {
@@ -315,6 +358,38 @@
     "ok-Q1": {
       "path": "docs/assets/mayan-glyphs/Q1/ok.gif",
       "elapsed": null
+    },
+    "imix-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/imix.gif",
+      "elapsed": 134.7046115398407
+    },
+    "chikchan-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/chikchan.gif",
+      "elapsed": 178.3103153705597
+    },
+    "ix-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/ix.gif",
+      "elapsed": 222.41188311576843
+    },
+    "ajaw-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/ajaw.gif",
+      "elapsed": 266.72864174842834
+    },
+    "imix-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/imix.gif",
+      "elapsed": 436.7528164386749
+    },
+    "chikchan-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/chikchan.gif",
+      "elapsed": 846.3145174980164
+    },
+    "ix-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/ix.gif",
+      "elapsed": 1240.5543966293335
+    },
+    "ajaw-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/ajaw.gif",
+      "elapsed": 1632.7011015415192
     }
   }
 }
