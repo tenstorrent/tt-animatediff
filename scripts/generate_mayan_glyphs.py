@@ -346,6 +346,8 @@ TIERS = {
         "steps": 25,
         "lightning": False,
         "temporal_alpha": 0.35,
+        "motion_adapter": None,
+        "motion_adapter_skip": [],
         "chips": [0, 1, 2, 3],
         "color": "#4fd1c5",
     },
@@ -357,8 +359,37 @@ TIERS = {
         "steps": 8,
         "lightning": True,
         "temporal_alpha": 0.35,
+        "motion_adapter": None,
+        "motion_adapter_skip": [],
         "chips": [0, 1, 2, 3],
         "color": "#f4c471",
+    },
+    # Phase 3 tiers — full MotionAdapter and skip variant for side-by-side comparison
+    "Q3": {
+        "label": "Phase 3 · Full MotionAdapter",
+        "badge": "Q3 · Phase 3",
+        "desc": "4-chip Blackhole · PNDM 25-step · 8 frames · full AnimateDiff · ~52 s/frame",
+        "frames": 8,
+        "steps": 25,
+        "lightning": False,
+        "temporal_alpha": 1.0,
+        "motion_adapter": "guoyww/animatediff-motion-adapter-v1-5-2",
+        "motion_adapter_skip": [],
+        "chips": [0, 1, 2, 3],
+        "color": "#ec96b8",
+    },
+    "Q4": {
+        "label": "Phase 3 · Skip up1+up2",
+        "badge": "Q4 · Skip up1+up2",
+        "desc": "4-chip Blackhole · PNDM 25-step · 8 frames · 5 injection points · ~7.7 s/frame",
+        "frames": 8,
+        "steps": 25,
+        "lightning": False,
+        "temporal_alpha": 1.0,
+        "motion_adapter": "guoyww/animatediff-motion-adapter-v1-5-2",
+        "motion_adapter_skip": ["up1", "up2"],
+        "chips": [0, 1, 2, 3],
+        "color": "#27ae60",
     },
 }
 
@@ -384,6 +415,10 @@ def _build_cmd(glyph: dict, tier_key: str, chip: int) -> tuple[list[str], Path]:
     ]
     if tier["lightning"]:
         cmd += ["--lightning", "--lightning-steps", str(tier["steps"])]
+    if tier.get("motion_adapter"):
+        cmd += ["--motion-adapter", tier["motion_adapter"]]
+    if tier.get("motion_adapter_skip"):
+        cmd += ["--motion-adapter-skip"] + tier["motion_adapter_skip"]
     return cmd, out_path
 
 
@@ -491,21 +526,34 @@ def build_manifest(results: dict):
     print(f"\nManifest: {manifest_path}")
 
 
+# Canonical 4-glyph sample set for quick comparison runs (one full parallel batch).
+# Covers diverse visuals: water/jungle, serpent/fire, jaguar/night, sun/pyramid.
+SAMPLE_SLUGS = ["imix", "chikchan", "ix", "ajaw"]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate Maya day glyph benchmark suite")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running")
-    parser.add_argument("--tier", choices=["Q1", "Q2", "all"], default="Q1",
+    parser.add_argument("--tier", choices=["Q1", "Q2", "Q3", "Q4", "all"], default="Q1",
                         help="Quality tier to run (default: Q1)")
     parser.add_argument("--glyph", help="Run only this glyph slug (e.g. imix, ajaw)")
+    parser.add_argument("--sample", action="store_true",
+                        help=f"Run only the canonical 4-glyph sample set: {SAMPLE_SLUGS}")
     parser.add_argument("--stagger", type=int, default=60,
                         help="Seconds between chip launches (default: 60, avoids JIT cache races)")
     args = parser.parse_args()
 
     tiers_to_run = list(TIERS.keys()) if args.tier == "all" else [args.tier]
-    glyphs_to_run = [g for g in GLYPHS if not args.glyph or g["slug"] == args.glyph]
+    if args.sample:
+        glyphs_to_run = [g for g in GLYPHS if g["slug"] in SAMPLE_SLUGS]
+    elif args.glyph:
+        glyphs_to_run = [g for g in GLYPHS if g["slug"] == args.glyph]
+    else:
+        glyphs_to_run = list(GLYPHS)
 
     if not glyphs_to_run:
-        print(f"No glyph found with slug '{args.glyph}'. Valid: {[g['slug'] for g in GLYPHS]}")
+        slug = args.glyph or "(sample)"
+        print(f"No glyph found with slug '{slug}'. Valid: {[g['slug'] for g in GLYPHS]}")
         sys.exit(1)
 
     OUT.mkdir(parents=True, exist_ok=True)

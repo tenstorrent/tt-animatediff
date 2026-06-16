@@ -272,8 +272,123 @@
   footer a { color: var(--teal); text-decoration: none; }
   footer a:hover { color: var(--teal2); }
 
+  /* ── Phase 3 comparison section ── */
+  .p3-section {
+    max-width: 1300px;
+    margin: 0 auto 4rem;
+    padding: 0 1.5rem;
+  }
+  .p3-section h2 {
+    font-size: clamp(1.1rem, 2.5vw, 1.45rem);
+    font-weight: 800;
+    margin-bottom: .4rem;
+  }
+  .p3-section > p {
+    font-size: .85rem;
+    color: var(--text2);
+    line-height: 1.7;
+    max-width: 780px;
+    margin-bottom: 1.25rem;
+  }
+  .p3-label {
+    display: inline-block;
+    font-size: .62rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--green);
+    border: 1px solid var(--green);
+    border-radius: 3px;
+    padding: .15rem .5rem;
+    margin-bottom: .75rem;
+  }
+  /* 4-column grid of glyph cards, each card has 3 rows: Q2 / Q4 / Q3 */
+  .p3-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .p3-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .p3-card-title {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: .5rem .75rem;
+    display: flex;
+    align-items: baseline;
+    gap: .4rem;
+  }
+  .p3-card-title .num {
+    font-size: .58rem;
+    font-weight: 700;
+    color: var(--teal);
+    background: rgba(79,209,197,.1);
+    border: 1px solid rgba(79,209,197,.25);
+    border-radius: 3px;
+    padding: .08rem .28rem;
+  }
+  .p3-card-title .gname { font-size: .85rem; font-weight: 700; }
+  .p3-card-title .gmean { font-size: .65rem; color: var(--muted); font-style: italic; }
+  .p3-row {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+  }
+  .p3-row-label {
+    padding: .2rem .5rem;
+    font-size: .56rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    background: rgba(0,0,0,.2);
+    border-bottom: 1px solid var(--border);
+  }
+  .label-q2  { color: var(--gold); }
+  .label-q4  { color: var(--green); }
+  .label-q3  { color: var(--pink); }
+  .p3-frame {
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+  .p3-frame img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .p3-time {
+    padding: .18rem .5rem;
+    font-size: .58rem;
+    color: var(--muted);
+    background: rgba(0,0,0,.18);
+    border-top: 1px solid var(--border);
+    text-align: right;
+  }
+  /* insight callout */
+  .p3-insight {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+    font-size: .83rem;
+    color: var(--text2);
+    line-height: 1.65;
+  }
+  .p3-insight strong { color: var(--green); }
+
   /* ── responsive ── */
   @media (max-width: 1100px) { .glyph-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 900px)  { .p3-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 760px)  { .glyph-grid { grid-template-columns: repeat(2, 1fr); gap: .9rem; } }
   @media (max-width: 480px) {
     .glyph-grid { grid-template-columns: 1fr; gap: .75rem; padding: 0 .75rem; }
@@ -315,10 +430,10 @@
   <h1>Maya Tzolk'in — <span>20 Sacred Day Glyphs</span></h1>
   <p>
     Each of the 20 day signs of the 260-day Maya sacred calendar, animated as living stone —
-    carved, lit, and atmospheric — across two quality tiers on a Tenstorrent Blackhole QB2 board.
-    Four chips run in parallel, one glyph per chip.
+    carved, lit, and atmospheric — across four quality tiers on a Tenstorrent Blackhole QB2 board.
+    Four chips run in parallel, one glyph per chip. Scroll down for the Phase 3 MotionAdapter comparison.
   </p>
-  <p class="sub">Phase 2.5 cross-frame temporal attention · SD 1.4 base · 512 × 512 · tt-animatediff</p>
+  <p class="sub">Phase 2.5 cross-frame blend + Phase 3 MotionAdapter · SD 1.4 base · 512 × 512 · tt-animatediff</p>
 </header>
 
 <div class="tier-legend">
@@ -334,6 +449,20 @@
     <div class="tier-text">
       <strong style="color:var(--gold);">Q2 · Fast (Lightning)</strong>
       <span>4-chip Blackhole · Euler 8-step · 8 frames · α=0.35</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background:#27ae60;"></div>
+    <div class="tier-text">
+      <strong style="color:var(--green);">Q4 · Phase 3 skip up1+up2</strong>
+      <span>4-chip · PNDM 25-step · 5 injection points · ~7.7 s/frame</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background:#ec96b8;"></div>
+    <div class="tier-text">
+      <strong style="color:var(--pink);">Q3 · Phase 3 full MotionAdapter</strong>
+      <span>4-chip · PNDM 25-step · 7 injection points · ~52 s/frame</span>
     </div>
   </div>
 </div>
@@ -385,14 +514,157 @@
     </p>
   </div>
   <div class="info-card">
+    <h3>Q3 · Phase 3 Full</h3>
+    <p>
+      Full AnimateDiff <code>AnimateDiffTransformer3D</code> at all 7 UNet injection points per step.
+      Strongest temporal coherence — ~52 s/frame. See the Phase 3 comparison section below.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Q4 · Phase 3 skip up1+up2</h3>
+    <p>
+      Phase 3 with the two costliest decoder injection points skipped. Only 5 of 7 points active —
+      ~7.7 s/frame, faster than Phase 2.5. Trade: slightly softer decoder-side temporal detail.
+    </p>
+  </div>
+  <div class="info-card">
     <h3>Reproducing</h3>
     <p>
-      Run <code>python scripts/generate_mayan_glyphs.py</code> with an active
-      tt-metal virtualenv. Pass <code>--tier Q1</code> or <code>--tier Q2</code>
-      to run a single tier, or <code>--glyph imix</code> for one glyph.
+      Run <code>python scripts/generate_mayan_glyphs.py --tier Q1</code> (or Q2/Q3/Q4).
+      Use <code>--sample</code> for the 4-glyph comparison subset, or
+      <code>--glyph imix</code> for a single glyph.
     </p>
   </div>
 </div>
+
+<!-- ── Phase 3 MotionAdapter comparison ──────────────────────────────── -->
+<div class="p3-section">
+  <span class="p3-label">Phase 3 · MotionAdapter</span>
+  <h2>Full MotionAdapter vs. skip up1+up2 — 4 glyphs</h2>
+  <p>
+    Phase 3 runs <code>AnimateDiffTransformer3D</code> at 7 UNet injection points per denoising step —
+    the full AnimateDiff temporal transformer on CPU, producing the strongest inter-frame motion structure.
+    Skipping the two costliest decoder injection points (up1 32×32 and up2 64×64) drops wall-clock
+    from ~52 s/frame to ~7.7 s/frame, faster than Phase 2.5. The tradeoff is visible in the decoder:
+    skip mode produces slightly softer motion coherence in the lower-spatial-frequency detail.
+    Same prompt, same seed, same 25 PNDM steps — only the injection-point set changes.
+  </p>
+
+  <div class="p3-insight">
+    <strong>What to look for:</strong> Q3 (full) shows stronger large-scale motion — surfaces flow,
+    atmospheric elements move consistently across frames. Q4 (skip) retains the motion character from
+    the encoder/mid injection points but loses some of the decoder-side low-frequency temporal polish.
+    Both are Phase 3; the question is whether 6.75× faster is worth the tradeoff for your use case.
+  </div>
+
+  <div class="p3-grid">
+
+    <!-- Imix -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">01</span>
+        <span class="gname">Imix</span>
+        <span class="gmean">Crocodile / Primordial Water</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/imix.gif" alt="Imix Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/imix.gif" alt="Imix Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/imix.gif" alt="Imix Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+    <!-- Chikchan -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">05</span>
+        <span class="gname">Chikchan</span>
+        <span class="gmean">Serpent / Life Force</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/chikchan.gif" alt="Chikchan Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/chikchan.gif" alt="Chikchan Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/chikchan.gif" alt="Chikchan Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+    <!-- Ix -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">14</span>
+        <span class="gname">Ix</span>
+        <span class="gmean">Jaguar / Earth Magic</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/ix.gif" alt="Ix Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/ix.gif" alt="Ix Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/ix.gif" alt="Ix Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+    <!-- Ajaw -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">20</span>
+        <span class="gname">Ajaw</span>
+        <span class="gmean">Lord / Sun / Completion</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/ajaw.gif" alt="Ajaw Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/ajaw.gif" alt="Ajaw Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/ajaw.gif" alt="Ajaw Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+  </div><!-- .p3-grid -->
+
+  <div class="p3-insight" style="margin-top:1.25rem; border-left-color:var(--teal);">
+    <strong style="color:var(--teal);">Reproducing:</strong>
+    <code>python scripts/generate_mayan_glyphs.py --tier Q3 --sample</code> (full, ~26 min for 4 glyphs) ·
+    <code>python scripts/generate_mayan_glyphs.py --tier Q4 --sample</code> (skip, ~5 min for 4 glyphs).
+    The <code>--sample</code> flag runs just these 4 glyphs (imix, chikchan, ix, ajaw).
+    See <a href="benchmarks.html">benchmarks</a> for timing breakdown.
+  </div>
+</div><!-- .p3-section -->
 
 <footer>
   Generated on Tenstorrent Blackhole hardware using
