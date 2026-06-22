@@ -71,6 +71,43 @@
     .ph { display: flex; align-items: center; gap: .45rem; font-size: .72rem; color: var(--muted); }
     .ph-dot { width: 10px; height: 10px; border-radius: 2px; border: 1px solid; flex-shrink: 0; }
 
+    /* ── lightning ── */
+    .lightning { padding: 3.5rem 2rem; border-top: 1px solid var(--border); }
+    .lightning-inner { max-width: 980px; margin: 0 auto; }
+    .lightning-header { text-align: center; margin-bottom: 2.5rem; }
+    .lightning-header h2 { font-size: clamp(1.3rem, 3vw, 1.9rem); font-weight: 800; margin-bottom: .5rem; }
+    .lightning-header h2 em { color: var(--teal); font-style: normal; }
+    .lightning-header p { font-size: .9rem; color: var(--text2); max-width: 560px; margin: 0 auto; }
+    .compare-grid { display: flex; flex-direction: column; gap: 2.5rem; margin-bottom: 2.5rem; }
+    .compare-row { display: flex; gap: 1.5rem; align-items: flex-start; }
+    .compare-cell { flex: 1 1 0; min-width: 0; }
+    .compare-cell img { width: 100%; border-radius: var(--radius); border: 1px solid var(--border); display: block; }
+    .compare-label { font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-top: .5rem; }
+    .compare-label.original { color: var(--muted); }
+    .compare-label.lightning { color: var(--teal); }
+    .compare-label.lcm { color: #81e6d9; }
+    .compare-prompt { font-size: .72rem; color: var(--muted); margin-top: .2rem; font-style: italic; }
+    .compare-divider { display: flex; align-items: center; padding-top: 2.5rem; color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
+    .speed-table-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .speed-table-wrap h4 { font-size: .78rem; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 1rem; }
+    .speed-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .speed-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: .7rem; text-transform: uppercase; letter-spacing: .1em; padding: .3rem .5rem .5rem; border-bottom: 1px solid var(--border); }
+    .speed-table td { padding: .45rem .5rem; color: var(--text2); border-bottom: 1px solid rgba(79,209,197,.05); }
+    .speed-table tr:last-child td { border-bottom: none; }
+    .speed-table .hl { color: var(--teal); font-weight: 700; }
+    .speed-table .tag { display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: .15rem .4rem; border-radius: 3px; }
+    .speed-table .tag-original { background: rgba(96,125,139,.15); color: var(--muted); border: 1px solid rgba(96,125,139,.3); }
+    .speed-table .tag-lightning { background: rgba(79,209,197,.12); color: var(--teal); border: 1px solid var(--teal-border); }
+    .speed-table .tag-lcm { background: rgba(129,230,217,.1); color: #81e6d9; border: 1px solid rgba(129,230,217,.3); }
+    .lightning-footer { text-align: center; font-size: .82rem; color: var(--muted); }
+    .lightning-footer a { color: var(--teal); }
+
+    @media (max-width: 600px) {
+      .lightning { padding: 2.5rem 1rem; }
+      .compare-row { gap: .75rem; }
+      .compare-divider { font-size: .9rem; padding-top: 1.8rem; }
+    }
+
     /* ── shoulders ── */
     .shoulders { background: var(--bg1); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 3rem 2rem; text-align: center; }
     .section-label { font-size: .68rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 1.25rem; display: block; }
@@ -196,6 +233,15 @@
       footer { padding: 1.25rem 1rem; }
     }
   </style>
+  <!-- PostHog analytics -->
+  <script>
+    (function(t,e){var o,n,p,r;if(!e.__SV){window.posthog=e;e._i=[];e.init=function(i,s,a){function g(t,e){var o=e.split(".");if(o.length===2){t=t[o[0]];e=o[1];}t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)));};}p=t.createElement("script");p.type="text/javascript";p.crossOrigin="anonymous";p.async=true;p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js";r=t.getElementsByTagName("script")[0];r.parentNode.insertBefore(p,r);var u=e;if(a!==undefined){u=e[a]=[];}else{a="posthog";}u.people=u.people||[];u.toString=function(t){var e="posthog";if(a!=="posthog"){e+="."+a;}if(!t){e+=" (stub)";}return e;};u.people.toString=function(){return u.toString(1)+".people (stub)";};var methods=("init capture identify setPersonProperties reset get_distinct_id getGroups get_session_id alias set_config startSessionRecording stopSessionRecording opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug").split(" ");for(n=0;n<methods.length;n++){g(u,methods[n]);}e._i.push([i,s,a]);};e.__SV=1;}})(document,window.posthog||[]);
+    posthog.init("phc_9LMRmHrCFvQNvDkPDjYBP5dZ6WchZ5bcM6T4Qj6tb0U", {
+      api_host: "https://us.i.posthog.com",
+      defaults: "2025-05-24",
+      person_profiles: "identified_only"
+    });
+  </script>
 </head>
 <body>
 
@@ -206,6 +252,9 @@
   <div class="hero-links">
     <a class="btn btn-primary" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
     <a class="btn btn-ghost" href="gallery.html">Gallery →</a>
+    <a class="btn btn-ghost" href="worlds-fair.html">World's Fair →</a>
+    <a class="btn btn-ghost" href="mayan-glyphs.html">Maya Glyphs →</a>
+    <a class="btn btn-ghost" href="#lightning">⚡ Lightning Mode</a>
     <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff#prompt-guide">Prompt Guide</a>
   </div>
   <div class="hero-related">
@@ -224,6 +273,103 @@
     <div class="ph"><div class="ph-dot" style="border-color:#27ae60;background:rgba(39,174,96,.1)"></div>Tech emergence</div>
     <div class="ph"><div class="ph-dot" style="border-color:#81e6d9;background:rgba(129,230,217,.15)"></div>Full integration</div>
     <div class="ph"><div class="ph-dot" style="border-color:rgba(79,209,197,.15);background:#0a141c"></div>Harvested core</div>
+  </div>
+</section>
+
+<section class="lightning" id="lightning">
+  <div class="lightning-inner">
+    <div class="lightning-header">
+      <div class="badge">Lightning Mode</div>
+      <h2>Same hardware. <em>4-step inference.</em></h2>
+      <p>The Lightning scheduler cuts denoising steps from 25 to 4–8 with no change to the model architecture. Each row below is the same prompt, same seed — original Blackhole output on the left, lightning mode on the right.</p>
+    </div>
+
+    <div class="compare-grid">
+      <div class="compare-row">
+        <div class="compare-cell">
+          <img src="assets/study/p1-aurora.gif" alt="aurora borealis — 25 steps" loading="lazy">
+          <div class="compare-label original">25 steps · original</div>
+          <div class="compare-prompt">aurora borealis over arctic ice</div>
+        </div>
+        <div class="compare-divider">→</div>
+        <div class="compare-cell">
+          <img src="assets/lightning-aurora.gif" alt="aurora borealis — 8-step lightning" loading="lazy">
+          <div class="compare-label lightning">⚡ 8 steps · lightning</div>
+          <div class="compare-prompt">aurora borealis over arctic ice</div>
+        </div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-cell">
+          <img src="assets/study/p2-mandala.gif" alt="sacred mandala — 25 steps" loading="lazy">
+          <div class="compare-label original">25 steps · original</div>
+          <div class="compare-prompt">sacred mandala blooming from starfield</div>
+        </div>
+        <div class="compare-divider">→</div>
+        <div class="compare-cell">
+          <img src="assets/lightning-mandala.gif" alt="sacred mandala — 8-step lightning" loading="lazy">
+          <div class="compare-label lightning">⚡ 8 steps · lightning</div>
+          <div class="compare-prompt">sacred mandala blooming from starfield</div>
+        </div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-cell">
+          <img src="assets/study/p2-mycelium.gif" alt="mycelium network — 25 steps" loading="lazy">
+          <div class="compare-label original">25 steps · original</div>
+          <div class="compare-prompt">mycelium network, bioluminescent spores</div>
+        </div>
+        <div class="compare-divider">→</div>
+        <div class="compare-cell">
+          <img src="assets/lightning-mycelium.gif" alt="mycelium network — 8-step lightning" loading="lazy">
+          <div class="compare-label lightning">⚡ 8 steps · lightning</div>
+          <div class="compare-prompt">mycelium network, bioluminescent spores</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="speed-table-wrap">
+      <h4>Inference speed · 8 frames · Blackhole P300C · warm model</h4>
+      <table class="speed-table">
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>Steps</th>
+            <th>s / frame</th>
+            <th>Total (8 frames)</th>
+            <th>vs Phase 3</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Phase 3 · MotionAdapter</td>
+            <td>25</td>
+            <td>~101 s</td>
+            <td>~806 s</td>
+            <td>1×</td>
+          </tr>
+          <tr>
+            <td><span class="tag tag-original">Phase 2.5</span> cross-frame</td>
+            <td>25</td>
+            <td>~12.5 s</td>
+            <td>~100 s</td>
+            <td class="hl">8×</td>
+          </tr>
+          <tr>
+            <td><span class="tag tag-lightning">Lightning</span> cross-frame</td>
+            <td>8</td>
+            <td>~12 s</td>
+            <td>~96 s</td>
+            <td class="hl">~8.4×</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="lightning-footer">
+      Lightning and PNDM 25-step take nearly the same wall-clock time — the CPU temporal blend is the bottleneck, not step count. →
+      <a href="benchmarks.html">Full benchmarks</a>
+    </p>
   </div>
 </section>
 
@@ -260,7 +406,7 @@
     <div class="what-cols">
       <div class="what-col">
         <h4>Hardware path</h4>
-        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~15 s/frame on P300C vs ~2 min/frame on CPU.</p>
+        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~12.5 s/frame on P300C (Phase 2.5, 25-step) vs ~2 min/frame on CPU.</p>
       </div>
       <div class="what-col">
         <h4>Temporal attention</h4>
@@ -289,7 +435,7 @@
       <div class="mermaid">
 flowchart TD
     P([Prompt + seed]) --> CHAIN{"--chain-from?"}
-    CHAIN -->|yes| BLEND["low-pass blend prev latents\ninto seed noise — CPU"]
+    CHAIN -->|yes| BLEND["frame-mean blend prev latents\ninto seed noise — CPU\n(renorm to unit std)"]
     CHAIN -->|no| ENC
     BLEND --> ENC["CLIP encode — CPU"]
     ENC --> MODE{Mode?}
@@ -300,7 +446,7 @@ flowchart TD
     CPU_VAE --> GIF([Output GIF])
 
     MODE -->|blackhole / sim| LOOP["Denoising loop — one scheduler per frame\nPNDM standard · Euler for Lightning"]
-    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~4–15 s / frame"]
+    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~12.5 s / frame (Phase 2.5)"]
     BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all N frames — CPU"]
     CFA --> STEP["scheduler.step — one per frame"]
     STEP --> NEXT{more steps?}
@@ -309,7 +455,7 @@ flowchart TD
     SAVE --> BH_VAE["TTNN VAE decode on Blackhole\nUNet L1 freed before decode"]
     BH_VAE --> GIF
       </div>
-      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) with the same TTNN UNet — no distilled adapter loaded on Blackhole/sim; step count is still controlled by <code>--steps</code>. CPU Lightning loads ByteDance's distilled adapter (CFG=1.0) and requires 2/4/8 steps. <code>--chain</code> blends a low-pass version of the previous run's latents into seed noise before the loop begins.</p>
+      <p class="arch-caption">The TTNN UNet runs on Blackhole; everything else is CPU. Cross-frame attention is applied to the stacked noise predictions at each step — a Phase 2.5 approximation of the MotionAdapter's temporal transformer. Lightning mode switches to TtEulerScheduler (trailing, linear) with the same TTNN UNet — no distilled adapter loaded on Blackhole/sim; step count is still controlled by <code>--steps</code>. CPU Lightning loads ByteDance's distilled adapter (CFG=1.0) and requires 2/4/8 steps. <code>--chain</code> blends the frame-mean of the previous run's denoised latents (renormalized to unit std) into seed noise before the loop begins.</p>
     </div>
 
     <div id="diag-arch" class="arch-diagram">
@@ -352,7 +498,7 @@ function showDiagram(name, btn) {
       <div class="lightning-col">
         <h4>AnimateDiff-Lightning on Blackhole</h4>
         <p>Lightning mode is available across all three backends, but works differently per mode. On <strong>CPU</strong>: loads <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) — genuine 4-step distillation, CFG=1.0 baked in. On <strong>Blackhole/sim</strong>: switches to <code>TtEulerScheduler</code> (Euler, trailing, linear) with the base SD 1.4 TTNN UNet — no distilled adapter, CFG=7.5 retained, any step count. Enable with:</p>
-        <pre class="lightning-code"># Blackhole hardware — ~4.3 s/frame
+        <pre class="lightning-code"># Blackhole hardware — ~12 s/frame (warm, Phase 2.5)
 python examples/generate.py --lightning
 
 # CPU — ~20 s/frame, no hardware required
@@ -369,7 +515,7 @@ python app.py
       </div>
     </div>
 
-    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~15 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~12 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
     <div class="lightning-gallery">
       <figure class="lgif">
         <img src="assets/study/lightning-mandala.gif" alt="supernova explosion in deep space, purple and orange nebula" loading="lazy">
@@ -480,14 +626,18 @@ python examples/generate.py \
         <p style="margin-top:.75rem;font-size:.75rem;color:var(--muted)">Fast motion (fire, water): 0.2–0.35 · Slow drift (cosmos, aurora): 0.4–0.6</p>
 
         <h4 style="margin-top:1.25rem"><code>--steps</code></h4>
-        <p style="font-size:.8rem;color:var(--muted)">PNDM and Euler (Lightning): 25 is the sweet spot on silicon for both. Minimum ~4 for quick previews. CPU Lightning uses 4 steps (distilled adapter).</p>
+        <p style="font-size:.8rem;color:var(--muted)">PNDM and Euler (Lightning): 25 is the sweet spot on silicon for both. Minimum ~4 for quick previews. With <a href="#lightning">distilled weights</a>, 4–8 steps produce comparable quality at 3–6× the speed.</p>
       </div>
     </div>
   </div>
 </section>
 
 <footer>
-  <a href="https://github.com/tenstorrent/tt-animatediff">tt-animatediff</a> ·
+  <a href="index.html">tt-animatediff</a> ·
+  <a href="gallery.html">Gallery</a> ·
+  <a href="worlds-fair.html">World's Fair</a> ·
+  <a href="mayan-glyphs.html">Maya Glyphs</a> ·
+  <a href="benchmarks.html">Benchmarks</a> ·
   Apache 2.0 ·
   Built on <a href="https://github.com/tenstorrent/tt-metal">TT-Metalium</a> ·
   Original work by <a href="https://arxiv.org/abs/2307.04725">Guo et al. 2023</a>

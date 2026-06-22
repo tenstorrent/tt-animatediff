@@ -1,0 +1,395 @@
+{
+  "glyphs": {
+    "imix": {
+      "name": "Imix",
+      "number": 1,
+      "meaning": "Crocodile / Primordial Water",
+      "prompt": "Ancient Maya stone glyph of Imix, the primordial crocodile and first day of creation, carved deep into jade-green limestone, water rippling across the glyph surface, dark jungle cenote behind, bioluminescent algae drifting, torch smoke curling upward, hyper-detailed Maya iconography, cinematic"
+    },
+    "ik": {
+      "name": "Ik'",
+      "number": 2,
+      "meaning": "Wind / Breath",
+      "prompt": "Ancient Maya stone glyph of Ik', the wind and breath of life, carved in obsidian-black volcanic rock, visible wind lines swirling off the surface, jungle canopy bending in the breeze behind, cacao leaves spinning, twilight blue-violet sky, hyper-detailed Maya iconography, cinematic"
+    },
+    "akbal": {
+      "name": "Ak'b'al",
+      "number": 3,
+      "meaning": "Night / Darkness",
+      "prompt": "Ancient Maya stone glyph of Ak'b'al, the house of darkness and night, carved in deep obsidian stone, Milky Way stars visible through an open temple doorway, stars reflected on the glyph surface, fireflies drifting past, moonlight rim-lighting the carved edges, hyper-detailed Maya iconography, cinematic chiaroscuro"
+    },
+    "kan": {
+      "name": "K'an",
+      "number": 4,
+      "meaning": "Seed / Corn / Abundance",
+      "prompt": "Ancient Maya stone glyph of K'an, the yellow corn seed and abundance, carved in warm golden sandstone, maize cobs woven into the border relief, morning sunlight raking across the carved surface, pollen drifting through the air, terraced cornfields of the Yucatan behind, hyper-detailed Maya iconography, golden hour cinematic"
+    },
+    "chikchan": {
+      "name": "Chikchan",
+      "number": 5,
+      "meaning": "Serpent / Life Force",
+      "prompt": "Ancient Maya stone glyph of Chikchan, the celestial serpent and life force, carved in red volcanic stone, a feathered serpent sinuously winding around the glyph, scales shimmering in firelight, jungle rain beginning, Chichen Itza temple visible in mist behind, hyper-detailed Maya iconography, cinematic"
+    },
+    "kimi": {
+      "name": "Kimi",
+      "number": 6,
+      "meaning": "Death / Transformation",
+      "prompt": "Ancient Maya stone glyph of Kimi, the god of death and transformation, carved in pale white limestone with skull motifs in the border, incense smoke coiling through the underworld darkness, jade death mask leaning against the stone, flickering copal flame, hyper-detailed Maya iconography, dramatic cinematic lighting"
+    },
+    "manik": {
+      "name": "Manik'",
+      "number": 7,
+      "meaning": "Deer / Hand",
+      "prompt": "Ancient Maya stone glyph of Manik', the deer and the hand of offering, carved in warm terracotta stone, a white-tailed deer stepping past in the jungle background, dappled forest light through the canopy above, morning mist rising, hyper-detailed Maya iconography, cinematic forest atmosphere"
+    },
+    "lamat": {
+      "name": "Lamat",
+      "number": 8,
+      "meaning": "Venus / Star / Rabbit",
+      "prompt": "Ancient Maya stone glyph of Lamat, the star of Venus, carved in midnight-blue lapis lazuli inlaid stone, Venus gleaming at dawn behind, star-shaped carvings catching first light, morning dew on the carved relief, Yucatan horizon glowing rose and gold, hyper-detailed Maya iconography, celestial cinematic"
+    },
+    "muluk": {
+      "name": "Muluk",
+      "number": 9,
+      "meaning": "Jade / Water / Rain",
+      "prompt": "Ancient Maya stone glyph of Muluk, jade and the sacred rain, carved in deep jade-green serpentine stone, monsoon rain falling across the carved surface, water streaming down the glyphs channels, jade beads arranged at the base, Chac the rain god mask visible in the temple niche behind, hyper-detailed Maya iconography, tropical storm cinematic"
+    },
+    "ok": {
+      "name": "Ok",
+      "number": 10,
+      "meaning": "Dog / Loyalty / Guide",
+      "prompt": "Ancient Maya stone glyph of Ok, the loyal dog who guides souls through Xibalba, carved in smooth river granite, a tan xolo dog curled beside the stone in firelight, underworld torch flames reflected on the carved surface, cave stalactites above, hyper-detailed Maya iconography, warm cave cinematic"
+    },
+    "chuwen": {
+      "name": "Chuwen",
+      "number": 11,
+      "meaning": "Monkey / Arts / Time Weaver",
+      "prompt": "Ancient Maya stone glyph of Chuwen, the howler monkey god of arts and the weaver of time, carved in warm brown sandstone, a spider monkey hanging playfully from jungle vines above, golden afternoon light, painted Maya codex pages scattered at the base, hyper-detailed Maya iconography, playful cinematic"
+    },
+    "eb": {
+      "name": "Eb'",
+      "number": 12,
+      "meaning": "Grass / Road / Skull",
+      "prompt": "Ancient Maya stone glyph of Eb', the road and the human skull, carved in grey limestone by the edge of the sacbe white road, tall jungle grass swaying at the stone's edges, white road stretching into misty distance, dusk light, fireflies awakening, hyper-detailed Maya iconography, atmospheric road cinematic"
+    },
+    "ben": {
+      "name": "B'en",
+      "number": 13,
+      "meaning": "Reed / Corn Stalk / Staff",
+      "prompt": "Ancient Maya stone glyph of B'en, the growing corn stalk and reed staff, carved in pale cream limestone, tall reed grasses rustling in warm wind around it, bright midday Yucatan sun, corn silk catching the light, ancient milpa cornfield behind, hyper-detailed Maya iconography, harvest cinematic"
+    },
+    "ix": {
+      "name": "Ix",
+      "number": 14,
+      "meaning": "Jaguar / Earth Magic",
+      "prompt": "Ancient Maya stone glyph of Ix, the jaguar shaman and earth magic, carved in spotted black-and-gold stone, a jaguar's eyes gleaming from the jungle darkness behind, moonlight filtered through dense canopy, shaman's mirror of obsidian beside the glyph, hyper-detailed Maya iconography, night jungle cinematic"
+    },
+    "men": {
+      "name": "Men",
+      "number": 15,
+      "meaning": "Eagle / Moon / Wisdom",
+      "prompt": "Ancient Maya stone glyph of Men, the great eagle and lunar wisdom, carved in cool grey basalt on a high temple platform, a harpy eagle soaring past against a full moon, clouds drifting through midnight blue sky, temple pinnacles below stretching into the jungle canopy, hyper-detailed Maya iconography, celestial cinematic"
+    },
+    "kib": {
+      "name": "K'ib'",
+      "number": 16,
+      "meaning": "Wax / Owl / Vulture / Soul",
+      "prompt": "Ancient Maya stone glyph of K'ib', the wax candle and soul-keeper owl, carved in dark wax-smooth obsidian, a great horned owl perched on the stone in candlelight, beeswax candles burning in clay pots below, flickering golden light on carved relief, incense smoke, hyper-detailed Maya iconography, candlelit cinematic"
+    },
+    "kaban": {
+      "name": "Kaban",
+      "number": 17,
+      "meaning": "Earth / Earthquake / Thought",
+      "prompt": "Ancient Maya stone glyph of Kaban, the earth and the quaking ground, carved in rough raw volcanic rock, cracks splitting the earth around the base, molten light rising from below, dust and ash drifting, ancient jungle roots breaking through stone, hyper-detailed Maya iconography, seismic cinematic"
+    },
+    "etznab": {
+      "name": "Etz'nab'",
+      "number": 18,
+      "meaning": "Flint / Mirror / Knife",
+      "prompt": "Ancient Maya stone glyph of Etz'nab', the obsidian sacrificial knife and mirror, carved in razor-sharp black obsidian, the glyph surface reflecting the sky like a dark mirror, lightning flashing in storm clouds above, ritual obsidian blades arranged at the base like an offering, hyper-detailed Maya iconography, electric storm cinematic"
+    },
+    "kawak": {
+      "name": "Kawak",
+      "number": 19,
+      "meaning": "Storm / Rain Cloud / Thunder",
+      "prompt": "Ancient Maya stone glyph of Kawak, the storm and the thunder cloud, carved in dark storm-grey andesite, tropical lightning striking behind the temple, rain cascading over the carved relief, Chac rain serpent coiling in the clouds, dramatic purple-black storm sky, hyper-detailed Maya iconography, epic storm cinematic"
+    },
+    "ajaw": {
+      "name": "Ajaw",
+      "number": 20,
+      "meaning": "Lord / Sun / Completion",
+      "prompt": "Ancient Maya stone glyph of Ajaw, the sun lord and completion of the sacred cycle, carved in warm golden limestone at the summit of a great pyramid, the rising sun directly behind the glyph, golden rays radiating through carved relief channels, full solar corona visible, smoke from copal offering rising into light, hyper-detailed Maya iconography, transcendent sunrise cinematic"
+    }
+  },
+  "tiers": {
+    "Q1": {
+      "label": "Best Quality",
+      "badge": "Q1 \u00b7 Best",
+      "desc": "4-chip Blackhole \u00b7 PNDM 25-step \u00b7 8 frames \u00b7 4 glyphs in parallel",
+      "frames": 8,
+      "steps": 25,
+      "lightning": false,
+      "temporal_alpha": 0.35,
+      "motion_adapter": null,
+      "motion_adapter_skip": [],
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#4fd1c5"
+    },
+    "Q2": {
+      "label": "Fast",
+      "badge": "Q2 \u00b7 Fast",
+      "desc": "4-chip Blackhole \u00b7 Lightning 8-step \u00b7 8 frames \u00b7 4 glyphs in parallel",
+      "frames": 8,
+      "steps": 8,
+      "lightning": true,
+      "temporal_alpha": 0.35,
+      "motion_adapter": null,
+      "motion_adapter_skip": [],
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#f4c471"
+    },
+    "Q3": {
+      "label": "Phase 3 \u00b7 Full MotionAdapter",
+      "badge": "Q3 \u00b7 Phase 3",
+      "desc": "4-chip Blackhole \u00b7 PNDM 25-step \u00b7 8 frames \u00b7 full AnimateDiff \u00b7 ~52 s/frame",
+      "frames": 8,
+      "steps": 25,
+      "lightning": false,
+      "temporal_alpha": 1.0,
+      "motion_adapter": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "motion_adapter_skip": [],
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#ec96b8"
+    },
+    "Q4": {
+      "label": "Phase 3 \u00b7 Skip up1+up2",
+      "badge": "Q4 \u00b7 Skip up1+up2",
+      "desc": "4-chip Blackhole \u00b7 PNDM 25-step \u00b7 8 frames \u00b7 5 injection points \u00b7 ~7.7 s/frame",
+      "frames": 8,
+      "steps": 25,
+      "lightning": false,
+      "temporal_alpha": 1.0,
+      "motion_adapter": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "motion_adapter_skip": [
+        "up1",
+        "up2"
+      ],
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#27ae60"
+    }
+  },
+  "results": {
+    "imix-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/imix.gif",
+      "elapsed": 189.68340945243835
+    },
+    "ik-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/ik.gif",
+      "elapsed": 160.3805227279663
+    },
+    "akbal-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/akbal.gif",
+      "elapsed": 131.18062782287598
+    },
+    "kan-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/kan.gif",
+      "elapsed": 102.70901322364807
+    },
+    "chikchan-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/chikchan.gif",
+      "elapsed": 189.92149925231934
+    },
+    "kimi-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/kimi.gif",
+      "elapsed": 161.22742700576782
+    },
+    "manik-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/manik.gif",
+      "elapsed": 132.84510016441345
+    },
+    "lamat-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/lamat.gif",
+      "elapsed": 104.32227206230164
+    },
+    "muluk-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/muluk.gif",
+      "elapsed": 190.0290231704712
+    },
+    "ok-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/ok.gif",
+      "elapsed": 161.54946851730347
+    },
+    "chuwen-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/chuwen.gif",
+      "elapsed": 132.7424693107605
+    },
+    "eb-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/eb.gif",
+      "elapsed": 104.4371109008789
+    },
+    "ben-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/ben.gif",
+      "elapsed": 190.03108763694763
+    },
+    "ix-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/ix.gif",
+      "elapsed": 161.2385869026184
+    },
+    "men-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/men.gif",
+      "elapsed": 132.7377245426178
+    },
+    "kib-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/kib.gif",
+      "elapsed": 104.02733945846558
+    },
+    "kaban-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/kaban.gif",
+      "elapsed": 189.91908526420593
+    },
+    "etznab-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/etznab.gif",
+      "elapsed": 161.54556345939636
+    },
+    "kawak-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/kawak.gif",
+      "elapsed": 132.44628477096558
+    },
+    "ajaw-Q2": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q2/ajaw.gif",
+      "elapsed": 103.23179745674133
+    },
+    "ajaw-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/ajaw.gif",
+      "elapsed": null
+    },
+    "akbal-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/akbal.gif",
+      "elapsed": null
+    },
+    "ben-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/ben.gif",
+      "elapsed": null
+    },
+    "chikchan-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/chikchan.gif",
+      "elapsed": null
+    },
+    "chuwen-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/chuwen.gif",
+      "elapsed": null
+    },
+    "eb-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/eb.gif",
+      "elapsed": null
+    },
+    "etznab-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/etznab.gif",
+      "elapsed": null
+    },
+    "ik-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/ik.gif",
+      "elapsed": null
+    },
+    "imix-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/imix.gif",
+      "elapsed": null
+    },
+    "ix-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/ix.gif",
+      "elapsed": null
+    },
+    "kaban-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/kaban.gif",
+      "elapsed": null
+    },
+    "kan-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/kan.gif",
+      "elapsed": null
+    },
+    "kawak-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/kawak.gif",
+      "elapsed": null
+    },
+    "kib-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/kib.gif",
+      "elapsed": null
+    },
+    "kimi-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/kimi.gif",
+      "elapsed": null
+    },
+    "lamat-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/lamat.gif",
+      "elapsed": null
+    },
+    "manik-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/manik.gif",
+      "elapsed": null
+    },
+    "men-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/men.gif",
+      "elapsed": null
+    },
+    "muluk-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/muluk.gif",
+      "elapsed": null
+    },
+    "ok-Q1": {
+      "path": "docs/assets/mayan-glyphs/Q1/ok.gif",
+      "elapsed": null
+    },
+    "imix-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/imix.gif",
+      "elapsed": 134.7046115398407
+    },
+    "chikchan-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/chikchan.gif",
+      "elapsed": 178.3103153705597
+    },
+    "ix-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/ix.gif",
+      "elapsed": 222.41188311576843
+    },
+    "ajaw-Q4": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q4/ajaw.gif",
+      "elapsed": 266.72864174842834
+    },
+    "imix-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/imix.gif",
+      "elapsed": 436.7528164386749
+    },
+    "chikchan-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/chikchan.gif",
+      "elapsed": 846.3145174980164
+    },
+    "ix-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/ix.gif",
+      "elapsed": 1240.5543966293335
+    },
+    "ajaw-Q3": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/mayan-glyphs/Q3/ajaw.gif",
+      "elapsed": 1632.7011015415192
+    }
+  }
+}

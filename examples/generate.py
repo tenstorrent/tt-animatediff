@@ -125,6 +125,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Lightning distillation step count: 2, 4, or 8 (default 4)",
     )
     parser.add_argument(
+        "--lcm-unet",
+        default=None,
+        dest="lcm_unet",
+        metavar="PATH",
+        help="Load our own LCM-distilled UNet weights (.pt from scripts/distill_lcm.py). "
+             "Works with --mode cpu. Sets --steps to 4 or 8 automatically if not specified.",
+    )
+    parser.add_argument(
+        "--lcm-adapter",
+        default=None,
+        dest="lcm_adapter",
+        metavar="PATH",
+        help="Load our own LCM-distilled MotionAdapter weights (.pt from scripts/distill_motion_adapter.py). "
+             "Use together with --lcm-unet for full LCM inference.",
+    )
+    parser.add_argument(
         "--chain-from",
         default=None,
         dest="chain_from",
@@ -146,6 +162,55 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="chain_alpha",
         help="Blend weight for --chain-from latents (0=ignore, 1=replace; default 0.6).",
     )
+    parser.add_argument(
+        "--motion-adapter",
+        metavar="PATH",
+        nargs="?",
+        const="guoyww/animatediff-motion-adapter-v1-5-2",
+        default=None,
+        dest="motion_adapter",
+        help=(
+            "Load MotionAdapter weights for Phase 3 temporal attention. "
+            "PATH defaults to HuggingFace cache for guoyww/animatediff-motion-adapter-v1-5-2. "
+            "Only valid with --mode blackhole."
+        ),
+    )
+    parser.add_argument(
+        "--motion-adapter-alpha",
+        type=float,
+        default=1.0,
+        dest="motion_adapter_alpha",
+        help=(
+            "Injection blend weight for MotionAdapter temporal attention (0.0–1.0). "
+            "0.0 = bypass (no-op, useful for debugging forward_unet_staged in isolation). "
+            "1.0 = full injection (default). Only used with --motion-adapter."
+        ),
+    )
+    parser.add_argument(
+        "--motion-adapter-skip",
+        nargs="+",
+        default=[],
+        dest="motion_adapter_skip",
+        metavar="KEY",
+        help=(
+            "Injection-point keys to skip (space-separated). "
+            "Valid keys: down0 down1 down2 mid up0 up1 up2. "
+            "Skipping up1/up2 cuts ~85%% of CPU overhead (large spatial dims) "
+            "with minimal quality impact. Example: --motion-adapter-skip up1 up2"
+        ),
+    )
+    parser.add_argument(
+        "--device-id",
+        type=int,
+        default=None,
+        dest="device_id",
+        metavar="ID",
+        help=(
+            "Blackhole chip index to use (0-based). Defaults to all available chips "
+            "(typically 4 on a quad-P300c system). Use to pin a generation run to "
+            "a specific chip for parallel multi-process batch jobs."
+        ),
+    )
     return parser
 
 args = _build_parser().parse_args()
@@ -161,6 +226,10 @@ if args.steps is None:
         # checkpoint (2, 4, or 8). Blackhole/sim Lightning uses base TTNN UNet;
         # 25 steps is correct there (no distillation constraint).
         args.steps = args.lightning_steps
+    elif args.lcm_unet:
+        # LCM distilled UNet — default to 8 steps (balanced quality/speed).
+        # Pass --steps 4 explicitly for maximum speed.
+        args.steps = 8
     else:
         args.steps = 25
 if args.output is None:
@@ -233,8 +302,16 @@ def run_cpu():
     from animatediff_ttnn.pipeline import (
         create_animatediff_pipeline, create_lightning_pipeline, generate, export_gif,
     )
+    import torch as _torch
 
-    if args.lightning:
+    if args.lcm_unet:
+        lcm_tag = f"LCM-{args.steps}step"
+        if args.lcm_adapter:
+            label = f"AnimateDiff LCM — {lcm_tag} UNet + MotionAdapter (our distilled weights)"
+        else:
+            label = f"AnimateDiff LCM — {lcm_tag} UNet only (our distilled weights)"
+        guidance = 1.0
+    elif args.lightning:
         label = f"AnimateDiff-Lightning ({args.lightning_steps}-step distilled, ~6× faster) — CPU"
         # Real distilled adapter: guidance is baked in, CFG=1.0 required
         guidance = 1.0
@@ -249,7 +326,22 @@ def run_cpu():
 
     print("Loading pipeline (first run downloads weights)...")
     t0 = time.time()
-    if args.lightning:
+    if args.lcm_unet:
+        pipe = create_animatediff_pipeline()
+        unet_state = _torch.load(args.lcm_unet, map_location="cpu", weights_only=True)
+        pipe.unet.load_state_dict(unet_state, strict=False)
+        print(f"  Loaded LCM UNet weights from {args.lcm_unet}")
+        if args.lcm_adapter:
+            adapter_state = _torch.load(args.lcm_adapter, map_location="cpu", weights_only=True)
+            pipe.motion_adapter.load_state_dict(adapter_state, strict=False)
+            print(f"  Loaded LCM MotionAdapter weights from {args.lcm_adapter}")
+        from diffusers import EulerDiscreteScheduler
+        pipe.scheduler = EulerDiscreteScheduler.from_config(
+            pipe.scheduler.config,
+            timestep_spacing="trailing",
+            beta_schedule="linear",
+        )
+    elif args.lightning:
         pipe = create_lightning_pipeline(step=args.lightning_steps)
     else:
         pipe = create_animatediff_pipeline()
@@ -296,9 +388,12 @@ def _open_device():
             l1_small_size=SD_L1_SMALL_SIZE,
         )
     else:
-        # SD 1.4 TTNN UNet (Wormhole-targeted) uses ttnn.to_torch() without a
-        # mesh_composer, which crashes if tensor is sharded across >1 chip.
-        return setup_blackhole(device_ids=[0])
+        # TTNN SD 1.4 UNet (wormhole-targeted) calls ttnn.to_torch() internally
+        # without a mesh_composer — crashes if tensor is sharded across >1 chip.
+        # Multi-chip throughput is achieved by running separate processes with
+        # --device-id 0/1/2/3 in parallel (one process per chip).
+        chip = [args.device_id] if args.device_id is not None else [0]
+        return setup_blackhole(device_ids=chip)
 
 
 def run_ttnn():
@@ -344,23 +439,59 @@ def run_ttnn():
 
         print(f"Generating {args.frames} frame(s)...")
         t1 = time.time()
-        frames = generate_frames_temporal(
-            device=device,
-            ttnn_model=ttnn_model,
-            ttnn_vae=ttnn_vae,
-            config=config,
-            torch_time_proj=torch_time_proj,
-            text_embeddings=text_embeddings,
-            num_frames=args.frames,
-            num_steps=args.steps,
-            guidance_scale=guidance,
-            seed=args.seed,
-            temporal_alpha=args.temporal_alpha,
-            use_lightning=args.lightning,
-            chain_from=args.chain_from,
-            chain_save=args.chain_save,
-            chain_alpha=args.chain_alpha,
-        )
+        if args.motion_adapter and args.mode == "blackhole":
+            # Validate --motion-adapter-skip keys early so user gets a clear error.
+            _VALID_SKIP_KEYS = {"down0", "down1", "down2", "mid", "up0", "up1", "up2"}
+            bad_keys = set(args.motion_adapter_skip) - _VALID_SKIP_KEYS
+            if bad_keys:
+                parser.error(
+                    f"--motion-adapter-skip: unknown keys {sorted(bad_keys)}. "
+                    f"Valid keys: {sorted(_VALID_SKIP_KEYS)}"
+                )
+            # Phase 3: MotionAdapter-injected temporal attention
+            print(f"  [motion] Loading MotionAdapter from {args.motion_adapter} ...")
+            from animatediff_ttnn.motion_weights import load_motion_modules
+            temporal_kernels = load_motion_modules(model_id=args.motion_adapter)
+            print(f"  [motion] Loaded {sum(len(v) for v in temporal_kernels.values())} modules")
+            from animatediff_ttnn.temporal_attention import generate_frames_motion
+            frames = generate_frames_motion(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                temporal_kernels=temporal_kernels,
+                num_frames=args.frames,
+                num_steps=args.steps,
+                guidance_scale=guidance,
+                seed=args.seed,
+                use_lightning=args.lightning,
+                chain_from=args.chain_from,
+                chain_save=args.chain_save,
+                chain_alpha=args.chain_alpha,
+                injection_alpha=args.motion_adapter_alpha,
+                skip_keys=set(args.motion_adapter_skip),
+            )
+        else:
+            # Default path: cross-frame temporal attention (no MotionAdapter)
+            frames = generate_frames_temporal(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                num_frames=args.frames,
+                num_steps=args.steps,
+                guidance_scale=guidance,
+                seed=args.seed,
+                temporal_alpha=args.temporal_alpha,
+                use_lightning=args.lightning,
+                chain_from=args.chain_from,
+                chain_save=args.chain_save,
+                chain_alpha=args.chain_alpha,
+            )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
     finally:

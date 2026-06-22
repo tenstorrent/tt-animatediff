@@ -1,0 +1,151 @@
+{
+  "prompts": {
+    "paris-1889": {
+      "title": "Paris 1889 \u2014 Eiffel Tower Opening",
+      "year": 1889,
+      "prompt": "The Eiffel Tower at the 1889 Paris Exposition Universelle, iron lattice glowing under gas lamps at dusk, crowds of visitors in Victorian dress, the Seine reflecting amber light, Belle \u00c9poque grandeur, painterly impressionist"
+    },
+    "chicago-1893": {
+      "title": "Chicago 1893 \u2014 White City",
+      "year": 1893,
+      "prompt": "The White City at the 1893 Chicago World's Columbian Exposition, neoclassical white marble palaces reflected in the Grand Basin, electric lights illuminating the Court of Honor at night for the first time, crowds in Gilded Age attire, moonlit clouds, majestic and ethereal"
+    },
+    "nyc-1939": {
+      "title": "New York 1939 \u2014 World of Tomorrow",
+      "year": 1939,
+      "prompt": "The 1939 New York World's Fair at night, the Trylon and Perisphere glowing white against a violet sky, art deco streamlined pavilions, fountains lit in vivid color, visitors in 1930s dress gazing at the future, retro-futurist wonder, cinematic"
+    },
+    "brussels-1958": {
+      "title": "Brussels 1958 \u2014 Atomium",
+      "year": 1958,
+      "prompt": "The Atomium at the 1958 Brussels World Expo, nine steel spheres magnifying an iron crystal atom 165 billion times, golden evening light, Cold War era optimism, swooping modernist pavilions in the background, atomic age, silver and chrome"
+    },
+    "nyc-1964": {
+      "title": "New York 1964 \u2014 Unisphere",
+      "year": 1964,
+      "prompt": "The Unisphere at the 1964 New York World's Fair, massive stainless steel globe rising from Flushing Meadows, three orbital rings glinting in summer sunlight, IBM and Ford pavilions in background, mid-century modern optimism, Space Age, cinematic wide shot, warm afternoon light"
+    },
+    "osaka-1970": {
+      "title": "Osaka 1970 \u2014 Tower of the Sun",
+      "year": 1970,
+      "prompt": "The Tower of the Sun by Taro Okamoto at Expo '70 Osaka, massive expressionist sculpture with golden face and white face, festival plaza teeming with visitors, futuristic space-frame roof structure, Japan's economic miracle, vivid colors, 1970s psychedelic energy, cinematic"
+    },
+    "2064-lunar-basin": {
+      "title": "2064 \u2014 Lunar World's Fair",
+      "year": 2064,
+      "prompt": "The 2064 World's Fair on the Moon, glass dome pavilions in the Sea of Tranquility, Earth rising on the horizon, bioluminescent architecture glowing against the lunar regolith, delegations from forty nations and three orbital habitats, low gravity fountains arcing impossibly high, retro-futurist meets deep future, awe-inspiring"
+    },
+    "2064-deepwater": {
+      "title": "2064 \u2014 Pacific Deepwater Expo",
+      "year": 2064,
+      "prompt": "The 2064 Pacific Deepwater World Expo at 500 meters depth, coral-lattice arcologies lit by bioluminescent algae, submersibles docking at crystal pavilions, whale song translated into light, kelp forests framing the grand promenade, ethereal blue-green dreamscape, wonder and reverence for the ocean"
+    },
+    "2064-orbital": {
+      "title": "2064 \u2014 Orbital Ring World's Fair",
+      "year": 2064,
+      "prompt": "The 2064 World's Fair aboard the Orbital Ring station, a gleaming torus circling Earth at 36,000 km, nations of the world building spinning pavilions along the inner hull, Earth a blue marble through vast observation windows, zero-gravity dancers in the atrium, humanity's greatest achievement on display, cinematic 4K"
+    }
+  },
+  "tiers": {
+    "Q1": {
+      "label": "Best Quality",
+      "badge": "Q1 \u00b7 Best",
+      "desc": "4-chip Blackhole \u00b7 PNDM 25-step \u00b7 16 frames \u00b7 MotionAdapter Phase 3",
+      "frames": 16,
+      "steps": 25,
+      "lightning": false,
+      "motion_adapter": true,
+      "temporal_alpha": 0.35,
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#4fd1c5"
+    },
+    "Q2": {
+      "label": "Fast + Quality",
+      "badge": "Q2 \u00b7 Fast",
+      "desc": "4-chip Blackhole \u00b7 Lightning 8-step \u00b7 8 frames \u00b7 MotionAdapter Phase 3",
+      "frames": 8,
+      "steps": 8,
+      "lightning": true,
+      "motion_adapter": true,
+      "temporal_alpha": 0.35,
+      "chips": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "color": "#f4c471"
+    },
+    "Q3": {
+      "label": "Single Chip",
+      "badge": "Q3 \u00b7 1 Chip",
+      "desc": "1-chip Blackhole \u00b7 PNDM 25-step \u00b7 8 frames \u00b7 cross-frame \u03b1=0.35",
+      "frames": 8,
+      "steps": 25,
+      "lightning": false,
+      "motion_adapter": false,
+      "temporal_alpha": 0.35,
+      "chips": [
+        0
+      ],
+      "color": "#ec96b8"
+    }
+  },
+  "chain": {
+    "unisphere-1964": {
+      "era": "1964 \u2014 Opening Day",
+      "prompt": "The Unisphere at the 1964 New York World's Fair, gleaming stainless steel globe in Flushing Meadows, opening day crowds, summer sunshine, Space Age optimism, wide shot, cinematic"
+    },
+    "unisphere-1980": {
+      "era": "1980 \u2014 Urban Decay",
+      "prompt": "The Unisphere in Flushing Meadows 1980, a little weathered but still magnificent, autumn leaves swirling at its base, young skateboarders circling the reflecting pool, New York City skyline behind, overcast sky, cinematic melancholy"
+    },
+    "unisphere-2000": {
+      "era": "2000 \u2014 Millennium",
+      "prompt": "The Unisphere at midnight December 31 1999, fireworks exploding around the globe, millennium crowds filling Flushing Meadows, reflection rippling in the pool, city lights, Y2K celebration, triumphant and electric"
+    },
+    "unisphere-2026": {
+      "era": "2026 \u2014 America 250",
+      "prompt": "The Unisphere in 2026 during America's 250th anniversary, freshly restored and gleaming, drone light show forming the shape of the Declaration of Independence above it, diverse crowds celebrating, summer evening, golden hour light"
+    },
+    "unisphere-2050": {
+      "era": "2050 \u2014 Climate Restored",
+      "prompt": "The Unisphere in 2050, surrounded by restored wetland parkland, solar ribbon trees arching overhead, autonomous quiet transit gliding past, children from all nations playing at its base, the air crystalline clear, hopeful solarpunk future, warm golden light"
+    },
+    "unisphere-2064": {
+      "era": "2064 \u2014 World's Fair Centennial",
+      "prompt": "The Unisphere in 2064, the centennial of the New York World's Fair, holographic rings added to the original three orbital bands, visitors from Moon colonies attending the centennial ceremony, Earth and Moon both visible in the sky behind it, one hundred years of human progress, cinematic grandeur"
+    }
+  },
+  "results": {
+    "unisphere-1964": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-1964.gif",
+      "elapsed": 833.407913684845
+    },
+    "unisphere-1980": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-1980.gif",
+      "elapsed": 793.3381705284119
+    },
+    "unisphere-2000": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2000.gif",
+      "elapsed": 788.8858196735382
+    },
+    "unisphere-2026": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2026.gif",
+      "elapsed": 787.4018428325653
+    },
+    "unisphere-2050": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2050.gif",
+      "elapsed": 788.4036355018616
+    },
+    "unisphere-2064": {
+      "path": "/home/ttuser/code/tt-animatediff/docs/assets/worlds-fair/chain/unisphere-2064.gif",
+      "elapsed": 846.5471186637878
+    }
+  }
+}

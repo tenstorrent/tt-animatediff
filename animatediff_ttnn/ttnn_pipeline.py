@@ -25,15 +25,20 @@ import torch
 from PIL import Image
 
 
-TT_METAL_PATH = Path.home() / "tt-metal"
+# tt-metal checkout location. Defaults to ~/tt-metal but honours the standard
+# TT_METAL_HOME env var so the runtime works against a checkout elsewhere (e.g.
+# a shared dev tree) without editing source.
+TT_METAL_PATH = Path(os.environ.get("TT_METAL_HOME", str(Path.home() / "tt-metal")))
 
 
 def _ensure_tt_metal_path() -> None:
-    """Add ~/tt-metal to sys.path so SD demo module imports work."""
+    """Add the tt-metal checkout to sys.path so SD demo module imports work."""
     if not TT_METAL_PATH.exists():
         raise RuntimeError(
-            f"~/tt-metal not found. Activate the tt-metal environment first:\n"
-            f"  cd ~/tt-metal && source python_env/bin/activate"
+            f"tt-metal not found at {TT_METAL_PATH}. Set TT_METAL_HOME to your "
+            f"checkout, or place it at ~/tt-metal, then activate the env:\n"
+            f"  export TT_METAL_HOME=/path/to/tt-metal\n"
+            f"  source $TT_METAL_HOME/python_env/bin/activate"
         )
     tt_metal_str = str(TT_METAL_PATH)
     if tt_metal_str not in sys.path:
@@ -135,6 +140,101 @@ def from_device(tensor, device, batch: int = 1):
     if isinstance(device, ttnn.MeshDevice):
         return ttnn.to_torch(tensor, mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))[:batch]
     return ttnn.to_torch(tensor)
+
+
+def plan_frame_sharding(num_frames: int, num_chips: int) -> tuple[bool, int]:
+    """Decide how to distribute frames across chips for the UNet denoising loop.
+
+    The compiled TTNN UNet expects exactly ``batch_size=2`` (CFG uncond+cond) per
+    chip, so each sharded pass places exactly one CFG-doubled frame on every chip.
+    To handle ``num_frames > num_chips`` we run ceil(num_frames / num_chips) passes,
+    each sharding a chunk of ``num_chips`` frames — rather than collapsing to the
+    fully serial path (the previous behaviour, which only sharded when
+    num_chips == num_frames and silently lost the speedup for 8/12/16 frames).
+
+    Args:
+        num_frames: Total frames to generate.
+        num_chips: Number of Blackhole chips in the mesh.
+
+    Returns:
+        (use_sharding, chunk_size):
+          - (False, 1) for a single chip — caller uses the serial per-frame path.
+          - (True, num_chips) for a mesh — caller shards in chunks of num_chips
+            frames (one CFG-doubled frame per chip per pass).
+
+    Raises:
+        ValueError: if num_chips > 1 and num_frames is not a multiple of num_chips.
+            A partial final chunk would place fewer than num_chips frames on the
+            mesh, producing a mis-sized shard the batch=2 kernel rejects with a
+            cryptic dispatch error. Fail early with valid counts instead.
+    """
+    if num_chips <= 1:
+        return False, 1
+    if num_frames % num_chips != 0:
+        raise ValueError(
+            f"num_frames ({num_frames}) must be divisible by num_chips ({num_chips}). "
+            f"Valid counts for {num_chips} chips: {[num_chips * k for k in range(1, 9)]}"
+        )
+    return True, num_chips
+
+
+def shard_frames_to_device(frame_tensors: list, device, dtype=None, layout=None):
+    """Send N same-shaped CPU tensors to device via frame-sharding.
+
+    Stacks N tensors along dim=0 into one tensor and sends via
+    ShardTensorToMesh(dim=0) so chip K receives rows [K*S : K*S+S] where
+    S = len(frame_tensors) // num_chips.
+
+    Common call patterns:
+      - UNet denoising (CFG-doubled): N [2, 4, lh, lw] tensors → [2N, 4, lh, lw].
+        Each chip gets [2, 4, lh, lw] matching the compiled batch_size=2 kernel.
+      - VAE decode (not CFG-doubled): N [1, lh, lw, 4] NHWC tensors → [N, lh, lw, 4].
+
+    Works correctly with a single-chip MeshDevice (shard == full tensor).
+
+    Args:
+        frame_tensors: List of N CPU tensors, all the same shape.
+        device: TTNN MeshDevice from setup_blackhole().
+        dtype: Optional TTNN dtype (e.g. ttnn.bfloat16).
+        layout: Optional TTNN layout (e.g. ttnn.TILE_LAYOUT).
+
+    Returns:
+        Single TTNN tensor sharded across chips, logical shape [N*frame_shape...].
+    """
+    import ttnn
+    stacked = torch.cat(frame_tensors, dim=0)
+    kwargs = {"mesh_mapper": ttnn.ShardTensorToMesh(device, dim=0)}
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    if layout is not None:
+        kwargs["layout"] = layout
+    return ttnn.from_torch(stacked, device=device, **kwargs)
+
+
+def gather_frames_from_device(tensor, device, num_frames: int, batch_per_frame: int = 2) -> list:
+    """Retrieve N frame tensors from a sharded device tensor.
+
+    Pulls the full [batch_per_frame*N, ...] tensor to CPU via ConcatMeshToTensor(dim=0)
+    and splits into a list of N tensors of shape [batch_per_frame, ...].
+
+    Args:
+        tensor: TTNN tensor sharded across chips.
+        device: TTNN MeshDevice from setup_blackhole().
+        num_frames: N, the number of frames to split into.
+        batch_per_frame: Batch size per frame. 2 for CFG-doubled UNet output tensors
+                         (uncond + cond stacked). 1 for VAE decode tensors (single
+                         latent per frame, not CFG-doubled). Default 2.
+
+    Note: For UNet sharding (Tasks 1-3) the stride of 2 matches the CFG-doubling of
+          [2, 4, lh, lw] per frame. For VAE decode (Task 4) use batch_per_frame=1.
+
+    Returns:
+        List of N CPU tensors, each [batch_per_frame, ...].
+    """
+    import ttnn
+    full = ttnn.to_torch(tensor, mesh_composer=ttnn.ConcatMeshToTensor(device, dim=0))
+    B = batch_per_frame
+    return [full[B * i : B * i + B] for i in range(num_frames)]
 
 
 def build_tlist(ttnn_scheduler, torch_time_proj, device, latent_h: int = 64, latent_w: int = 64) -> list:

@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmarks — tt-animatediff</title>
+<style>
+  :root {
+    --teal:    #4FD1C5;
+    --teal2:   #81E6D9;
+    --pink:    #EC96B8;
+    --gold:    #F4C471;
+    --orange:  #E6B55E;
+    --green:   #27AE60;
+    --red:     #FF6B6B;
+    --bg0:     #0F2A35;
+    --bg1:     #1A3C47;
+    --bg2:     #2D3142;
+    --text:    #E8F0F2;
+    --text2:   #B0C4DE;
+    --muted:   #607D8B;
+    --border:  rgba(79,209,197,.18);
+    --radius:  8px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg0);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  nav {
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    padding: .75rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  nav a { color: var(--teal); text-decoration: none; font-size: .85rem; }
+  nav a:hover { color: var(--teal2); }
+  nav .sep { color: var(--muted); }
+  nav .brand { font-weight: 700; font-size: .95rem; color: var(--text); }
+
+  .hero {
+    background: linear-gradient(160deg, var(--bg1) 0%, var(--bg0) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 3.5rem 2rem 2.5rem;
+    text-align: center;
+  }
+  .hero h1 { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 800; color: var(--text); margin-bottom: .6rem; }
+  .hero h1 span { color: var(--teal); }
+  .hero p { font-size: .95rem; color: var(--text2); max-width: 680px; margin: 0 auto .5rem; line-height: 1.65; }
+  .hero .sub { font-size: .8rem; color: var(--muted); margin-top: .4rem; }
+
+  /* ── content layout ── */
+  .page { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem 4rem; }
+
+  .section { margin-top: 3.5rem; }
+  .section-label {
+    display: inline-block;
+    font-size: .65rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    border: 1px solid var(--teal);
+    border-radius: 3px;
+    padding: .15rem .5rem;
+    margin-bottom: .75rem;
+  }
+  .section h2 { font-size: clamp(1.15rem, 2.5vw, 1.55rem); font-weight: 800; margin-bottom: .5rem; }
+  .section > p { font-size: .88rem; color: var(--text2); line-height: 1.7; max-width: 760px; margin-bottom: 1.5rem; }
+
+  /* ── insight callout ── */
+  .insight {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--teal);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+    font-size: .85rem;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+  .insight strong { color: var(--teal); }
+
+  /* ── bar chart ── */
+  .bar-chart { display: flex; flex-direction: column; gap: .7rem; margin: 1.5rem 0; }
+  .bar-row { display: grid; grid-template-columns: 220px 1fr auto; align-items: center; gap: .75rem; }
+  .bar-label { font-size: .78rem; color: var(--text2); text-align: right; line-height: 1.3; }
+  .bar-label strong { color: var(--text); display: block; }
+  .bar-label small { color: var(--muted); font-size: .68rem; }
+  .bar-track { background: var(--bg2); border-radius: 4px; height: 28px; position: relative; overflow: hidden; }
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding-left: .6rem;
+    font-size: .7rem;
+    font-weight: 700;
+    color: var(--bg0);
+    transition: width .6s ease;
+    min-width: 2px;
+  }
+  .bar-value { font-size: .8rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+
+  .bar-fill.phase3  { background: var(--pink); }
+  .bar-fill.phase25 { background: var(--teal); }
+  .bar-fill.light   { background: var(--gold); }
+  .bar-fill.p3skip  { background: var(--green); }
+
+  /* ── speedup badges ── */
+  .speedup-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .speedup-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    text-align: center;
+  }
+  .speedup-num {
+    font-size: 2.8rem;
+    font-weight: 900;
+    line-height: 1;
+    margin-bottom: .3rem;
+  }
+  .speedup-label { font-size: .72rem; color: var(--text2); line-height: 1.4; }
+  .speedup-sub { font-size: .65rem; color: var(--muted); margin-top: .3rem; }
+
+  /* ── data table ── */
+  .bench-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+    margin: 1.5rem 0;
+  }
+  .bench-table th {
+    text-align: left;
+    padding: .6rem .9rem;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--teal);
+    border-bottom: 1px solid var(--border);
+  }
+  .bench-table td {
+    padding: .65rem .9rem;
+    border-bottom: 1px solid rgba(79,209,197,.08);
+    color: var(--text2);
+    vertical-align: middle;
+  }
+  .bench-table tr:last-child td { border-bottom: none; }
+  .bench-table .hl { color: var(--teal); font-weight: 700; }
+  .bench-table .hl-gold { color: var(--gold); font-weight: 700; }
+  .bench-table .hl-pink { color: var(--pink); font-weight: 700; }
+  .tag {
+    display: inline-block;
+    font-size: .62rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: .15rem .45rem;
+    border-radius: 3px;
+  }
+  .tag-p3   { background: rgba(236,150,184,.18); color: var(--pink); border: 1px solid rgba(236,150,184,.35); }
+  .tag-p25  { background: rgba(79,209,197,.15); color: var(--teal); border: 1px solid rgba(79,209,197,.3); }
+  .tag-lit  { background: rgba(244,196,113,.15); color: var(--gold); border: 1px solid rgba(244,196,113,.3); }
+  .tag-skip { background: rgba(39,174,96,.15); color: var(--green); border: 1px solid rgba(39,174,96,.3); }
+
+  /* ── diagram tabs ── */
+  .diag-tabs { display: flex; gap: .4rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .diag-tab {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: .4rem .9rem;
+    font-size: .75rem;
+    color: var(--text2);
+    cursor: pointer;
+  }
+  .diag-tab.active { background: rgba(79,209,197,.15); border-color: var(--teal); color: var(--teal); }
+  .diag-pane { display: none; }
+  .diag-pane.active { display: block; }
+
+  .arch-diagram {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    overflow-x: auto;
+  }
+  .arch-diagram .mermaid { max-width: 100%; }
+  .arch-caption {
+    margin-top: .9rem;
+    font-size: .77rem;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+  .arch-caption code {
+    font-size: .72rem;
+    background: var(--bg2);
+    padding: .1rem .35rem;
+    border-radius: 3px;
+    color: var(--teal2);
+  }
+
+  /* ── sample GIF comparison row ── */
+  .compare-section { margin-top: 1.5rem; }
+  .compare-label {
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: .6rem;
+  }
+  .compare-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .75rem;
+    margin-bottom: 1.25rem;
+  }
+  .compare-cell { position: relative; }
+  .compare-cell img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .compare-badge {
+    position: absolute;
+    top: .5rem;
+    left: .5rem;
+  }
+  .compare-time {
+    margin-top: .4rem;
+    font-size: .72rem;
+    color: var(--text2);
+    text-align: center;
+  }
+  .compare-time strong { color: var(--text); }
+
+  /* ── observation cards ── */
+  .obs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .obs-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.25rem;
+  }
+  .obs-card h4 { font-size: .82rem; color: var(--teal); margin-bottom: .45rem; }
+  .obs-card p { font-size: .77rem; color: var(--text2); line-height: 1.6; }
+  .obs-card code { font-size: .7rem; background: var(--bg2); padding: .1rem .3rem; border-radius: 3px; color: var(--teal2); }
+
+  /* ── footnotes ── */
+  .footnotes {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+  .footnotes p {
+    font-size: .72rem;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-bottom: .4rem;
+  }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem;
+    text-align: center;
+    font-size: .78rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+  footer a { color: var(--teal); text-decoration: none; }
+  footer a:hover { color: var(--teal2); }
+
+  @media (max-width: 700px) {
+    .bar-row { grid-template-columns: 1fr; gap: .3rem; }
+    .bar-label { text-align: left; }
+    .compare-row { grid-template-columns: 1fr 1fr; }
+    .compare-row .compare-cell:last-child { display: none; }
+    .speedup-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+  <!-- PostHog analytics -->
+  <script>
+    (function(t,e){var o,n,p,r;if(!e.__SV){window.posthog=e;e._i=[];e.init=function(i,s,a){function g(t,e){var o=e.split(".");if(o.length===2){t=t[o[0]];e=o[1];}t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)));};}p=t.createElement("script");p.type="text/javascript";p.crossOrigin="anonymous";p.async=true;p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js";r=t.getElementsByTagName("script")[0];r.parentNode.insertBefore(p,r);var u=e;if(a!==undefined){u=e[a]=[];}else{a="posthog";}u.people=u.people||[];u.toString=function(t){var e="posthog";if(a!=="posthog"){e+="."+a;}if(!t){e+=" (stub)";}return e;};u.people.toString=function(){return u.toString(1)+".people (stub)";};var methods=("init capture identify setPersonProperties reset get_distinct_id getGroups get_session_id alias set_config startSessionRecording stopSessionRecording opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug").split(" ");for(n=0;n<methods.length;n++){g(u,methods[n]);}e._i.push([i,s,a]);};e.__SV=1;}})(document,window.posthog||[]);
+    posthog.init("phc_9LMRmHrCFvQNvDkPDjYBP5dZ6WchZ5bcM6T4Qj6tb0U", {
+      api_host: "https://us.i.posthog.com",
+      defaults: "2025-05-24",
+      person_profiles: "identified_only"
+    });
+  </script>
+</head>
+<body>
+
+<nav>
+  <span class="brand">tt-animatediff</span>
+  <span class="sep">·</span>
+  <a href="index.html">Chip Study</a>
+  <span class="sep">·</span>
+  <a href="gallery.html">Gallery</a>
+  <span class="sep">·</span>
+  <a href="worlds-fair.html">World's Fair</a>
+  <span class="sep">·</span>
+  <a href="mayan-glyphs.html">Maya Glyphs</a>
+  <span class="sep">·</span>
+  <a href="benchmarks.html" aria-current="page" style="color:var(--text2)">Benchmarks</a>
+  <span class="sep">·</span>
+  <a href="https://github.com/tenstorrent/tt-animatediff" target="_blank" rel="noopener noreferrer">GitHub</a>
+</nav>
+
+<header class="hero">
+  <h1>Benchmarks — <span>Measured on Hardware</span></h1>
+  <p>
+    Timing results from real runs on a Tenstorrent Blackhole QB2 board (4 × P300C chips),
+    measured across three generation modes. All numbers are wall-clock elapsed for 8 frames
+    at 512 × 512, warm (model already loaded).
+  </p>
+  <p class="sub">Tenstorrent Blackhole P300C · SD 1.4 TTNN UNet · 512 × 512 · 8 frames</p>
+</header>
+
+<div class="page">
+
+  <!-- ── TIMING OVERVIEW ──────────────────────────────────────────────── -->
+  <section class="section">
+    <span class="section-label">Wall-clock timing</span>
+    <h2>Generation time by mode</h2>
+    <p>
+      Three distinct modes with very different cost profiles. Phase 2.5 (TTNN UNet +
+      cross-frame temporal attention) and its Lightning variant run at similar speed —
+      the bottleneck is the CPU temporal attention pass, not the denoising step count.
+      Phase 3 (full MotionAdapter) was ~8× slower because it round-tripped 7 injection
+      points through full <code>AnimateDiffTransformer3D</code> blocks on CPU at each step.
+      A batched D→H transfer optimisation (all N frames pulled in a single <code>ttnn.concat → ttnn.to_torch</code>)
+      cut Phase 3 to <strong>52 s/frame</strong> — a 1.94× speedup. Skipping the two
+      costliest injection points (up1 + up2) cuts it further to <strong>7.7 s/frame</strong>,
+      beating Phase 2.5 outright.
+    </p>
+
+    <div class="bar-chart">
+      <!-- Phase 3 skip up1+up2: 62s / 8 frames = 7.7 s/frame, 2026-06-15 benchmark -->
+      <div class="bar-row">
+        <div class="bar-label">
+          <strong>Phase 3 · skip up1+up2</strong>
+          <small>PNDM 25-step · 5 of 7 injection points · batched D→H</small>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill p3skip" style="width:14.8%">7.7 s/frame</div>
+        </div>
+        <div class="bar-value" style="color:var(--green)">~62 s total</div>
+      </div>
+      <!-- Phase 2.5 PNDM: 100s / 8 frames = 12.5 s/frame, n=6 comparison runs -->
+      <div class="bar-row">
+        <div class="bar-label">
+          <strong>Phase 2.5 · PNDM</strong>
+          <small>PNDM 25-step · cross-frame blend</small>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill phase25" style="width:24%">12.5 s/frame</div>
+        </div>
+        <div class="bar-value hl">~100 s total</div>
+      </div>
+      <!-- Lightning: 96s / 8 frames = 12.0 s/frame, n=3 comparison runs -->
+      <div class="bar-row">
+        <div class="bar-label">
+          <strong>Phase 2.5 · Lightning</strong>
+          <small>Euler 8-step · cross-frame blend</small>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill light" style="width:23.1%">12.0 s/frame</div>
+        </div>
+        <div class="bar-value hl-gold">~96 s total</div>
+      </div>
+      <!-- Phase 3 optimised: 416s / 8 frames = 52 s/frame, 2026-06-15 benchmark -->
+      <div class="bar-row">
+        <div class="bar-label">
+          <strong>Phase 3 · full MotionAdapter</strong>
+          <small>PNDM 25-step · 7 injection points · batched D→H</small>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill phase3" style="width:100%">52 s/frame</div>
+        </div>
+        <div class="bar-value hl-pink">~416 s total</div>
+      </div>
+    </div>
+
+    <div class="insight">
+      <strong>Unexpected result:</strong> Lightning 8-step and PNDM 25-step take almost
+      identical wall-clock time (~96s vs ~100s). The bottleneck is the cross-frame temporal
+      attention pass (CPU, run once per denoising step across all 8 frames), not the
+      TTNN UNet calls themselves. Reducing steps 25→8 saves ~68% of UNet compute but the
+      temporal blend overhead dominates, leaving total time roughly flat. The same effect
+      applies to Phase 3 — Lightning + MotionAdapter measured at 404s (50.6 s/frame), nearly
+      identical to the 25-step 416s run. Fewer steps don't help when CPU bridge calls dominate.
+    </div>
+
+    <div class="speedup-grid">
+      <div class="speedup-card">
+        <div class="speedup-num" style="color:var(--green)">6.75×</div>
+        <div class="speedup-label">skip up1+up2 vs full Phase 3</div>
+        <div class="speedup-sub">62s vs 416s · 8 frames · 25 steps</div>
+      </div>
+      <div class="speedup-card">
+        <div class="speedup-num" style="color:var(--pink)">1.94×</div>
+        <div class="speedup-label">Phase 3 speedup<br>batched D→H transfer</div>
+        <div class="speedup-sub">416s vs 806s · 8 frames · 25 steps</div>
+      </div>
+      <div class="speedup-card">
+        <div class="speedup-num" style="color:var(--teal)">4.2×</div>
+        <div class="speedup-label">Phase 2.5 vs full Phase 3<br>PNDM 25-step</div>
+        <div class="speedup-sub">100s vs 416s · 8 frames</div>
+      </div>
+      <div class="speedup-card">
+        <div class="speedup-num" style="color:var(--gold)">4×</div>
+        <div class="speedup-label">Parallel chips vs single</div>
+        <div class="speedup-sub">4 glyphs at once on QB2</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── DATA TABLE ──────────────────────────────────────────────────── -->
+  <section class="section">
+    <span class="section-label">Raw numbers</span>
+    <h2>Measured timings</h2>
+    <p>All runs on Blackhole P300C, warm model (TTNN JIT kernel already compiled). Times are wall-clock elapsed for 8 frames at 512×512.</p>
+
+    <table class="bench-table">
+      <thead>
+        <tr>
+          <th>Mode</th>
+          <th>Scheduler</th>
+          <th>Steps</th>
+          <th>Frames</th>
+          <th>Total (s)</th>
+          <th>s / frame</th>
+          <th>n</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-skip">Phase 3</span> skip up1+up2</td>
+          <td>PNDM</td>
+          <td>25</td>
+          <td>8</td>
+          <td class="hl" style="color:var(--green)">62</td>
+          <td class="hl" style="color:var(--green)">7.7</td>
+          <td>1</td>
+          <td>Benchmark 2026-06-15</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p3">Phase 3</span> MotionAdapter · full · batched D→H</td>
+          <td>PNDM</td>
+          <td>25</td>
+          <td>8</td>
+          <td class="hl-pink">416</td>
+          <td class="hl-pink">~52</td>
+          <td>1</td>
+          <td>Benchmark 2026-06-15</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p3">Phase 3</span> Lightning + MotionAdapter</td>
+          <td>Euler (trailing)</td>
+          <td>8</td>
+          <td>8</td>
+          <td class="hl-pink">405</td>
+          <td class="hl-pink">~51</td>
+          <td>1</td>
+          <td>Benchmark 2026-06-15</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p3">Phase 3</span> MotionAdapter <small>(baseline)</small></td>
+          <td>PNDM</td>
+          <td>25</td>
+          <td>8</td>
+          <td class="hl-pink">787–847</td>
+          <td class="hl-pink">~101</td>
+          <td>6</td>
+          <td>World's Fair run</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p25">Phase 2.5</span> cross-frame</td>
+          <td>PNDM</td>
+          <td>25</td>
+          <td>8</td>
+          <td class="hl">95–104</td>
+          <td class="hl">~12.5</td>
+          <td>6</td>
+          <td>Comparison study</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-lit">Lightning</span> cross-frame</td>
+          <td>Euler (trailing)</td>
+          <td>8</td>
+          <td>8</td>
+          <td class="hl-gold">95–97</td>
+          <td class="hl-gold">~12.0</td>
+          <td>3</td>
+          <td>Comparison study</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-lit">Lightning</span> cross-frame</td>
+          <td>Euler (trailing)</td>
+          <td>8</td>
+          <td>8</td>
+          <td class="hl-gold">103–104</td>
+          <td class="hl-gold">~12.9</td>
+          <td>5</td>
+          <td>Maya Q2, chip 3 (no stagger)</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-p25">Phase 2.5</span> cross-frame</td>
+          <td>PNDM</td>
+          <td>25</td>
+          <td>16</td>
+          <td class="hl">84–88</td>
+          <td class="hl">~5.4</td>
+          <td>3</td>
+          <td>Comparison study (E)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="insight">
+      <strong>16 frames is cheaper per-frame than 8.</strong> At 16 frames the cross-frame
+      attention operates on a larger batch but the TTNN UNet is pipelined more efficiently —
+      result is ~5.4 s/frame vs ~12.5 s/frame at 8 frames. Longer clips are more efficient
+      to generate on Blackhole.
+    </div>
+  </section>
+
+  <!-- ── SAMPLE COMPARISON ────────────────────────────────────────────── -->
+  <section class="section">
+    <span class="section-label">Quality vs speed</span>
+    <h2>What does 6.75× faster look like?</h2>
+    <p>
+      Phase 3 skip (up1+up2) versus full Phase 3 — same prompt, same seed, same hardware.
+      Skipping the two decoder injection points removes ~85% of the CPU transformer cost.
+      The tradeoff: full Phase 3 has stronger overall temporal coherence across all 7 attention
+      points; skip retains down-path and mid attention, which drives the main motion structure.
+    </p>
+
+    <div class="compare-section">
+      <div class="compare-label">Maya glyph imix — Phase 3 skip vs full</div>
+      <div class="compare-row">
+        <div class="compare-cell">
+          <span class="compare-badge"><span class="tag tag-skip">Phase 3 skip</span></span>
+          <img src="assets/mayan-glyphs/Q4/imix.gif" alt="imix Phase 3 skip">
+          <div class="compare-time"><strong>~62s</strong> · skip up1+up2 · 7.7 s/frame</div>
+        </div>
+        <div class="compare-cell">
+          <span class="compare-badge"><span class="tag tag-p3">Phase 3 full</span></span>
+          <img src="assets/mayan-glyphs/Q3/imix.gif" alt="imix Phase 3 full">
+          <div class="compare-time"><strong>~416s</strong> · full 7 injection points · 52 s/frame</div>
+        </div>
+      </div>
+
+      <div class="compare-label">Maya glyph ajaw — Phase 3 skip vs full</div>
+      <div class="compare-row">
+        <div class="compare-cell">
+          <span class="compare-badge"><span class="tag tag-skip">Phase 3 skip</span></span>
+          <img src="assets/mayan-glyphs/Q4/ajaw.gif" alt="ajaw Phase 3 skip">
+          <div class="compare-time"><strong>~62s</strong> · skip up1+up2 · 7.7 s/frame</div>
+        </div>
+        <div class="compare-cell">
+          <span class="compare-badge"><span class="tag tag-p3">Phase 3 full</span></span>
+          <img src="assets/mayan-glyphs/Q3/ajaw.gif" alt="ajaw Phase 3 full">
+          <div class="compare-time"><strong>~416s</strong> · full 7 injection points · 52 s/frame</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── EXECUTION FLOW DIAGRAM ────────────────────────────────────────── -->
+  <section class="section">
+    <span class="section-label">Architecture</span>
+    <h2>Execution flow</h2>
+    <p>
+      What runs on Blackhole silicon and what runs on CPU — including where Lightning
+      diverges from standard PNDM, and where Phase 3 adds the full MotionAdapter CPU round-trip.
+    </p>
+
+    <div class="diag-tabs">
+      <button class="diag-tab active" onclick="showDiag('flow', this)">Execution flow</button>
+      <button class="diag-tab" onclick="showDiag('modes', this)">Mode comparison</button>
+    </div>
+
+    <div id="diag-flow" class="diag-pane active">
+      <div class="arch-diagram">
+        <div class="mermaid">
+flowchart TD
+    P([Prompt + seed]) --> CHAIN{"--chain-from?"}
+    CHAIN -->|yes| BLEND["frame-mean blend prev latents\ninto seed noise — CPU"]
+    CHAIN -->|no| ENC
+    BLEND --> ENC["CLIP encode — CPU"]
+    ENC --> MODE{Mode?}
+
+    MODE -->|cpu| CPU_PATH["PNDM + MotionAdapter\nor Euler + Lightning distilled weights\nFull AnimateDiff — CPU only"]
+    CPU_PATH --> CPU_GIF([GIF])
+
+    MODE -->|blackhole / sim| SCHED{"--lightning?"}
+
+    SCHED -->|no| PNDM_LOOP["PNDM scheduler\none per frame — CPU"]
+    SCHED -->|yes| EULER_LOOP["EulerDiscrete scheduler\ntrailing timesteps, linear β — CPU\n⚡ no distilled adapter loaded\nCFG=7.5 retained"]
+
+    PNDM_LOOP --> BH_UNET["SD 1.4 TTNN UNet2D on Blackhole\n~0.5 s / call (warm)"]
+    EULER_LOOP --> BH_UNET
+
+    BH_UNET --> PHASE{"Phase 3\n--motion-adapter?"}
+
+    PHASE -->|no — Phase 2.5| CFA["cross_frame_attention\nblend noise preds across N frames\nα=0.35 default — CPU"]
+    PHASE -->|yes — Phase 3| MA["_apply_temporal · 7 injection points\nAnimateDiffTransformer3D.forward\nCPU round-trip at each step\n~316 s overhead / 8 frames (batched D→H)"]
+
+    CFA --> STEP["scheduler.step — CPU"]
+    MA --> STEP
+    STEP --> NEXT{more steps?}
+    NEXT -->|yes| BH_UNET
+    NEXT -->|no| VAE["TTNN VAE decode on Blackhole\nserial per-frame, batch=1"]
+    VAE --> GIF([Output GIF])
+        </div>
+        <p class="arch-caption">
+          The TTNN UNet runs on Blackhole; everything else (CLIP, schedulers, cross-frame blend,
+          VAE decode) is CPU. <strong>Lightning on Blackhole</strong> switches to
+          <code>EulerDiscreteScheduler</code> (trailing timesteps, linear β) with the base TTNN
+          UNet — it does <em>not</em> load ByteDance's distilled adapter (which is CPU-only and
+          bakes CFG=1.0). CFG stays at 7.5. On CPU, <code>--lightning</code> loads the genuine
+          distilled adapter and requires exactly 2/4/8 steps.
+          <strong>Phase 3</strong> inserts a full <code>AnimateDiffTransformer3D</code> CPU
+          round-trip at 7 UNet injection points per denoising step — that's what makes it
+          ~8× slower than Phase 2.5.
+        </p>
+      </div>
+    </div>
+
+    <div id="diag-modes" class="diag-pane">
+      <div class="arch-diagram">
+        <div class="mermaid">
+flowchart TB
+    subgraph SK["Phase 3 skip up1+up2 · ~7.7 s/frame"]
+        direction LR
+        SKU["TTNN UNet\n~0.5s"] --> SKT["× 5 injection points\ndown0-3 + mid\nCPU · ~1–2s each"] --> SKS["scheduler.step"]
+        SKS -->|"× 25 steps"| SKU
+    end
+
+    subgraph P25["Phase 2.5 — cross-frame blend · ~12.5 s/frame"]
+        direction LR
+        P2U["TTNN UNet\n8 frames serial"] --> P2C["cross_frame_attention\nblend α=0.35 — CPU"] --> P2S["scheduler.step"]
+        P2S -->|"× 25 steps"| P2U
+    end
+
+    subgraph P3["Phase 3 — full MotionAdapter · ~52 s/frame"]
+        direction LR
+        P3U["TTNN UNet\n~0.5s"] --> P3T["× 7 injection points\nAnimateDiffTransformer3D\nCPU · ~4s each"] --> P3S["scheduler.step"]
+        P3S -->|"× 25 steps"| P3U
+    end
+
+    SK -->|"1.6× slower"| P25
+    P25 -->|"4.2× slower"| P3
+        </div>
+        <p class="arch-caption">
+          Skipping up1 (32×32, C=1280) and up2 (64×64, C=640) removes the two costliest
+          injection points, which together account for ~80% of Phase 3 CPU overhead. The
+          five remaining points (down0/1/2, mid, up0) operate at smaller spatial dimensions and
+          complete quickly. Result: 7.7 s/frame — faster than Phase 2.5 — with weaker
+          decoder-side temporal coherence as the tradeoff.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── OBSERVATIONS ──────────────────────────────────────────────────── -->
+  <section class="section">
+    <span class="section-label">Analysis</span>
+    <h2>What the numbers tell us</h2>
+
+    <div class="obs-grid">
+      <div class="obs-card">
+        <h4>Bottleneck: CPU temporal blend, not TTNN</h4>
+        <p>
+          The TTNN UNet processes one frame per call in ~0.5s (warm). At 8 frames × 25 steps
+          that's 100 UNet calls × 0.5s = 50s of silicon time. The remaining ~50s is CPU overhead:
+          cross-frame attention, scheduler steps, and data marshalling. Reducing steps to 8 cuts
+          UNet time to 16 calls × 1.3s ≈ 20s but CPU overhead stays — hence the flat total.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>Lightning per-step is slower than PNDM</h4>
+        <p>
+          Each PNDM UNet call takes ~0.5s; each Euler (Lightning) call takes ~1.3s.
+          The Euler scheduler with trailing timesteps and linear β uses different noise
+          magnitudes that require heavier L1 operations inside the TTNN UNet. Fewer steps
+          compensate — the two modes end up at near-identical wall clock.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>16 frames is more efficient than 8</h4>
+        <p>
+          8 frames at 25 steps: ~12.5 s/frame. 16 frames at 25 steps: ~5.4 s/frame —
+          a 2.3× per-frame improvement. The TTNN UNet pipeline amortizes its initialization
+          cost better, and the cross-frame attention benefits from the larger batch. Generate
+          longer clips when possible.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>Phase 3 cost is injection-point overhead</h4>
+        <p>
+          Phase 3 runs <code>AnimateDiffTransformer3D.forward()</code> at 7 UNet injection
+          points per denoising step. At 25 steps that's 175 full transformer forward passes on
+          CPU. The two decoder points up1 (32×32, C=1280) and up2 (64×64, C=640) account for
+          ~80% of that cost — skipping just those two drops from 52 s/frame to 7.7 s/frame,
+          faster than Phase 2.5. Tradeoff: weaker decoder-side temporal coherence.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>Lightning doesn't help Phase 3</h4>
+        <p>
+          Tried 8-step Euler + MotionAdapter: 404s, 50.6 s/frame — nearly identical to
+          25-step PNDM at 416s. With 7 CPU bridge calls per denoising step, cutting steps
+          25→8 saves TTNN time (~15s) but barely dents the total. The bottleneck is the
+          CPU <code>AnimateDiffTransformer3D</code> at each step, not the denoiser count.
+          Injection-point skipping is the only lever that moves the needle.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>4-chip parallel throughput</h4>
+        <p>
+          The TTNN SD 1.4 UNet uses <code>to_torch()</code> internally without a mesh composer,
+          so it cannot shard across chips in a single process. Parallelism is achieved by running
+          4 separate <code>generate.py</code> processes each pinned to <code>--device-id 0–3</code>.
+          The Maya benchmark generated 20 glyphs across 2 tiers (40 total) in ~5 batches of 4,
+          each batch taking ~105s.
+        </p>
+      </div>
+      <div class="obs-card">
+        <h4>Lightning quality on Blackhole</h4>
+        <p>
+          Because the distilled ByteDance adapter is not loaded on Blackhole, Lightning mode
+          here is not the same as CPU Lightning. It uses the base SD 1.4 UNet with an aggressive
+          Euler schedule — quality is comparable to PNDM 8-step with the same model, not to
+          fully distilled 8-step inference. CFG=7.5 is retained, which distilled Lightning
+          would bake to 1.0.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <div class="footnotes">
+    <p>¹ All timings are wall-clock elapsed for warm runs (TTNN JIT kernel already compiled from a previous run in the same process chain). Cold-start (first run) includes a 60–90s compilation overhead.</p>
+    <p>² All 2026-06-15 benchmark runs: 8 frames, 512×512, warm model, prompt "a majestic waterfall in a lush rainforest, cinematic lighting". Phase 3 full (416s, 25 PNDM steps, batched D→H); Phase 3 skip up1+up2 (62s, 25 PNDM steps, 5 injection points); Lightning + MotionAdapter (404s, 8 Euler steps, all 7 points). Phase 3 baseline (787–847s) from World's Fair run (6 scenes). Phase 2.5 / Lightning timings from comparison study (3 prompts) and Maya Tzolk'in Q2 (chip 3, 5 batches).</p>
+    <p>³ "Lightning" on Blackhole/sim = EulerDiscreteScheduler (trailing, linear β) + base SD 1.4 TTNN UNet. Not the ByteDance distilled adapter — that requires CPU mode with <code>--mode cpu --lightning --lightning-steps 4</code>.</p>
+    <p>⁴ Hardware: Tenstorrent QB2 board, 4 × P300C Blackhole chips, measured June 2026.</p>
+  </div>
+
+</div><!-- .page -->
+
+<footer>
+  <p>tt-animatediff · AnimateDiff on Tenstorrent Blackhole · <a href="https://github.com/tenstorrent/tt-animatediff">GitHub</a></p>
+</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#1A3C47',
+      primaryColor: '#1A3C47',
+      primaryTextColor: '#E8F0F2',
+      primaryBorderColor: '#4FD1C5',
+      lineColor: '#4FD1C5',
+      secondaryColor: '#2D3142',
+      tertiaryColor: '#0F2A35',
+      nodeBorder: '#4FD1C5',
+      clusterBkg: '#2D3142',
+      titleColor: '#4FD1C5',
+      edgeLabelBackground: '#1A3C47',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }
+  });
+</script>
+
+<script>
+function showDiag(name, btn) {
+  document.querySelectorAll('.diag-pane').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.diag-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('diag-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+</script>
+
+</body>
+</html>

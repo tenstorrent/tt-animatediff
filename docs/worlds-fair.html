@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World's Fair — tt-animatediff</title>
+<meta name="description" content="9 World's Fair prompts across 3 quality tiers, plus a 100-year Unisphere continuity chain — all generated on Tenstorrent Blackhole hardware.">
+<style>
+  :root {
+    --teal:    #4FD1C5;
+    --teal2:   #81E6D9;
+    --pink:    #EC96B8;
+    --gold:    #F4C471;
+    --green:   #27AE60;
+    --bg0:     #0F2A35;
+    --bg1:     #1A3C47;
+    --bg2:     #2D3142;
+    --text:    #E8F0F2;
+    --text2:   #B0C4DE;
+    --muted:   #607D8B;
+    --border:  rgba(79,209,197,.18);
+    --radius:  8px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg0);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── nav ── */
+  nav {
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    padding: .75rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  nav a { color: var(--teal); text-decoration: none; font-size: .85rem; }
+  nav a:hover { color: var(--teal2); }
+  nav .sep { color: var(--muted); }
+  nav .brand { font-weight: 700; font-size: .95rem; color: var(--text); }
+
+  /* ── hero ── */
+  .hero {
+    background: linear-gradient(160deg, var(--bg1) 0%, var(--bg0) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 3.5rem 2rem 2.5rem;
+    text-align: center;
+  }
+  .hero h1 { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 800; color: var(--text); margin-bottom: .6rem; }
+  .hero h1 span { color: var(--teal); }
+  .hero p { font-size: .95rem; color: var(--text2); max-width: 680px; margin: 0 auto .5rem; line-height: 1.65; }
+  .hero .sub { font-size: .8rem; color: var(--muted); margin-top: .4rem; }
+
+  /* ── tier legend ── */
+  .tier-legend {
+    display: flex;
+    justify-content: center;
+    gap: 2.5rem;
+    padding: 1.5rem 2rem;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .tier-item { display: flex; align-items: flex-start; gap: .65rem; }
+  .tier-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    margin-top: .25rem;
+    flex-shrink: 0;
+  }
+  .tier-text strong { font-size: .8rem; display: block; margin-bottom: .15rem; }
+  .tier-text span { font-size: .72rem; color: var(--text2); line-height: 1.4; display: block; }
+
+  /* ── section divider ── */
+  .section-header {
+    max-width: 1300px;
+    margin: 3rem auto 1.5rem;
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .section-header h2 { font-size: 1.1rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+  .section-header .line { flex: 1; height: 1px; background: var(--border); }
+  .section-header .sub { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+
+  /* ── era badge ── */
+  .era-badge {
+    display: inline-block;
+    font-size: .62rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-radius: 3px;
+    padding: .1rem .4rem;
+  }
+  .era-historical { background: rgba(79,209,197,.12); color: var(--teal); border: 1px solid rgba(79,209,197,.3); }
+  .era-future     { background: rgba(236,150,184,.12); color: var(--pink); border: 1px solid rgba(236,150,184,.3); }
+
+  /* ── prompt card ── */
+  .prompts-grid {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 0 1.5rem 3rem;
+  }
+
+  .prompt-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 2.5rem;
+  }
+
+  .prompt-header {
+    padding: 1rem 1.25rem .75rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: .75rem;
+    flex-wrap: wrap;
+    background: var(--bg2);
+  }
+  .prompt-title { font-size: 1.05rem; font-weight: 700; color: var(--text); flex: 1; min-width: 200px; }
+  .prompt-year { font-size: .78rem; font-weight: 700; color: var(--muted); }
+  .prompt-text {
+    width: 100%;
+    font-size: .78rem;
+    color: var(--text2);
+    font-style: italic;
+    line-height: 1.6;
+    margin-top: .3rem;
+  }
+
+  /* ── 3-column GIF grid ── */
+  .gif-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .gif-col {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .gif-col:last-child { border-right: none; }
+
+  .gif-col-label {
+    padding: .5rem .9rem;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    background: rgba(0,0,0,.25);
+  }
+  .label-q1 { color: var(--teal); }
+  .label-q2 { color: var(--gold); }
+  .label-q3 { color: var(--pink); }
+
+  .gif-col-label .tier-detail {
+    margin-left: auto;
+    font-size: .62rem;
+    color: var(--muted);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .gif-frame {
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+
+  .gif-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* Placeholder when GIF not yet generated */
+  .gif-pending {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    color: var(--muted);
+    font-size: .72rem;
+  }
+  .gif-pending svg { opacity: .3; }
+
+  /* ── chain section ── */
+  .chain-section {
+    max-width: 1300px;
+    margin: 0 auto 4rem;
+    padding: 0 1.5rem;
+  }
+
+  .chain-intro {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    font-size: .88rem;
+    color: var(--text2);
+    line-height: 1.65;
+  }
+  .chain-intro strong { color: var(--text); }
+
+  .chain-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: .75rem;
+  }
+
+  .chain-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .chain-card-label {
+    padding: .5rem .65rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    font-size: .65rem;
+    font-weight: 700;
+    color: var(--teal);
+    text-align: center;
+    line-height: 1.35;
+  }
+  .chain-card-label .chain-era {
+    display: block;
+    font-size: .6rem;
+    font-weight: 400;
+    color: var(--muted);
+    margin-top: .2rem;
+  }
+
+  .chain-frame {
+    aspect-ratio: 1;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+  .chain-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* Arrow connectors between chain cards */
+  .chain-connector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: .75rem;
+    padding: 0;
+    position: relative;
+    top: .25rem;
+  }
+
+  /* ── tonal note below chain ── */
+  .chain-note {
+    margin-top: 1rem;
+    padding: .75rem 1rem;
+    background: rgba(79,209,197,.06);
+    border: 1px solid rgba(79,209,197,.18);
+    border-radius: var(--radius);
+    font-size: .78rem;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+  .chain-note strong { color: var(--teal); }
+
+  /* ── info cards row ── */
+  .info-row {
+    max-width: 1300px;
+    margin: 0 auto 3rem;
+    padding: 0 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .info-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.25rem;
+  }
+  .info-card h3 { font-size: .85rem; color: var(--teal); margin-bottom: .5rem; }
+  .info-card p { font-size: .78rem; color: var(--text2); line-height: 1.6; }
+  .info-card code { font-size: .72rem; background: var(--bg2); padding: .1rem .35rem; border-radius: 3px; color: var(--teal2); }
+
+  /* ── footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem;
+    text-align: center;
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  footer a { color: var(--teal); text-decoration: none; }
+  footer a:hover { color: var(--teal2); }
+
+  /* ── responsive ── */
+  @media (max-width: 900px) {
+    .gif-row { grid-template-columns: 1fr; }
+    .gif-col { border-right: none; border-bottom: 1px solid var(--border); }
+    .gif-col:last-child { border-bottom: none; }
+    .chain-row { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 600px) {
+    nav { padding: .6rem 1rem; gap: 1rem; }
+    .hero { padding: 2rem 1rem 1.5rem; }
+    .prompts-grid { padding: 0 .75rem 2rem; }
+    .section-header { padding: 0 .75rem; }
+    .info-row { padding: 0 .75rem; }
+    .chain-section { padding: 0 .75rem; }
+    .chain-row { grid-template-columns: repeat(2, 1fr); }
+    .tier-legend { gap: 1.25rem; padding: 1rem; }
+  }
+</style>
+  <!-- PostHog analytics -->
+  <script>
+    (function(t,e){var o,n,p,r;if(!e.__SV){window.posthog=e;e._i=[];e.init=function(i,s,a){function g(t,e){var o=e.split(".");if(o.length===2){t=t[o[0]];e=o[1];}t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)));};}p=t.createElement("script");p.type="text/javascript";p.crossOrigin="anonymous";p.async=true;p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js";r=t.getElementsByTagName("script")[0];r.parentNode.insertBefore(p,r);var u=e;if(a!==undefined){u=e[a]=[];}else{a="posthog";}u.people=u.people||[];u.toString=function(t){var e="posthog";if(a!=="posthog"){e+="."+a;}if(!t){e+=" (stub)";}return e;};u.people.toString=function(){return u.toString(1)+".people (stub)";};var methods=("init capture identify setPersonProperties reset get_distinct_id getGroups get_session_id alias set_config startSessionRecording stopSessionRecording opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug").split(" ");for(n=0;n<methods.length;n++){g(u,methods[n]);}e._i.push([i,s,a]);};e.__SV=1;}})(document,window.posthog||[]);
+    posthog.init("phc_9LMRmHrCFvQNvDkPDjYBP5dZ6WchZ5bcM6T4Qj6tb0U", {
+      api_host: "https://us.i.posthog.com",
+      defaults: "2025-05-24",
+      person_profiles: "identified_only"
+    });
+  </script>
+</head>
+<body>
+
+<nav>
+  <span class="brand">tt-animatediff</span>
+  <span class="sep">·</span>
+  <a href="index.html">Chip Study</a>
+  <span class="sep">·</span>
+  <a href="gallery.html">Gallery</a>
+  <span class="sep">·</span>
+  <a href="worlds-fair.html" aria-current="page" style="color:var(--text)">World's Fair</a>
+  <span class="sep">·</span>
+  <a href="mayan-glyphs.html">Maya Glyphs</a>
+  <span class="sep">·</span>
+  <a href="benchmarks.html">Benchmarks</a>
+  <span class="sep">·</span>
+  <a href="https://github.com/tenstorrent/tt-animatediff" target="_blank" rel="noopener noreferrer">GitHub</a>
+</nav>
+
+<header class="hero">
+  <h1>World's Fair — <span>Through the Ages</span></h1>
+  <p>
+    Six historic World's Fairs and three imagined fairs of 2064, each rendered across
+    three quality tiers on a Tenstorrent Blackhole P300C. Plus a 100-year continuity
+    chain following the Unisphere from 1964 to 2064 using <em>chain mode</em>.
+  </p>
+  <p class="sub">Phase 3 MotionAdapter · SD 1.4 base · 512 × 512 · tt-animatediff v0.8</p>
+</header>
+
+<!-- Tier legend -->
+<div class="tier-legend">
+  <div class="tier-item">
+    <div class="tier-dot" style="background: #4fd1c5;"></div>
+    <div class="tier-text">
+      <strong style="color: var(--teal);">Q1 · Best Quality</strong>
+      <span>4-chip Blackhole · PNDM 25-step · 16 frames · MotionAdapter Phase 3</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background: #f4c471;"></div>
+    <div class="tier-text">
+      <strong style="color: var(--gold);">Q2 · Fast + Quality</strong>
+      <span>4-chip Blackhole · Lightning 8-step · 8 frames · MotionAdapter Phase 3</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background: #ec96b8;"></div>
+    <div class="tier-text">
+      <strong style="color: var(--pink);">Q3 · Single Chip</strong>
+      <span>1-chip Blackhole · PNDM 25-step · 8 frames · cross-frame α=0.35</span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     Historical Fairs
+     ════════════════════════════════════════════════════════════ -->
+
+<div class="section-header">
+  <h2>Historical Fairs</h2>
+  <div class="line"></div>
+  <span class="sub">1889 – 1970</span>
+</div>
+
+<div class="prompts-grid">
+
+  <!-- Paris 1889 -->
+  <div class="prompt-card" id="paris-1889">
+    <div class="prompt-header">
+      <div class="prompt-title">Paris 1889 — Eiffel Tower Opening</div>
+      <span class="prompt-year">1889</span>
+      <span class="era-badge era-historical">Historical</span>
+      <p class="prompt-text">
+        The Eiffel Tower at the 1889 Paris Exposition Universelle, iron lattice glowing under gas lamps
+        at dusk, crowds of visitors in Victorian dress, the Seine reflecting amber light,
+        Belle Époque grandeur, painterly impressionist
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">
+          Q1 · Best
+          <span class="tier-detail">25-step · 16fr · MotionAdapter</span>
+        </div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/paris-1889.gif" alt="Paris 1889 Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">
+          Q2 · Fast
+          <span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span>
+        </div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/paris-1889.gif" alt="Paris 1889 Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">
+          Q3 · 1 Chip
+          <span class="tier-detail">25-step · 8fr · α=0.35</span>
+        </div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/paris-1889.gif" alt="Paris 1889 Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chicago 1893 -->
+  <div class="prompt-card" id="chicago-1893">
+    <div class="prompt-header">
+      <div class="prompt-title">Chicago 1893 — White City</div>
+      <span class="prompt-year">1893</span>
+      <span class="era-badge era-historical">Historical</span>
+      <p class="prompt-text">
+        The White City at the 1893 Chicago World's Columbian Exposition, neoclassical white marble
+        palaces reflected in the Grand Basin, electric lights illuminating the Court of Honor at night
+        for the first time, crowds in Gilded Age attire, moonlit clouds, majestic and ethereal
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/chicago-1893.gif" alt="Chicago 1893 Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/chicago-1893.gif" alt="Chicago 1893 Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/chicago-1893.gif" alt="Chicago 1893 Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New York 1939 -->
+  <div class="prompt-card" id="nyc-1939">
+    <div class="prompt-header">
+      <div class="prompt-title">New York 1939 — World of Tomorrow</div>
+      <span class="prompt-year">1939</span>
+      <span class="era-badge era-historical">Historical</span>
+      <p class="prompt-text">
+        The 1939 New York World's Fair at night, the Trylon and Perisphere glowing white against a
+        violet sky, art deco streamlined pavilions, fountains lit in vivid color, visitors in 1930s
+        dress gazing at the future, retro-futurist wonder, cinematic
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/nyc-1939.gif" alt="NYC 1939 Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/nyc-1939.gif" alt="NYC 1939 Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/nyc-1939.gif" alt="NYC 1939 Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Brussels 1958 -->
+  <div class="prompt-card" id="brussels-1958">
+    <div class="prompt-header">
+      <div class="prompt-title">Brussels 1958 — Atomium</div>
+      <span class="prompt-year">1958</span>
+      <span class="era-badge era-historical">Historical</span>
+      <p class="prompt-text">
+        The Atomium at the 1958 Brussels World Expo, nine steel spheres magnifying an iron crystal
+        atom 165 billion times, golden evening light, Cold War era optimism, swooping modernist
+        pavilions in the background, atomic age, silver and chrome
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/brussels-1958.gif" alt="Brussels 1958 Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/brussels-1958.gif" alt="Brussels 1958 Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/brussels-1958.gif" alt="Brussels 1958 Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New York 1964 -->
+  <div class="prompt-card" id="nyc-1964">
+    <div class="prompt-header">
+      <div class="prompt-title">New York 1964 — Unisphere</div>
+      <span class="prompt-year">1964</span>
+      <span class="era-badge era-historical">Historical</span>
+      <p class="prompt-text">
+        The Unisphere at the 1964 New York World's Fair, massive stainless steel globe rising from
+        Flushing Meadows, three orbital rings glinting in summer sunlight, IBM and Ford pavilions
+        in background, mid-century modern optimism, Space Age, cinematic wide shot, warm afternoon light
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/nyc-1964.gif" alt="NYC 1964 Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/nyc-1964.gif" alt="NYC 1964 Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/nyc-1964.gif" alt="NYC 1964 Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Osaka 1970 -->
+  <div class="prompt-card" id="osaka-1970">
+    <div class="prompt-header">
+      <div class="prompt-title">Osaka 1970 — Tower of the Sun</div>
+      <span class="prompt-year">1970</span>
+      <span class="era-badge era-historical">Historical</span>
+      <p class="prompt-text">
+        The Tower of the Sun by Taro Okamoto at Expo '70 Osaka, massive expressionist sculpture
+        with golden face and white face, festival plaza teeming with visitors, futuristic space-frame
+        roof structure, Japan's economic miracle, vivid colors, 1970s psychedelic energy, cinematic
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/osaka-1970.gif" alt="Osaka 1970 Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/osaka-1970.gif" alt="Osaka 1970 Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/osaka-1970.gif" alt="Osaka 1970 Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /historical prompts -->
+
+<!-- ════════════════════════════════════════════════════════════
+     World's Fairs of 2064
+     ════════════════════════════════════════════════════════════ -->
+
+<div class="section-header">
+  <h2>World's Fairs of 2064</h2>
+  <div class="line"></div>
+  <span class="sub">Imagined futures</span>
+</div>
+
+<div class="prompts-grid">
+
+  <!-- 2064 Lunar -->
+  <div class="prompt-card" id="2064-lunar-basin">
+    <div class="prompt-header">
+      <div class="prompt-title">2064 — Lunar World's Fair</div>
+      <span class="prompt-year">2064</span>
+      <span class="era-badge era-future">2064</span>
+      <p class="prompt-text">
+        The 2064 World's Fair on the Moon, glass dome pavilions in the Sea of Tranquility, Earth
+        rising on the horizon, bioluminescent architecture glowing against the lunar regolith,
+        delegations from forty nations and three orbital habitats, low gravity fountains arcing
+        impossibly high, retro-futurist meets deep future, awe-inspiring
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/2064-lunar-basin.gif" alt="2064 Lunar Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/2064-lunar-basin.gif" alt="2064 Lunar Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/2064-lunar-basin.gif" alt="2064 Lunar Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2064 Deepwater -->
+  <div class="prompt-card" id="2064-deepwater">
+    <div class="prompt-header">
+      <div class="prompt-title">2064 — Pacific Deepwater Expo</div>
+      <span class="prompt-year">2064</span>
+      <span class="era-badge era-future">2064</span>
+      <p class="prompt-text">
+        The 2064 Pacific Deepwater World Expo at 500 meters depth, coral-lattice arcologies lit by
+        bioluminescent algae, submersibles docking at crystal pavilions, whale song translated into
+        light, kelp forests framing the grand promenade, ethereal blue-green dreamscape, wonder and
+        reverence for the ocean
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/2064-deepwater.gif" alt="2064 Deepwater Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/2064-deepwater.gif" alt="2064 Deepwater Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/2064-deepwater.gif" alt="2064 Deepwater Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2064 Orbital -->
+  <div class="prompt-card" id="2064-orbital">
+    <div class="prompt-header">
+      <div class="prompt-title">2064 — Orbital Ring World's Fair</div>
+      <span class="prompt-year">2064</span>
+      <span class="era-badge era-future">2064</span>
+      <p class="prompt-text">
+        The 2064 World's Fair aboard the Orbital Ring station, a gleaming torus circling Earth at
+        36,000 km, nations of the world building spinning pavilions along the inner hull, Earth a
+        blue marble through vast observation windows, zero-gravity dancers in the atrium, humanity's
+        greatest achievement on display, cinematic 4K
+      </p>
+    </div>
+    <div class="gif-row">
+      <div class="gif-col">
+        <div class="gif-col-label label-q1">Q1 · Best<span class="tier-detail">25-step · 16fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q1/2064-orbital.gif" alt="2064 Orbital Q1" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q2">Q2 · Fast<span class="tier-detail">Lightning 8-step · 8fr · MotionAdapter</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q2/2064-orbital.gif" alt="2064 Orbital Q2" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+      <div class="gif-col">
+        <div class="gif-col-label label-q3">Q3 · 1 Chip<span class="tier-detail">25-step · 8fr · α=0.35</span></div>
+        <div class="gif-frame">
+          <img src="assets/worlds-fair/Q3/2064-orbital.gif" alt="2064 Orbital Q3" loading="lazy"
+               onerror="this.parentElement.innerHTML='<div class=gif-pending><svg width=32 height=32 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Generating…</span></div>'">
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /2064 prompts -->
+
+<!-- ════════════════════════════════════════════════════════════
+     Unisphere 100-year continuity chain
+     ════════════════════════════════════════════════════════════ -->
+
+<div class="section-header">
+  <h2>Unisphere — 100 Years</h2>
+  <div class="line"></div>
+  <span class="sub">Chain continuity · 1964 → 2064</span>
+</div>
+
+<div class="chain-section">
+  <div class="chain-intro">
+    <strong>Chain mode</strong> threads visual DNA from one generation into the next by blending the
+    final latents of each run into the seed noise of the following one. The Unisphere — the stainless
+    steel globe built for the 1964 New York World's Fair — was chosen as the subject because it
+    has a literal 100-year arc to trace: from opening day optimism, through urban decay and
+    millennial celebration, to a solarpunk 2050 and finally a centennial ceremony in 2064 with
+    visitors from Moon colonies.<br><br>
+    Each frame below was generated on <strong>chip 0</strong> (PNDM 25-step, 16 frames, MotionAdapter),
+    seeded with <code>--chain-from</code> output of the previous run at
+    <code>--chain-alpha 0.35</code> — enough to bias the denoiser toward the previous
+    composition (~15% Pearson correlation) without overwriting text guidance.
+    The chain signal is the frame-mean of the previous denoised latents, renormalized to unit std
+    before injection into the seed noise.
+  </div>
+
+  <div class="chain-row">
+    <div class="chain-card" id="chain-1964">
+      <div class="chain-card-label">
+        1964
+        <span class="chain-era">Opening Day</span>
+      </div>
+      <div class="chain-frame">
+        <img src="assets/worlds-fair/chain/unisphere-1964.gif" alt="Unisphere 1964" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=gif-pending style=\'aspect-ratio:1\'><svg width=28 height=28 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Pending</span></div>'">
+      </div>
+    </div>
+    <div class="chain-card" id="chain-1980">
+      <div class="chain-card-label">
+        1980
+        <span class="chain-era">Urban Decay</span>
+      </div>
+      <div class="chain-frame">
+        <img src="assets/worlds-fair/chain/unisphere-1980.gif" alt="Unisphere 1980" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=gif-pending style=\'aspect-ratio:1\'><svg width=28 height=28 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Pending</span></div>'">
+      </div>
+    </div>
+    <div class="chain-card" id="chain-2000">
+      <div class="chain-card-label">
+        2000
+        <span class="chain-era">Millennium</span>
+      </div>
+      <div class="chain-frame">
+        <img src="assets/worlds-fair/chain/unisphere-2000.gif" alt="Unisphere 2000" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=gif-pending style=\'aspect-ratio:1\'><svg width=28 height=28 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Pending</span></div>'">
+      </div>
+    </div>
+    <div class="chain-card" id="chain-2026">
+      <div class="chain-card-label">
+        2026
+        <span class="chain-era">America 250</span>
+      </div>
+      <div class="chain-frame">
+        <img src="assets/worlds-fair/chain/unisphere-2026.gif" alt="Unisphere 2026" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=gif-pending style=\'aspect-ratio:1\'><svg width=28 height=28 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Pending</span></div>'">
+      </div>
+    </div>
+    <div class="chain-card" id="chain-2050">
+      <div class="chain-card-label">
+        2050
+        <span class="chain-era">Climate Restored</span>
+      </div>
+      <div class="chain-frame">
+        <img src="assets/worlds-fair/chain/unisphere-2050.gif" alt="Unisphere 2050" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=gif-pending style=\'aspect-ratio:1\'><svg width=28 height=28 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Pending</span></div>'">
+      </div>
+    </div>
+    <div class="chain-card" id="chain-2064">
+      <div class="chain-card-label">
+        2064
+        <span class="chain-era">Centennial</span>
+      </div>
+      <div class="chain-frame">
+        <img src="assets/worlds-fair/chain/unisphere-2064.gif" alt="Unisphere 2064" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=gif-pending style=\'aspect-ratio:1\'><svg width=28 height=28 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'1.5\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg><span>Pending</span></div>'">
+      </div>
+    </div>
+  </div>
+
+  <div class="chain-note">
+    <strong>How chain mode works:</strong> Each run saves its final denoised latents via
+    <code>--chain-save chain.pt</code>. The next run loads them with <code>--chain-from chain.pt</code>
+    and blends them through a low-pass filter (kernel size 9) into the initial noise tensor, weighted
+    by <code>--chain-alpha</code> (0.55 here). Higher alpha = stronger visual inheritance.
+    The result preserves macro-composition and color palette while letting the new prompt
+    fully control subject and mood.
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     Info cards
+     ════════════════════════════════════════════════════════════ -->
+
+<div class="info-row">
+  <div class="info-card">
+    <h3>Hardware</h3>
+    <p>
+      All Q1 and Q2 runs use all 4 Blackhole P300C chips in parallel via
+      <code>open_mesh_device</code>, each chip handling one prompt concurrently.
+      Q3 pins to a single chip with <code>--device-id 0</code>.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Phase 3 — MotionAdapter</h3>
+    <p>
+      Q1 and Q2 use the Phase 3 temporal injection pipeline: AnimateDiff
+      <code>guoyww/animatediff-motion-adapter-v1-5-2</code> weights injected at
+      7 UNet cross-attention points via CPU round-trip after each TTNN forward pass.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Reproducing</h3>
+    <p>
+      Run <code>python scripts/generate_worlds_fair.py</code> with an active
+      tt-metal virtualenv. Pass <code>--tier Q1</code> for best quality,
+      <code>--skip-chain</code> to skip the Unisphere chain. All prompts and
+      seeds are in the script.
+    </p>
+  </div>
+</div>
+
+<footer>
+  <p>
+    <a href="https://github.com/tenstorrent/tt-animatediff">tt-animatediff</a> —
+    AnimateDiff on Tenstorrent Blackhole ·
+    <a href="index.html">Chip Study</a> ·
+    <a href="gallery.html">Gallery</a>
+  </p>
+  <p style="margin-top:.5rem">SD 1.4 base · TTNN UNet · Phase 3 MotionAdapter · v0.8</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maya Tzolk'in Glyphs — tt-animatediff</title>
+<meta name="description" content="All 20 Maya tzolk'in day glyphs animated on Tenstorrent Blackhole hardware across two quality tiers.">
+<style>
+  :root {
+    --teal:   #4FD1C5;
+    --teal2:  #81E6D9;
+    --gold:   #F4C471;
+    --pink:   #EC96B8;
+    --green:  #27AE60;
+    --bg0:    #0F2A35;
+    --bg1:    #1A3C47;
+    --bg2:    #2D3142;
+    --text:   #E8F0F2;
+    --text2:  #B0C4DE;
+    --muted:  #607D8B;
+    --border: rgba(79,209,197,.18);
+    --radius: 8px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg0);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── nav ── */
+  nav {
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    padding: .75rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  nav .brand { font-weight: 700; font-size: .95rem; color: var(--text); }
+  nav a { color: var(--teal); text-decoration: none; font-size: .85rem; }
+  nav a:hover { color: var(--teal2); }
+  nav .sep { color: var(--muted); }
+
+  /* ── hero ── */
+  .hero {
+    background: linear-gradient(160deg, var(--bg1) 0%, var(--bg0) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 3.5rem 2rem 2.5rem;
+    text-align: center;
+  }
+  .hero h1 { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 800; margin-bottom: .6rem; }
+  .hero h1 span { color: var(--teal); }
+  .hero p { font-size: .95rem; color: var(--text2); max-width: 680px; margin: 0 auto .5rem; line-height: 1.65; }
+  .hero .sub { font-size: .8rem; color: var(--muted); margin-top: .4rem; }
+
+  /* ── tier legend ── */
+  .tier-legend {
+    display: flex;
+    justify-content: center;
+    gap: 2.5rem;
+    padding: 1.25rem 2rem;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .tier-item { display: flex; align-items: flex-start; gap: .65rem; }
+  .tier-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: .25rem; flex-shrink: 0; }
+  .tier-text strong { font-size: .8rem; display: block; margin-bottom: .1rem; }
+  .tier-text span { font-size: .72rem; color: var(--text2); line-height: 1.4; display: block; }
+
+  /* ── cultural context ── */
+  .context-bar {
+    max-width: 960px;
+    margin: 2.5rem auto 0;
+    padding: 0 1.5rem;
+  }
+  .context-box {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.4rem;
+    font-size: .83rem;
+    color: var(--text2);
+    line-height: 1.7;
+  }
+  .context-box strong { color: var(--text); }
+  .context-box .tz-count { color: var(--teal); font-weight: 700; font-size: .9rem; }
+
+  /* ── quick-jump strip ── */
+  .tz-strip {
+    max-width: 960px;
+    margin: 1.25rem auto 0;
+    padding: 0 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+    justify-content: center;
+  }
+  .tz-item {
+    font-size: .68rem;
+    color: var(--text2);
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: .15rem .45rem;
+    text-decoration: none;
+    transition: border-color .12s, color .12s;
+  }
+  .tz-item:hover { border-color: var(--teal); color: var(--teal); }
+  .tz-num { color: var(--muted); font-size: .6rem; }
+
+  /* ── main grid ── */
+  .glyph-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.25rem;
+    max-width: 1300px;
+    margin: 2rem auto 4rem;
+    padding: 0 1.5rem;
+  }
+
+  /* ── glyph card ── */
+  .glyph-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color .15s, transform .15s;
+  }
+  .glyph-card:hover {
+    border-color: rgba(79,209,197,.4);
+    transform: translateY(-2px);
+  }
+
+  /* card header */
+  .glyph-header {
+    padding: .6rem .85rem .5rem;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: .5rem;
+  }
+  .glyph-num-badge {
+    font-size: .6rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--teal);
+    background: rgba(79,209,197,.1);
+    border: 1px solid rgba(79,209,197,.25);
+    border-radius: 3px;
+    padding: .1rem .32rem;
+    flex-shrink: 0;
+  }
+  .glyph-name { font-size: .88rem; font-weight: 700; color: var(--text); }
+  .glyph-meaning { font-size: .68rem; color: var(--muted); margin-top: .15rem; font-style: italic; }
+
+  /* two-tier gif pair */
+  .gif-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* no flex:1 — let the pair size to its content so the frame's
+       aspect-ratio:1 drives the height, not the card's flex stretch */
+  }
+  .gif-col {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .gif-col:last-child { border-right: none; }
+
+  .gif-label {
+    padding: .25rem .5rem;
+    font-size: .58rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,.2);
+    flex-shrink: 0;
+  }
+  .label-q1 { color: var(--teal); }
+  .label-q2 { color: var(--gold); }
+
+  .gif-frame {
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--bg2);
+    overflow: hidden;
+    width: 100%;
+  }
+  .gif-frame img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .gif-pending {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: .3rem;
+    color: var(--muted);
+    font-size: .6rem;
+    text-align: center;
+  }
+  .gif-pending .spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--border);
+    border-top-color: var(--teal);
+    border-radius: 50%;
+    animation: spin .9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* card footer — timing */
+  .glyph-footer {
+    padding: .32rem .75rem;
+    border-top: 1px solid var(--border);
+    background: rgba(0,0,0,.18);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+  }
+  .elapsed-row { display: flex; gap: .75rem; }
+  .elapsed-item { font-size: .6rem; color: var(--muted); }
+  .elapsed-item strong { font-size: .58rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .elapsed-q1 { color: var(--teal); }
+  .elapsed-q2 { color: var(--gold); }
+
+  /* ── info cards ── */
+  .info-row {
+    max-width: 1300px;
+    margin: 0 auto 3.5rem;
+    padding: 0 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+  }
+  .info-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.2rem;
+  }
+  .info-card h3 { font-size: .83rem; color: var(--teal); margin-bottom: .45rem; }
+  .info-card p { font-size: .78rem; color: var(--text2); line-height: 1.6; }
+  .info-card code { font-size: .72rem; background: var(--bg2); padding: .1rem .3rem; border-radius: 3px; color: var(--teal2); }
+
+  /* ── footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem;
+    text-align: center;
+    font-size: .78rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+  footer a { color: var(--teal); text-decoration: none; }
+  footer a:hover { color: var(--teal2); }
+
+  /* ── Phase 3 comparison section ── */
+  .p3-section {
+    max-width: 1300px;
+    margin: 0 auto 4rem;
+    padding: 0 1.5rem;
+  }
+  .p3-section h2 {
+    font-size: clamp(1.1rem, 2.5vw, 1.45rem);
+    font-weight: 800;
+    margin-bottom: .4rem;
+  }
+  .p3-section > p {
+    font-size: .85rem;
+    color: var(--text2);
+    line-height: 1.7;
+    max-width: 780px;
+    margin-bottom: 1.25rem;
+  }
+  .p3-label {
+    display: inline-block;
+    font-size: .62rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--green);
+    border: 1px solid var(--green);
+    border-radius: 3px;
+    padding: .15rem .5rem;
+    margin-bottom: .75rem;
+  }
+  /* 4-column grid of glyph cards, each card has 3 rows: Q2 / Q4 / Q3 */
+  .p3-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .p3-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .p3-card-title {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: .5rem .75rem;
+    display: flex;
+    align-items: baseline;
+    gap: .4rem;
+  }
+  .p3-card-title .num {
+    font-size: .58rem;
+    font-weight: 700;
+    color: var(--teal);
+    background: rgba(79,209,197,.1);
+    border: 1px solid rgba(79,209,197,.25);
+    border-radius: 3px;
+    padding: .08rem .28rem;
+  }
+  .p3-card-title .gname { font-size: .85rem; font-weight: 700; }
+  .p3-card-title .gmean { font-size: .65rem; color: var(--muted); font-style: italic; }
+  .p3-row {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+  }
+  .p3-row-label {
+    padding: .2rem .5rem;
+    font-size: .56rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    background: rgba(0,0,0,.2);
+    border-bottom: 1px solid var(--border);
+  }
+  .label-q2  { color: var(--gold); }
+  .label-q4  { color: var(--green); }
+  .label-q3  { color: var(--pink); }
+  .p3-frame {
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+  .p3-frame img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .p3-time {
+    padding: .18rem .5rem;
+    font-size: .58rem;
+    color: var(--muted);
+    background: rgba(0,0,0,.18);
+    border-top: 1px solid var(--border);
+    text-align: right;
+  }
+  /* insight callout */
+  .p3-insight {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+    font-size: .83rem;
+    color: var(--text2);
+    line-height: 1.65;
+  }
+  .p3-insight strong { color: var(--green); }
+
+  /* ── responsive ── */
+  @media (max-width: 1100px) { .glyph-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 900px)  { .p3-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 760px)  { .glyph-grid { grid-template-columns: repeat(2, 1fr); gap: .9rem; } }
+  @media (max-width: 480px) {
+    .glyph-grid { grid-template-columns: 1fr; gap: .75rem; padding: 0 .75rem; }
+    nav { padding: .6rem 1rem; gap: 1rem; }
+    .hero { padding: 2rem 1rem 1.5rem; }
+    .tier-legend { gap: 1.25rem; padding: 1rem; }
+    .context-bar, .tz-strip { padding: 0 .75rem; }
+  }
+</style>
+  <!-- PostHog analytics -->
+  <script>
+    (function(t,e){var o,n,p,r;if(!e.__SV){window.posthog=e;e._i=[];e.init=function(i,s,a){function g(t,e){var o=e.split(".");if(o.length===2){t=t[o[0]];e=o[1];}t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)));};}p=t.createElement("script");p.type="text/javascript";p.crossOrigin="anonymous";p.async=true;p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js";r=t.getElementsByTagName("script")[0];r.parentNode.insertBefore(p,r);var u=e;if(a!==undefined){u=e[a]=[];}else{a="posthog";}u.people=u.people||[];u.toString=function(t){var e="posthog";if(a!=="posthog"){e+="."+a;}if(!t){e+=" (stub)";}return e;};u.people.toString=function(){return u.toString(1)+".people (stub)";};var methods=("init capture identify setPersonProperties reset get_distinct_id getGroups get_session_id alias set_config startSessionRecording stopSessionRecording opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug").split(" ");for(n=0;n<methods.length;n++){g(u,methods[n]);}e._i.push([i,s,a]);};e.__SV=1;}})(document,window.posthog||[]);
+    posthog.init("phc_9LMRmHrCFvQNvDkPDjYBP5dZ6WchZ5bcM6T4Qj6tb0U", {
+      api_host: "https://us.i.posthog.com",
+      defaults: "2025-05-24",
+      person_profiles: "identified_only"
+    });
+  </script>
+</head>
+<body>
+
+<nav>
+  <span class="brand">tt-animatediff</span>
+  <span class="sep">·</span>
+  <a href="index.html">Chip Study</a>
+  <span class="sep">·</span>
+  <a href="gallery.html">Gallery</a>
+  <span class="sep">·</span>
+  <a href="worlds-fair.html">World's Fair</a>
+  <span class="sep">·</span>
+  <a href="mayan-glyphs.html" aria-current="page" style="color:var(--text2)">Maya Glyphs</a>
+  <span class="sep">·</span>
+  <a href="benchmarks.html">Benchmarks</a>
+  <span class="sep">·</span>
+  <a href="https://github.com/tenstorrent/tt-animatediff" target="_blank" rel="noopener noreferrer">GitHub</a>
+</nav>
+
+<header class="hero">
+  <h1>Maya Tzolk'in — <span>20 Sacred Day Glyphs</span></h1>
+  <p>
+    Each of the 20 day signs of the 260-day Maya sacred calendar, animated as living stone —
+    carved, lit, and atmospheric — across four quality tiers on a Tenstorrent Blackhole QB2 board.
+    Four chips run in parallel, one glyph per chip. Scroll down for the Phase 3 MotionAdapter comparison.
+  </p>
+  <p class="sub">Phase 2.5 cross-frame blend + Phase 3 MotionAdapter · SD 1.4 base · 512 × 512 · tt-animatediff</p>
+</header>
+
+<div class="tier-legend">
+  <div class="tier-item">
+    <div class="tier-dot" style="background:#4fd1c5;"></div>
+    <div class="tier-text">
+      <strong style="color:var(--teal);">Q1 · Best Quality</strong>
+      <span>4-chip Blackhole · PNDM 25-step · 8 frames · α=0.35</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background:#f4c471;"></div>
+    <div class="tier-text">
+      <strong style="color:var(--gold);">Q2 · Fast (Lightning)</strong>
+      <span>4-chip Blackhole · Euler 8-step · 8 frames · α=0.35</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background:#27ae60;"></div>
+    <div class="tier-text">
+      <strong style="color:var(--green);">Q4 · Phase 3 skip up1+up2</strong>
+      <span>4-chip · PNDM 25-step · 5 injection points · ~7.7 s/frame</span>
+    </div>
+  </div>
+  <div class="tier-item">
+    <div class="tier-dot" style="background:#ec96b8;"></div>
+    <div class="tier-text">
+      <strong style="color:var(--pink);">Q3 · Phase 3 full MotionAdapter</strong>
+      <span>4-chip · PNDM 25-step · 7 injection points · ~52 s/frame</span>
+    </div>
+  </div>
+</div>
+
+<div class="context-bar">
+  <div class="context-box">
+    The <strong>tzolk'in</strong> (Yucatec Maya: "count of days") is a
+    <span class="tz-count">260-day</span> sacred calendar shared across Mesoamerican
+    civilizations — Maya, Aztec, Zapotec, and others — for at least 2,500 years and still
+    in living use today. It pairs a cycle of <strong>20 named day signs</strong> with a
+    cycle of 13 numbers, producing 260 unique day combinations. Each day sign carries a
+    personality, patron deity, and set of associations used for divination, naming,
+    and scheduling ceremonies. The 20 signs below run in their traditional order,
+    from <strong>Imix</strong> (the primordial crocodile, day 1) to
+    <strong>Ajaw</strong> (the sun lord, day 20).
+  </div>
+</div>
+
+<!-- Quick-jump strip -->
+<div class="tz-strip" id="tz-strip"></div>
+
+<!-- 20-glyph grid, populated by JS from manifest -->
+<div class="glyph-grid" id="glyph-grid"></div>
+
+<div class="info-row">
+  <div class="info-card">
+    <h3>Hardware</h3>
+    <p>
+      4-chip Tenstorrent Blackhole QB2 board. Four glyphs run in parallel —
+      one per chip — via separate <code>generate.py</code> processes each
+      pinned to a chip with <code>--device-id 0–3</code>.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Q1 · Best Quality</h3>
+    <p>
+      PNDM scheduler, 25 denoising steps, 8 frames at 512×512.
+      Cross-frame temporal attention at <code>--temporal-alpha 0.35</code>
+      blends noise predictions across all 8 frames at each step for
+      structural cohesion between frames.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Q2 · Fast (Lightning)</h3>
+    <p>
+      EulerDiscrete (Lightning) scheduler, 8 denoising steps, 8 frames at 512×512.
+      Same temporal alpha as Q1. ~3× faster than Q1 per glyph.
+      Useful for quick composition checks.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Q3 · Phase 3 Full</h3>
+    <p>
+      Full AnimateDiff <code>AnimateDiffTransformer3D</code> at all 7 UNet injection points per step.
+      Strongest temporal coherence — ~52 s/frame. See the Phase 3 comparison section below.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Q4 · Phase 3 skip up1+up2</h3>
+    <p>
+      Phase 3 with the two costliest decoder injection points skipped. Only 5 of 7 points active —
+      ~7.7 s/frame, faster than Phase 2.5. Trade: slightly softer decoder-side temporal detail.
+    </p>
+  </div>
+  <div class="info-card">
+    <h3>Reproducing</h3>
+    <p>
+      Run <code>python scripts/generate_mayan_glyphs.py --tier Q1</code> (or Q2/Q3/Q4).
+      Use <code>--sample</code> for the 4-glyph comparison subset, or
+      <code>--glyph imix</code> for a single glyph.
+    </p>
+  </div>
+</div>
+
+<!-- ── Phase 3 MotionAdapter comparison ──────────────────────────────── -->
+<div class="p3-section">
+  <span class="p3-label">Phase 3 · MotionAdapter</span>
+  <h2>Full MotionAdapter vs. skip up1+up2 — 4 glyphs</h2>
+  <p>
+    Phase 3 runs <code>AnimateDiffTransformer3D</code> at 7 UNet injection points per denoising step —
+    the full AnimateDiff temporal transformer on CPU, producing the strongest inter-frame motion structure.
+    Skipping the two costliest decoder injection points (up1 32×32 and up2 64×64) drops wall-clock
+    from ~52 s/frame to ~7.7 s/frame, faster than Phase 2.5. The tradeoff is visible in the decoder:
+    skip mode produces slightly softer motion coherence in the lower-spatial-frequency detail.
+    Same prompt, same seed, same 25 PNDM steps — only the injection-point set changes.
+  </p>
+
+  <div class="p3-insight">
+    <strong>What to look for:</strong> Q3 (full) shows stronger large-scale motion — surfaces flow,
+    atmospheric elements move consistently across frames. Q4 (skip) retains the motion character from
+    the encoder/mid injection points but loses some of the decoder-side low-frequency temporal polish.
+    Both are Phase 3; the question is whether 6.75× faster is worth the tradeoff for your use case.
+  </div>
+
+  <div class="p3-grid">
+
+    <!-- Imix -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">01</span>
+        <span class="gname">Imix</span>
+        <span class="gmean">Crocodile / Primordial Water</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/imix.gif" alt="Imix Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/imix.gif" alt="Imix Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/imix.gif" alt="Imix Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+    <!-- Chikchan -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">05</span>
+        <span class="gname">Chikchan</span>
+        <span class="gmean">Serpent / Life Force</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/chikchan.gif" alt="Chikchan Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/chikchan.gif" alt="Chikchan Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/chikchan.gif" alt="Chikchan Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+    <!-- Ix -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">14</span>
+        <span class="gname">Ix</span>
+        <span class="gmean">Jaguar / Earth Magic</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/ix.gif" alt="Ix Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/ix.gif" alt="Ix Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/ix.gif" alt="Ix Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+    <!-- Ajaw -->
+    <div class="p3-card">
+      <div class="p3-card-title">
+        <span class="num">20</span>
+        <span class="gname">Ajaw</span>
+        <span class="gmean">Lord / Sun / Completion</span>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q2">Q2 · Lightning</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q2/ajaw.gif" alt="Ajaw Q2" loading="lazy"></div>
+        <div class="p3-time">~12 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q4">Q4 · skip up1+up2</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q4/ajaw.gif" alt="Ajaw Q4" loading="lazy"></div>
+        <div class="p3-time">~7.7 s/frame</div>
+      </div>
+      <div class="p3-row">
+        <div class="p3-row-label label-q3">Q3 · full MotionAdapter</div>
+        <div class="p3-frame"><img src="assets/mayan-glyphs/Q3/ajaw.gif" alt="Ajaw Q3" loading="lazy" onerror="this.parentElement.innerHTML='<div class=gif-pending><div class=spinner></div><span>Generating…</span></div>'"></div>
+        <div class="p3-time">~52 s/frame</div>
+      </div>
+    </div>
+
+  </div><!-- .p3-grid -->
+
+  <div class="p3-insight" style="margin-top:1.25rem; border-left-color:var(--teal);">
+    <strong style="color:var(--teal);">Reproducing:</strong>
+    <code>python scripts/generate_mayan_glyphs.py --tier Q3 --sample</code> (full, ~26 min for 4 glyphs) ·
+    <code>python scripts/generate_mayan_glyphs.py --tier Q4 --sample</code> (skip, ~5 min for 4 glyphs).
+    The <code>--sample</code> flag runs just these 4 glyphs (imix, chikchan, ix, ajaw).
+    See <a href="benchmarks.html">benchmarks</a> for timing breakdown.
+  </div>
+</div><!-- .p3-section -->
+
+<footer>
+  Generated on Tenstorrent Blackhole hardware using
+  <a href="https://github.com/tenstorrent/tt-animatediff">tt-animatediff</a> ·
+  AnimateDiff SD 1.4 TTNN UNet · 4-chip QB2 ·
+  <a href="worlds-fair.html">World's Fair study</a> ·
+  <a href="index.html">Chip Study</a>
+</footer>
+
+<script>
+const GLYPHS = [
+  { slug:"imix",    name:"Imix",      number:1,  meaning:"Crocodile / Primordial Water" },
+  { slug:"ik",      name:"Ik'",       number:2,  meaning:"Wind / Breath" },
+  { slug:"akbal",   name:"Ak'b'al",   number:3,  meaning:"Night / Darkness" },
+  { slug:"kan",     name:"K'an",      number:4,  meaning:"Seed / Corn / Abundance" },
+  { slug:"chikchan",name:"Chikchan",  number:5,  meaning:"Serpent / Life Force" },
+  { slug:"kimi",    name:"Kimi",      number:6,  meaning:"Death / Transformation" },
+  { slug:"manik",   name:"Manik'",    number:7,  meaning:"Deer / Hand" },
+  { slug:"lamat",   name:"Lamat",     number:8,  meaning:"Venus / Star / Rabbit" },
+  { slug:"muluk",   name:"Muluk",     number:9,  meaning:"Jade / Water / Rain" },
+  { slug:"ok",      name:"Ok",        number:10, meaning:"Dog / Loyalty / Guide" },
+  { slug:"chuwen",  name:"Chuwen",    number:11, meaning:"Monkey / Arts / Time Weaver" },
+  { slug:"eb",      name:"Eb'",       number:12, meaning:"Grass / Road / Skull" },
+  { slug:"ben",     name:"B'en",      number:13, meaning:"Reed / Corn Stalk / Staff" },
+  { slug:"ix",      name:"Ix",        number:14, meaning:"Jaguar / Earth Magic" },
+  { slug:"men",     name:"Men",       number:15, meaning:"Eagle / Moon / Wisdom" },
+  { slug:"kib",     name:"K'ib'",     number:16, meaning:"Wax / Owl / Vulture / Soul" },
+  { slug:"kaban",   name:"Kaban",     number:17, meaning:"Earth / Earthquake / Thought" },
+  { slug:"etznab",  name:"Etz'nab'",  number:18, meaning:"Flint / Mirror / Knife" },
+  { slug:"kawak",   name:"Kawak",     number:19, meaning:"Storm / Rain Cloud / Thunder" },
+  { slug:"ajaw",    name:"Ajaw",      number:20, meaning:"Lord / Sun / Completion" },
+];
+
+/* ── Helpers ── */
+function fmtSec(s) {
+  if (s == null) return null;
+  return s >= 60 ? `${(s / 60).toFixed(1)} min` : `${Math.round(s)}s`;
+}
+
+/* Called via onerror so inline handler never needs to embed SVG attribute quotes */
+function showMissing(el) {
+  el.parentElement.innerHTML =
+    '<div class="gif-pending">' +
+    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" style="opacity:.25">' +
+    '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>' +
+    '<span>Missing</span></div>';
+}
+
+function frameHtml(slug, tier, result) {
+  const hasGif = result && result.path;
+  if (hasGif) {
+    return `<img src="assets/mayan-glyphs/${tier}/${slug}.gif"
+                 alt="${slug} ${tier}" loading="lazy"
+                 onerror="showMissing(this)">`;
+  }
+  const label = (result && result.error) ? "Error" : "Pending";
+  return `<div class="gif-pending"><div class="spinner"></div><span>${label}</span></div>`;
+}
+
+function elapsedFooter(r1, r2) {
+  const t1 = r1 ? fmtSec(r1.elapsed) : null;
+  const t2 = r2 ? fmtSec(r2.elapsed) : null;
+  if (!t1 && !t2) return "";
+  const p1 = t1 ? `<span class="elapsed-item"><strong class="elapsed-q1">Q1</strong> ${t1}</span>` : "";
+  const p2 = t2 ? `<span class="elapsed-item"><strong class="elapsed-q2">Q2</strong> ${t2}</span>` : "";
+  return `<div class="elapsed-row">${p1}${p2}</div>`;
+}
+
+function buildCard(g, manifest) {
+  const r = manifest && manifest.results || {};
+  const r1 = r[`${g.slug}-Q1`];
+  const r2 = r[`${g.slug}-Q2`];
+  const footer = elapsedFooter(r1, r2);
+
+  return `
+    <div class="glyph-card" id="card-${g.slug}">
+      <div class="glyph-header">
+        <span class="glyph-num-badge">${String(g.number).padStart(2,"0")}</span>
+        <div>
+          <div class="glyph-name">${g.name}</div>
+          <div class="glyph-meaning">${g.meaning}</div>
+        </div>
+      </div>
+      <div class="gif-pair">
+        <div class="gif-col">
+          <div class="gif-label label-q1">Q1</div>
+          <div class="gif-frame">${frameHtml(g.slug, "Q1", r1)}</div>
+        </div>
+        <div class="gif-col">
+          <div class="gif-label label-q2">Q2</div>
+          <div class="gif-frame">${frameHtml(g.slug, "Q2", r2)}</div>
+        </div>
+      </div>
+      ${footer ? `<div class="glyph-footer">${footer}</div>` : ""}
+    </div>`;
+}
+
+/* ── Quick-jump strip ── */
+function buildStrip() {
+  document.getElementById("tz-strip").innerHTML = GLYPHS.map(g =>
+    `<a class="tz-item" href="#card-${g.slug}" title="${g.meaning}">
+       <span class="tz-num">${g.number} </span>${g.name}
+     </a>`
+  ).join("");
+}
+
+/* ── Init ── */
+(async () => {
+  buildStrip();
+
+  let manifest = null;
+  try {
+    const resp = await fetch("assets/mayan-glyphs/manifest.json");
+    if (resp.ok) manifest = await resp.json();
+  } catch (_) { /* manifest not ready yet — all cards show pending */ }
+
+  document.getElementById("glyph-grid").innerHTML =
+    GLYPHS.map(g => buildCard(g, manifest)).join("");
+})();
+</script>
+
+</body>
+</html>
