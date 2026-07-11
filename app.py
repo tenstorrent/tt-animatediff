@@ -52,6 +52,43 @@ def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
     return _cpu_pipes[key]
 
 
+def _probe_sim(sim_so: Path) -> str | None:
+    """Probe ttsim compatibility via subprocess; return error string or None if ok.
+
+    ttsim calls abort() on unsupported PCI register writes — that kills the
+    entire process.  Running the probe in a child process isolates the abort so
+    the Gradio server survives and can surface a clear error message.
+    """
+    import subprocess
+    probe = (
+        "import sys, os; "
+        f"os.environ['TT_METAL_SIMULATOR']='{sim_so}'; "
+        "os.environ.setdefault('TT_METAL_SLOW_DISPATCH_MODE','1'); "
+        "os.environ.setdefault('TT_METAL_DISABLE_SFPLOADMACRO','1'); "
+        "os.environ.setdefault('TT_METAL_ARCH_NAME','blackhole'); "
+        f"sys.path.insert(0,'{Path.home() / 'tt-metal'}'); "
+        "import ttnn; "
+        "d=ttnn.open_mesh_device(mesh_shape=ttnn.MeshShape(1,1),physical_device_ids=[0],l1_small_size=32768); "
+        "ttnn.close_mesh_device(d); "
+        "print('ok')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0 or "ok" not in result.stdout:
+        # ttsim writes ERROR lines to stdout (direct fd write, not stderr)
+        for line in result.stdout.splitlines():
+            if "UnsupportedFunctionality" in line or "ERROR" in line:
+                return line.strip()
+        return (
+            f"ttsim probe failed (exit {result.returncode}). "
+            "The ttsim binary may be incompatible with the installed tt-metal version. "
+            f"Try downloading a newer release from https://github.com/tenstorrent/ttsim/releases"
+        )
+    return None
+
+
 def _ensure_bh_device(mode: str, sim_path: str):
     """Open the Blackhole or ttsim device (once per session)."""
     global _bh_device, _bh_models
@@ -65,6 +102,15 @@ def _ensure_bh_device(mode: str, sim_path: str):
                 f"ttsim binary not found at {sim_so}. "
                 "Download from https://github.com/tenstorrent/ttsim/releases "
                 "or set the Sim binary path field."
+            )
+        # Probe in a subprocess so an abort() in ttsim doesn't kill Gradio.
+        probe_err = _probe_sim(sim_so)
+        if probe_err is not None:
+            raise RuntimeError(
+                f"ttsim device open failed: {probe_err}\n\n"
+                "This usually means the ttsim binary is incompatible with the "
+                "installed tt-metal version.  Download a matching ttsim release from "
+                "https://github.com/tenstorrent/ttsim/releases and update the path."
             )
         os.environ["TT_METAL_SIMULATOR"] = str(sim_so)
         os.environ.setdefault("TT_METAL_SLOW_DISPATCH_MODE", "1")
@@ -123,35 +169,38 @@ def generate(
     seed = int(seed)
     lightning_steps = int(lightning_steps)
 
-    if not prompt.strip():
+    if not (prompt or "").strip():
         raise gr.Error("Prompt cannot be empty.")
     if not 0.0 <= temporal_alpha <= 1.0:
         raise gr.Error("Temporal alpha must be between 0 and 1.")
 
-    chain_from_path = chain_from.strip() or None
-    chain_save_path = chain_save.strip() or None
+    chain_from_path = (chain_from or "").strip() or None
+    chain_save_path = (chain_save or "").strip() or None
 
     out_dir = Path(tempfile.mkdtemp())
     final_path = str(out_dir / "output.gif")
 
     if mode == "cpu":
         # CPU mode has no step-level callback hook — just run and yield final
-        from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
-        pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
-        guidance = 1.0 if lightning else 7.5
-        # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
-        # ignore the general steps slider and use the lightning_steps value instead.
-        cpu_steps = lightning_steps if lightning else steps
-        frames_list = cpu_generate(
-            pipe, prompt,
-            negative_prompt=negative_prompt,
-            num_frames=frames,
-            guidance_scale=guidance,
-            num_inference_steps=cpu_steps,
-            seed=seed,
-        )
-        export_gif(frames_list, final_path)
-        yield final_path
+        try:
+            from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
+            pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
+            guidance = 1.0 if lightning else 7.5
+            # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
+            # ignore the general steps slider and use the lightning_steps value instead.
+            cpu_steps = lightning_steps if lightning else steps
+            frames_list = cpu_generate(
+                pipe, prompt,
+                negative_prompt=negative_prompt,
+                num_frames=frames,
+                guidance_scale=guidance,
+                num_inference_steps=cpu_steps,
+                seed=seed,
+            )
+            export_gif(frames_list, final_path)
+        except Exception as exc:
+            raise gr.Error(str(exc)) from exc
+        yield final_path, "Done."
         return
 
     # Blackhole / sim — stream per-step previews then yield final
@@ -159,8 +208,11 @@ def generate(
     from animatediff_ttnn.temporal_attention import generate_frames_temporal, _latent_preview
     from animatediff_ttnn.pipeline import export_gif
 
-    device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
-    text_embeddings = encode_prompt(prompt, negative_prompt)
+    try:
+        device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
+        text_embeddings = encode_prompt(prompt, negative_prompt)
+    except Exception as exc:
+        raise gr.Error(str(exc)) from exc
 
     # Queue carries (preview_gif_path | None, error | None)
     # None preview + None error = done, final result is ready
@@ -181,7 +233,7 @@ def generate(
             return
         preview_frames = _latent_preview(frame_latents, height, width)
         export_gif(preview_frames, preview_path)
-        step_q.put((preview_path, None))
+        step_q.put((preview_path, None, f"Denoising step {step_idx + 1}/{num_steps} — preview (early steps look noisy)…"))
 
     def worker():
         try:
@@ -209,7 +261,7 @@ def generate(
         except Exception as exc:
             error_holder.append(exc)
         finally:
-            step_q.put((None, None))  # sentinel
+            step_q.put((None, None, None))  # sentinel
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -217,20 +269,26 @@ def generate(
     # Yield previews as they arrive; stop when sentinel received
     while True:
         item = step_q.get()
-        preview_path, err = item
+        preview_gif, err, status = item
         if err is not None:
             raise gr.Error(str(err))
-        if preview_path is None:
+        if preview_gif is None:
             break
-        yield preview_path
+        yield preview_gif, status
 
     t.join()
 
     if error_holder:
         raise gr.Error(str(error_holder[0]))
 
-    export_gif(result_holder[0], final_path)
-    yield final_path
+    if not result_holder:
+        raise gr.Error("Generation worker exited without producing output.")
+
+    try:
+        export_gif(result_holder[0], final_path)
+    except Exception as exc:
+        raise gr.Error(f"Failed to encode output GIF: {exc}") from exc
+    yield final_path, "Done."
 
 
 # ── UI layout ─────────────────────────────────────────────────────────────
@@ -317,7 +375,13 @@ with gr.Blocks(title="tt-animatediff") as demo:
             run_btn = gr.Button("Generate", variant="primary")
 
         with gr.Column(scale=1):
-            output_gif = gr.Image(label="Output (streaming preview → final GIF)", type="filepath")
+            output_gif = gr.Image(label="Output", type="filepath")
+            status_label = gr.Textbox(
+                label="Status",
+                value="",
+                interactive=False,
+                lines=1,
+            )
 
     run_btn.click(
         fn=generate,
@@ -327,7 +391,7 @@ with gr.Blocks(title="tt-animatediff") as demo:
             sim_path, lightning, lightning_steps,
             chain_from_box, chain_save_box, chain_alpha_slider,
         ],
-        outputs=output_gif,
+        outputs=[output_gif, status_label],
     )
 
 if __name__ == "__main__":
