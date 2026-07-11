@@ -212,6 +212,7 @@ def generate_frames_temporal(
     chain_save: str | None = None,
     chain_alpha: float = 0.6,
     on_step=None,
+    text_embeddings_per_frame: List | None = None,
 ) -> List:
     """Generate temporally-coherent frames on Blackhole with cross-frame attention.
 
@@ -252,6 +253,13 @@ def generate_frames_temporal(
                  each complete denoising step. frame_latents is the current list of
                  (1, 4, lh, lw) CPU tensors — pass them to _latent_preview() for a
                  fast in-progress visual. Called in the TTNN thread; must be thread-safe.
+        text_embeddings_per_frame: Optional "prompt travel" conditioning — a list of
+                 num_frames tensors, each (2, 96, 768) = [uncond, cond_i], produced by
+                 encode_prompt(..., prompt_schedule=...). When provided, frame i is
+                 conditioned on text_embeddings_per_frame[i] instead of the shared
+                 text_embeddings tensor, so content morphs across frames. When None
+                 (default), behaviour is byte-identical to before: the single
+                 text_embeddings tensor is broadcast to every frame.
 
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
@@ -349,10 +357,48 @@ def generate_frames_temporal(
     # Build TTNN time embeddings once — timesteps are identical across all frames
     _tlist = build_tlist(_tt_sched, torch_time_proj, device, lh, lw)
 
-    # Text embeddings to device — same tensor reused for every frame at every step
-    ttnn_text_emb = to_device(
-        text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-    )
+    # Text embeddings to device.
+    #
+    # Default (single-prompt) path — UNCHANGED, byte-identical to before: one
+    # (2, 96, 768) tensor replicated to every chip and reused for every frame at
+    # every step.
+    #
+    # Prompt-travel path (text_embeddings_per_frame given): each frame i is
+    # conditioned on its own (2, 96, 768) embedding. How that reaches the device
+    # depends on the frame-distribution strategy:
+    #   * serial path (single chip): pre-upload one replicated device tensor per
+    #     frame; frame i uses ttnn_text_embs[i]. Low risk — same shape/layout as
+    #     the shared tensor, just a different tensor object per UNet call.
+    #   * sharded mesh path: each chunk of _chunk frames runs in ONE UNet call
+    #     with the frames sharded across chips, so the encoder_hidden_states must
+    #     be sharded the SAME way — chunk's [2*_chunk, 96, 768] via
+    #     ShardTensorToMesh(dim=0) so chip K sees its frame's [2, 96, 768]. This
+    #     mirrors the latent sharding exactly (shard_frames_to_device) but is
+    #     ⚠️ UNVALIDATED ON HARDWARE — needs QB2 to confirm the SD-demo UNet's
+    #     cross-attention consumes a sharded encoder_hidden_states correctly.
+    _per_frame_text = text_embeddings_per_frame is not None
+    ttnn_text_emb = None
+    ttnn_text_embs_serial = None
+    sharded_text_by_chunk = None
+    if not _per_frame_text:
+        ttnn_text_emb = to_device(
+            text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
+    elif _use_sharding:
+        # Pre-build one sharded encoder_hidden_states per chunk (text is constant
+        # across denoising steps, so build once).  ⚠️ needs QB2 validation.
+        sharded_text_by_chunk = {}
+        for c0 in range(0, num_frames, _chunk):
+            chunk_list = text_embeddings_per_frame[c0 : c0 + _chunk]
+            sharded_text_by_chunk[c0] = _tp.shard_frames_to_device(
+                chunk_list, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+            )
+    else:
+        # Serial single-chip path: one replicated device tensor per frame.
+        ttnn_text_embs_serial = [
+            to_device(t, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+            for t in text_embeddings_per_frame
+        ]
 
     # Denoising loop: on a mesh, frames are CFG-doubled and sharded across chips via
     # ShardTensorToMesh in chunks of _chunk (== num_chips) frames — one frame per
@@ -387,10 +433,13 @@ def generate_frames_temporal(
                 stacked_dev = _tp.shard_frames_to_device(
                     cfg_latents, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
                 )
+                # Prompt travel: use this chunk's sharded per-frame conditioning
+                # (⚠️ needs QB2 validation); else the shared replicated tensor.
+                _enc = sharded_text_by_chunk[c0] if _per_frame_text else ttnn_text_emb
                 ttnn_out = ttnn_model(
                     stacked_dev,
                     timestep=_tlist[step_idx],
-                    encoder_hidden_states=ttnn_text_emb,
+                    encoder_hidden_states=_enc,
                     class_labels=None,
                     attention_mask=None,
                     cross_attention_kwargs=None,
@@ -418,10 +467,12 @@ def generate_frames_temporal(
                     latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
                 cfg_lat = torch.cat([latent_cpu, latent_cpu], dim=0)  # [2, 4, lh, lw]
                 lat_dev = to_device(cfg_lat, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+                # Prompt travel: frame i uses its own conditioning; else shared.
+                _enc = ttnn_text_embs_serial[i] if _per_frame_text else ttnn_text_emb
                 ttnn_out_i = ttnn_model(
                     lat_dev,
                     timestep=_tlist[step_idx],
-                    encoder_hidden_states=ttnn_text_emb,
+                    encoder_hidden_states=_enc,
                     class_labels=None,
                     attention_mask=None,
                     cross_attention_kwargs=None,
@@ -484,7 +535,14 @@ def generate_frames_temporal(
     # The TTNN VAE needs substantial L1 for its conv layers; if the UNet's
     # output tensors are still occupying L1 the VAE conv_out will OOM.
     # Free shared tensors that outlive the loop before VAE decode needs L1.
-    ttnn_text_emb.deallocate(True)
+    if ttnn_text_emb is not None:
+        ttnn_text_emb.deallocate(True)
+    if ttnn_text_embs_serial is not None:
+        for t_tensor in ttnn_text_embs_serial:
+            t_tensor.deallocate(True)
+    if sharded_text_by_chunk is not None:
+        for t_tensor in sharded_text_by_chunk.values():
+            t_tensor.deallocate(True)
     for t_tensor in _tlist:
         t_tensor.deallocate(True)
 
@@ -542,6 +600,7 @@ def generate_frames_motion(
     on_step=None,
     injection_alpha: float = 1.0,
     skip_keys: set | None = None,
+    text_embeddings_per_frame: List | None = None,
 ) -> List:
     """Generate temporally-coherent frames using MotionAdapter temporal attention.
 
@@ -642,9 +701,23 @@ def generate_frames_motion(
         frame_latents.append(perturbed * init_noise_sigma)
 
     _tlist = build_tlist(_tt_sched, torch_time_proj, device, lh, lw)
-    ttnn_text_emb = to_device(
-        text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-    )
+
+    # Text conditioning. Default (single-prompt) path is UNCHANGED: one shared
+    # (2, 96, 768) tensor for every frame. Prompt-travel path: one replicated
+    # device tensor per frame, threaded into forward_unet_staged which conditions
+    # frame i on text_embeddings_per_frame[i]. The motion path calls the UNet
+    # blocks once per frame, so per-frame conditioning is a clean tensor swap
+    # (same shape/layout) — no mesh-shard reshaping needed here.
+    _per_frame_text = text_embeddings_per_frame is not None
+    if _per_frame_text:
+        ttnn_text_emb = [
+            to_device(t, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
+            for t in text_embeddings_per_frame
+        ]
+    else:
+        ttnn_text_emb = to_device(
+            text_embeddings, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+        )
 
     num_steps_actual = len(timesteps)
 
@@ -709,8 +782,12 @@ def generate_frames_motion(
 
     print()
 
-    # Cleanup shared device tensors
-    ttnn_text_emb.deallocate(True)
+    # Cleanup shared device tensors (single tensor, or per-frame list for prompt travel)
+    if _per_frame_text:
+        for t_tensor in ttnn_text_emb:
+            t_tensor.deallocate(True)
+    else:
+        ttnn_text_emb.deallocate(True)
     for t_tensor in _tlist:
         t_tensor.deallocate(True)
 

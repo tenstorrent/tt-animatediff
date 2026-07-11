@@ -73,6 +73,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--negative-prompt", default="blurry, low quality", dest="negative_prompt"
     )
     parser.add_argument(
+        "--prompt-schedule",
+        action="append",
+        default=None,
+        dest="prompt_schedule",
+        metavar="FRAME:PROMPT",
+        help=(
+            "Prompt travel: pin a keyframe prompt to a frame index; repeat to add "
+            "more. The conditioning is interpolated across frames so content morphs "
+            "over the timeline. Example: "
+            "--prompt-schedule 0:'spring meadow' --prompt-schedule 15:'snowy forest'. "
+            "Frames before the first / after the last keyframe clamp to it. "
+            "When omitted, --prompt is used for every frame (unchanged behaviour). "
+            "blackhole/sim modes only."
+        ),
+    )
+    parser.add_argument(
         "--frames",
         type=int,
         default=None,
@@ -236,6 +252,12 @@ if args.output is None:
     args.output = f"output/{args.mode}.gif"
 if not 0.0 <= args.temporal_alpha <= 1.0:
     _build_parser().error(f"--temporal-alpha must be in [0, 1], got {args.temporal_alpha}")
+if args.prompt_schedule and args.mode == "cpu":
+    # Prompt travel is wired only through the TTNN frame loops (blackhole/sim).
+    print(
+        "WARNING: --prompt-schedule is ignored in --mode cpu; using --prompt for every frame.",
+        file=sys.stderr,
+    )
 if args.lightning and args.mode != "cpu":
     # On Blackhole/sim, --lightning switches to TtEulerScheduler (trailing,
     # linear) and runs the base TTNN UNet — no distilled adapter is loaded.
@@ -434,7 +456,23 @@ def run_ttnn():
         print(f"  Loaded in {time.time() - t0:.1f}s\n")
 
         print("Encoding prompts with CLIP...")
-        text_embeddings = encode_prompt(args.prompt, args.negative_prompt)
+        text_embeddings_per_frame = None
+        if args.prompt_schedule:
+            # Prompt travel: interpolate keyframe prompts across the timeline.
+            from animatediff_ttnn.prompt_schedule import parse_schedule
+            schedule = parse_schedule(args.prompt_schedule)
+            text_embeddings_per_frame = encode_prompt(
+                args.prompt, args.negative_prompt,
+                prompt_schedule=schedule, num_frames=args.frames,
+            )
+            # Representative tensor for the required positional arg / logging; the
+            # per-frame list overrides it inside the frame loop.
+            text_embeddings = text_embeddings_per_frame[0]
+            print(f"  Prompt travel: {len(schedule)} keyframe(s) → {args.frames} frames")
+            for fi, ptxt in schedule:
+                print(f"    frame {fi}: {ptxt}")
+        else:
+            text_embeddings = encode_prompt(args.prompt, args.negative_prompt)
         print(f"  Embeddings: {text_embeddings.shape}\n")
 
         print(f"Generating {args.frames} frame(s)...")
@@ -472,6 +510,7 @@ def run_ttnn():
                 chain_alpha=args.chain_alpha,
                 injection_alpha=args.motion_adapter_alpha,
                 skip_keys=set(args.motion_adapter_skip),
+                text_embeddings_per_frame=text_embeddings_per_frame,
             )
         else:
             # Default path: cross-frame temporal attention (no MotionAdapter)
@@ -491,6 +530,7 @@ def run_ttnn():
                 chain_from=args.chain_from,
                 chain_save=args.chain_save,
                 chain_alpha=args.chain_alpha,
+                text_embeddings_per_frame=text_embeddings_per_frame,
             )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
