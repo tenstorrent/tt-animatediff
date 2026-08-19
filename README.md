@@ -146,6 +146,51 @@ file or add a setup script to download it at startup.
 
 ---
 
+## Python API
+
+The `animatediff_ttnn` package is importable as a Python library. The high-level
+`generate_animation()` entry point manages device lifetime, mode selection, and the
+CPU pipeline cache internally — no setup required.
+
+```python
+from animatediff_ttnn import generate_animation, export_mp4, export_gif
+
+# Auto mode: picks Blackhole if tt-metal is importable, CPU otherwise
+frames = generate_animation(
+    prompt="swirling nebula, teal and gold, cinematic",
+    num_frames=8,
+    num_steps=25,
+    seed=42,
+)
+export_mp4(frames, "output.mp4", fps=8)
+export_gif(frames, "output.gif")
+```
+
+**Key parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `prompt` | (required) | Text description of the animation |
+| `negative_prompt` | `""` | Features to suppress |
+| `num_frames` | `8` | Frame count |
+| `num_steps` | `25` | Denoising steps (use `4` for sim preview) |
+| `guidance_scale` | `7.5` | CFG scale — use `1.0` with CPU Lightning |
+| `seed` | `42` | Random seed |
+| `temporal_alpha` | `0.35` | Cross-frame attention blend (Blackhole/sim only, 0–1) |
+| `mode` | `"auto"` | `"auto"` · `"blackhole"` · `"sim"` · `"cpu"` |
+| `use_lightning` | `False` | Euler scheduler instead of PNDM |
+| `lightning_steps` | `4` | CPU Lightning checkpoint step count (2, 4, or 8) |
+| `chain_from` | `None` | Path to `.pt` latent file from a previous run for visual continuity |
+| `chain_save` | `None` | Save this run's final latents for use as `chain_from` next time |
+| `chain_alpha` | `0.6` | Blend weight for `chain_from` latents |
+| `on_step` | `None` | Callback `(step_idx, num_steps, frame_latents)` per denoising step — Blackhole/sim only |
+
+Returns `list[PIL.Image]`, one per frame. See the
+[full Python API reference](https://tenstorrent.github.io/tt-animatediff/usage.html#api)
+for all parameters and usage examples.
+
+---
+
 ## Modes Reference
 
 | Mode | Hardware | Speed (8 fr, 512²) | Temporal attention |
