@@ -64,10 +64,14 @@ def publish(
     print(f"repo:      {repo_id} ({repo_type}, private on create)")
     print(f"folder:    {folder}")
     print(f"contents:  {len(files)} files, {total_kb:.0f} KB")
-    for path in files[:15]:
+
+    # Show full list when actually writing, truncate for preview (dry-run).
+    show_all = yes and not dry_run
+    limit = len(files) if show_all else 15
+    for path in files[:limit]:
         print(f"  {path.relative_to(folder).as_posix()}")
-    if len(files) > 15:
-        print(f"  ... and {len(files) - 15} more")
+    if len(files) > limit:
+        print(f"  ... and {len(files) - limit} more")
 
     for path in files:
         if path.suffix in {".pt", ".ckpt", ".safetensors", ".bin"}:
@@ -84,8 +88,23 @@ def publish(
     from huggingface_hub import HfApi
 
     api = HfApi()
-    api.create_repo(repo_id=repo_id, repo_type=repo_type, private=True, exist_ok=True)
-    api.upload_folder(folder_path=str(folder), repo_id=repo_id, repo_type=repo_type)
+    # Spaces require space_sdk at creation time per huggingface_hub.
+    # The Hub refuses create_repo(..., repo_type="space") without it.
+    create_kwargs = {"repo_id": repo_id, "repo_type": repo_type, "private": True, "exist_ok": True}
+    if repo_type == "space":
+        create_kwargs["space_sdk"] = "gradio"
+
+    api = HfApi()
+    api.create_repo(**create_kwargs)
+
+    try:
+        api.upload_folder(folder_path=str(folder), repo_id=repo_id, repo_type=repo_type)
+    except Exception as e:
+        print(f"\nupload_folder failed: {e}")
+        print(f"WARNING: {repo_id} was created (private) but upload did not complete.")
+        print("Re-running with --yes is safe (create_repo uses exist_ok=True).")
+        return 1
+
     print(f"\nuploaded to https://huggingface.co/{repo_id} (private)")
     return 0
 
@@ -116,10 +135,19 @@ def verify(repo_id: str = MODEL_REPO) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--space", action="store_true", help="publish the Space instead")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--yes", action="store_true")
-    parser.add_argument("--verify", action="store_true")
+
+    # --dry-run, --yes, and --verify are mutually exclusive.
+    action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument("--dry-run", action="store_true", help="preview without sending to Hub")
+    action_group.add_argument("--yes", action="store_true", help="publish to Hub (requires --space or model)")
+    action_group.add_argument("--verify", action="store_true", help="read-only round-trip of published model")
+
     args = parser.parse_args(argv)
+
+    if args.space and args.verify:
+        print("--space --verify: cannot verify a Space via DiffusionPipeline.from_pretrained.")
+        print("Check the Space's build log and runtime status on the Hub instead.")
+        return 1
 
     if args.verify:
         return verify()
