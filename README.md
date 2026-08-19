@@ -67,6 +67,34 @@ python examples/generate.py --mode sim --frames 2 --steps 4
 
 ---
 
+## Hugging Face
+
+The pipeline is published as a weights-free diffusers custom pipeline:
+
+```python
+from diffusers import DiffusionPipeline
+
+pipe = DiffusionPipeline.from_pretrained(
+    "episod/tt-animatediff",
+    custom_pipeline="episod/tt-animatediff",
+    trust_remote_code=True,
+)
+frames = pipe("a swirling nebula, teal and gold").frames
+print(pipe.resolved_mode)  # "blackhole" or "cpu"
+```
+
+- Model repo: [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
+  — no weights; SD 1.4 and the MotionAdapter are resolved from upstream at generation time.
+- Demo Space: [`episod/tt-animatediff-demo`](https://huggingface.co/spaces/episod/tt-animatediff-demo)
+  — capped CPU-Lightning reference (4 frames, 4 steps, 384×384). Not representative of
+  Blackhole performance.
+
+Rebuild and republish with `scripts/build_hf_artifact.py` and
+`scripts/publish_to_hub.py`; the Hub copy is generated from this checkout, never edited
+on the Hub.
+
+---
+
 ## Lightning Mode
 
 On **Blackhole/sim**: `--lightning` switches to `EulerDiscreteScheduler` (trailing, linear)
@@ -198,7 +226,7 @@ for all parameters and usage examples.
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
 | `blackhole` | Blackhole P300C | **~12.5 s/frame** (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
-| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (8-step Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (25 steps, Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
 | `blackhole --motion-adapter` | Blackhole P300C | **~52 s/frame** (7 injection pts, batched D→H) | Full MotionAdapter Phase 3 ✓ |
 | `blackhole --motion-adapter --motion-adapter-skip up1 up2` | Blackhole P300C | **~7.7 s/frame** (5 injection pts) | Full MotionAdapter Phase 3 ✓ |
 | `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |

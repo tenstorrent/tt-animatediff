@@ -134,3 +134,38 @@ not using the SD demo UNet wrapper).
 ### LCM distillation (closed)
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
+
+## Hugging Face publishing track (2026-08-19)
+
+`episod/tt-animatediff` is a **weights-free diffusers custom pipeline**; the Space
+`episod/tt-animatediff-demo` is a capped CPU-Lightning demo. Both are built from this
+checkout by `scripts/build_hf_artifact.py` and uploaded by `scripts/publish_to_hub.py`
+(private on create, `--yes` required to write, `--dry-run` inert, `--verify` read-only).
+Never hand-edit either repo on the Hub — the next build overwrites it.
+
+Spec: `docs/superpowers/specs/2026-08-19-hf-model-repo-design.md`.
+Plan: `docs/superpowers/plans/2026-08-19-hf-model-repo.md`.
+
+### Two diffusers traps that make `hf/pipeline.py` look wrong
+
+Both were measured, and both bite silently on the **older** supported diffusers:
+
+1. **Never write `import animatediff_ttnn` in `hf/pipeline.py`** — not even indented
+   inside a method. diffusers' `check_imports` regex-scans the file (`^\s*import`), and
+   on **0.32.1 it raises ImportError at load time** for any module not installed, so
+   every user without the package pip-installed would be unable to load the pipeline at
+   all. 0.39.0 only warns. Use `importlib.import_module(PACKAGE_NAME)`.
+   `tests/test_hf_pipeline.py::test_pipeline_py_never_imports_the_package_literally`
+   guards this.
+2. **`__init__` must take named parameters with defaults and no `**kwargs`.** diffusers
+   derives its expected-component list from the signature, so a `**kwargs`-only
+   `__init__` fails with `ValueError: Pipeline ... expected ['kwargs']`.
+
+Also measured: diffusers executes `pipeline.py` out of
+`~/.cache/huggingface/modules/diffusers_modules/`, so the vendored `animatediff_ttnn/`
+is **not** a sibling of `__file__`. `resolve_package()` finds it via
+`config._name_or_path`, falling back to `snapshot_download(code_repo,
+allow_patterns=["animatediff_ttnn/**"])` — which is why `code_repo` is in
+`model_index.json`.
+
+The Space upload is **staged**, not committed. `scripts/publish_to_hub.py --space` assembles `build/space/` from `spaces/` plus six gallery GIFs copied out of `docs/assets/` (see `GALLERY_SOURCES`), and uploads that. `spaces/gallery/` and `build/space/` are git-ignored. The GIFs total ~14 MB and already live in this repo, so committing copies into `spaces/gallery/` would have added them to git history permanently for no benefit. Consequence to remember: a file dropped into `spaces/` by hand reaches the Space, but a new gallery GIF does not unless it is added to `GALLERY_SOURCES`.
