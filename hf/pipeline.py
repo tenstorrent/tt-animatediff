@@ -190,6 +190,19 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
         num_steps: int = 25,
         guidance_scale: float = 7.5,
     ):
+        """Store config. Opens no device and fetches nothing (see class docstring).
+
+        ``base_model``, ``motion_adapter``, and ``lightning_repo`` are
+        declarative metadata only: they record which upstream weights the
+        backend resolves, mirroring the hardcoded defaults in
+        ``animatediff_ttnn.pipeline`` and ``animatediff_ttnn.generation_helpers``.
+        ``__call__`` never reads them and passes nothing derived from them to
+        ``generate_animation()``. They are NOT injection points — passing a
+        different value here (e.g. ``base_model="other/model"``) is accepted,
+        persists in ``self.config``, and changes no generation behaviour
+        whatsoever. Swapping the actual upstream weights requires a code
+        change in ``animatediff_ttnn``, not a config override here.
+        """
         super().__init__()
         self.register_to_config(
             base_model=base_model,
@@ -264,6 +277,15 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
 
         Arguments left as None fall back to the values in ``model_index.json``,
         so ``pipe("a nebula")`` is a complete call.
+
+        ``height``, ``width``, ``temporal_alpha``, and the ``chain_*`` arguments
+        (``chain_from``, ``chain_save``, ``chain_alpha``) are Blackhole/sim-only.
+        The CPU backend (``animatediff_ttnn._generate_cpu()``) accepts no
+        height/width parameters at all and is hardwired to 512x512, and it has
+        no cross-frame temporal-attention or chain-mode support either — all
+        of these are silently ignored on ``mode="cpu"``. This is a real
+        API-surface gotcha: passing them on CPU does not raise, it just does
+        nothing, so this docstring is the only place a caller learns it.
 
         Args:
             mode: "auto" (Blackhole if ttnn imports, else CPU), "blackhole"

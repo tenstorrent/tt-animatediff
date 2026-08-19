@@ -51,6 +51,12 @@ print(pipe.resolved_mode)  # "blackhole" or "cpu" — what actually ran
 Loading is offline-safe and opens no device; nothing is fetched until you call the
 pipeline.
 
+`model_index.json`'s `base_model`, `motion_adapter`, and `lightning_repo` are
+declarative metadata, not configurable inputs: they record the upstream weights this
+pipeline resolves, but `__call__` never reads them, so passing a different value at
+`from_pretrained()` time (e.g. `base_model="other/model"`) is accepted, persists in
+`pipe.config`, and changes nothing about what actually runs.
+
 **On a Blackhole box** (tt-metal built and its `python_env` active), `mode="blackhole"`
 requires the hardware rather than falling back, so a missing runtime is an error instead
 of a silent 100× slowdown:

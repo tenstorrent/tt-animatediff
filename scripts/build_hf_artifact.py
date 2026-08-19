@@ -45,10 +45,17 @@ COPIES = (
     ("docs/model-card.md", "README.md"),
     ("LICENSE", "LICENSE"),
     ("app.py", "app.py"),
+    ("VERSION", "VERSION"),
 )
 
-#: The generated config. Upstream ids live here rather than hardcoded in
-#: pipeline.py so a future adapter swap is a config edit, not a code change.
+#: The generated config. base_model / motion_adapter / lightning_repo are
+#: declarative metadata, NOT injection points: they mirror the upstream ids
+#: that are hardcoded in animatediff_ttnn/pipeline.py and
+#: animatediff_ttnn/generation_helpers.py, so the Hub page records what the
+#: pipeline resolves. hf/pipeline.py's __call__ never reads them, so
+#: overriding them at from_pretrained() time has no effect on generation — an
+#: actual adapter swap requires a code change in animatediff_ttnn, not a
+#: config edit here.
 #: Every non-underscore key must be an __init__ parameter of
 #: TTAnimateDiffPipeline — diffusers silently ignores keys that are not, so an
 #: unbacked key looks like it works while the default quietly wins.
