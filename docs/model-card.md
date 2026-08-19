@@ -84,19 +84,18 @@ pip install 'animatediff-ttnn @ git+https://github.com/tenstorrent/tt-animatedif
 | 3 | TTNN UNet + MotionAdapter injected into the denoising loop | Full MotionAdapter, 7 injection points |
 
 This pipeline runs Phase 2.5 on Blackhole and Phase 1 on CPU. Phase 3 is reached through
-the GitHub CLI (`--motion-adapter`), not through this pipeline.
+this repo's CLI (`--motion-adapter`), not through this pipeline.
 
 ## Measured performance
 
 | Configuration | Hardware | Throughput |
 |---|---|---|
 | `mode="blackhole"`, 25 steps, PNDM | Blackhole P300C | **~12.5 s/frame** |
-| `mode="blackhole"`, 8-step Euler, CFG 7.5 | Blackhole P300C | **~12.0 s/frame** |
-| `mode="cpu"` | x86_64 CPU | ~2 min/frame |
-| `mode="cpu"`, Lightning 4-step | x86_64 CPU | ~20 s/frame |
+| `mode="blackhole"`, 25 steps, Euler, CFG 7.5 | Blackhole P300C | **~12.0 s/frame** |
+| `mode="cpu"` | CPU (any machine) | ~2 min/frame |
+| `mode="cpu"`, Lightning 4-step | CPU (any machine) | ~20 s/frame |
 
-Blackhole figures are 8 frames at 512×512 on a P300C board. CPU figures are the
-reference path, not a target.
+Blackhole figures are 8 frames at 512×512 on a single P300C chip (QB2 board, 4 × P300C), warm model — TTNN JIT already compiled. CPU figures are the reference path, not a target.
 
 ## Limitations
 
