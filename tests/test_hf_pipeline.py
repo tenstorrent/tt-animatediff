@@ -8,8 +8,6 @@ test failure means the adapter is wrong, not that the backend is unavailable.
 """
 
 import importlib.util
-import json
-import shutil
 import sys
 import types
 from pathlib import Path
@@ -82,3 +80,77 @@ def test_output_object_shape(pipeline_module):
     out = pipeline_module.TTAnimateDiffPipelineOutput(frames=frames)
     assert out.frames == frames
     assert out[0] == frames  # BaseOutput tuple access, like AnimateDiffPipelineOutput
+
+
+def _stub_package(monkeypatch, name="animatediff_ttnn"):
+    """Install a stub animatediff_ttnn that records generate_animation calls."""
+    mod = types.ModuleType(name)
+    mod.calls = []
+
+    def generate_animation(**kwargs):
+        mod.calls.append(kwargs)
+        n = kwargs.get("num_frames") or 1
+        return [f"pil-frame-{i}" for i in range(n)]
+
+    mod.generate_animation = generate_animation
+    monkeypatch.setitem(sys.modules, name, mod)
+    return mod
+
+
+def test_resolve_package_prefers_installed(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    assert pipeline_module.resolve_package(None, None) is stub
+
+
+def test_resolve_package_falls_back_to_load_source(pipeline_module, monkeypatch, tmp_path):
+    """When the package is not installed, the directory from_pretrained loaded
+    from (config._name_or_path) is put on sys.path."""
+    pkg = tmp_path / "animatediff_ttnn"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("MARKER = 'vendored'\n")
+    monkeypatch.setattr(
+        pipeline_module, "_import_package", lambda: (_ for _ in ()).throw(ModuleNotFoundError())
+    )
+    monkeypatch.setattr(pipeline_module, "_import_from_root", lambda root: root)
+
+    assert pipeline_module.resolve_package(None, str(tmp_path)) == tmp_path
+
+
+def test_resolve_package_downloads_vendored_code_as_last_resort(
+    pipeline_module, monkeypatch, tmp_path
+):
+    snapshot = tmp_path / "snap"
+    (snapshot / "animatediff_ttnn").mkdir(parents=True)
+    (snapshot / "animatediff_ttnn" / "__init__.py").write_text("MARKER = 'snapshot'\n")
+    monkeypatch.setattr(
+        pipeline_module, "_import_package", lambda: (_ for _ in ()).throw(ModuleNotFoundError())
+    )
+    monkeypatch.setattr(pipeline_module, "_import_from_root", lambda root: root)
+    seen = {}
+
+    def fake_snapshot_download(repo_id, allow_patterns=None, **kw):
+        seen["repo_id"] = repo_id
+        seen["allow_patterns"] = allow_patterns
+        return str(snapshot)
+
+    monkeypatch.setattr(pipeline_module, "_snapshot_download", fake_snapshot_download)
+
+    assert pipeline_module.resolve_package("episod/tt-animatediff", None) == snapshot
+    assert seen["repo_id"] == "episod/tt-animatediff"
+    assert seen["allow_patterns"] == ["animatediff_ttnn/**"]
+
+
+def test_resolve_package_raises_with_install_hint(pipeline_module, monkeypatch):
+    monkeypatch.setattr(
+        pipeline_module, "_import_package", lambda: (_ for _ in ()).throw(ModuleNotFoundError())
+    )
+    monkeypatch.setattr(pipeline_module, "_import_from_root", lambda root: None)
+    monkeypatch.setattr(
+        pipeline_module,
+        "_snapshot_download",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("offline")),
+    )
+    with pytest.raises(ImportError) as excinfo:
+        pipeline_module.resolve_package("episod/tt-animatediff", None)
+    assert "pip install" in str(excinfo.value)
+    assert "tt-animatediff" in str(excinfo.value)

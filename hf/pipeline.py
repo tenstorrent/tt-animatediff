@@ -38,7 +38,7 @@ import importlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -55,6 +55,92 @@ PACKAGE_NAME = "animatediff_ttnn"
 
 #: Compute backends accepted by ``__call__``; forwarded to generate_animation().
 VALID_MODES = ("auto", "blackhole", "cpu", "sim")
+
+
+#: Where a user without the package installed is told to get it.
+_INSTALL_HINT = (
+    "pip install 'animatediff-ttnn @ "
+    "git+https://github.com/tenstorrent/tt-animatediff'"
+)
+
+
+def _import_package():
+    """Import the delegate package if it is already importable."""
+    return importlib.import_module(PACKAGE_NAME)
+
+
+def _import_from_root(root: Path):
+    """Put ``root`` on sys.path and import the package from it, or return None.
+
+    ``root`` is a directory *containing* an ``animatediff_ttnn/`` package —
+    either the directory from_pretrained loaded from, or a Hub snapshot.
+    """
+    if not (root / PACKAGE_NAME / "__init__.py").is_file():
+        return None
+    sys.path.insert(0, str(root.resolve()))
+    importlib.invalidate_caches()
+    return importlib.import_module(PACKAGE_NAME)
+
+
+def _snapshot_download(repo_id: str, allow_patterns=None, **kwargs) -> str:
+    """Fetch just the vendored package from the Hub. Seam for tests."""
+    hub = importlib.import_module("huggingface_hub")
+    return hub.snapshot_download(
+        repo_id=repo_id, allow_patterns=allow_patterns, **kwargs
+    )
+
+
+def resolve_package(code_repo: Optional[str], source: Optional[str]):
+    """Return the animatediff_ttnn module, making it importable if needed.
+
+    Three layers, cheapest first:
+
+    1. The installed package — the documented path for a Blackhole user, who
+       has this repo checked out and installed anyway.
+    2. The directory ``from_pretrained`` loaded from (``config._name_or_path``).
+       diffusers executes this file out of its own module cache, so the
+       vendored copy is NOT a sibling of ``__file__`` and this indirection is
+       the only way to find it after a local-directory load.
+    3. The Hub copy of the vendored package (a few hundred KB of pure Python,
+       no weights). This is what lets ``pipe(...)`` work on a machine that has
+       only diffusers installed. It is the first step here that touches the
+       network, and it happens at generation time — never during
+       ``from_pretrained``.
+
+    Raises:
+        ImportError: every layer failed; the message carries the install command.
+    """
+    try:
+        return _import_package()
+    except ModuleNotFoundError:
+        pass
+
+    if source:
+        candidate = Path(source)
+        if candidate.is_dir():
+            module = _import_from_root(candidate)
+            if module is not None:
+                return module
+
+    if code_repo:
+        try:
+            snapshot = _snapshot_download(
+                code_repo, allow_patterns=[f"{PACKAGE_NAME}/**"]
+            )
+        except Exception as exc:  # network down, gated repo, bad id
+            raise ImportError(
+                f"{PACKAGE_NAME} is not installed and the vendored copy could not "
+                f"be fetched from {code_repo!r} ({exc}). Install it with:\n"
+                f"    {_INSTALL_HINT}"
+            ) from exc
+        module = _import_from_root(Path(snapshot))
+        if module is not None:
+            return module
+
+    raise ImportError(
+        f"{PACKAGE_NAME} could not be imported, found next to the loaded "
+        f"pipeline, or fetched from the Hub. Install it with:\n    {_INSTALL_HINT}"
+    )
 
 
 @dataclass
