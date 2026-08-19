@@ -212,9 +212,17 @@ def export_mp4(
             "  macOS:  brew install ffmpeg"
         )
 
-    # Feed frames to ffmpeg via stdin as raw PNG data. This avoids writing
-    # temporary files and works regardless of output path permissions.
-    w, h = frames[0].size
+    # Encode all frames as PNGs in memory, then hand them to ffmpeg via
+    # communicate(). communicate() drains stderr concurrently with writing
+    # stdin, preventing the deadlock that proc.wait() + stderr=PIPE causes
+    # when ffmpeg's stderr output exceeds the OS pipe buffer (~64 KB).
+    # It also handles BrokenPipeError internally if ffmpeg exits early.
+    all_png = io.BytesIO()
+    for frame in frames:
+        buf = io.BytesIO()
+        frame.save(buf, format="PNG")
+        all_png.write(buf.getvalue())
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "image2pipe",
@@ -226,16 +234,11 @@ def export_mp4(
         output_path,
     ]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    for frame in frames:
-        buf = io.BytesIO()
-        frame.save(buf, format="PNG")
-        proc.stdin.write(buf.getvalue())
-    proc.stdin.close()
-    proc.wait()
+    _, stderr_data = proc.communicate(input=all_png.getvalue())
     if proc.returncode != 0:
         raise RuntimeError(
             f"ffmpeg exited with code {proc.returncode}:\n"
-            + proc.stderr.read().decode(errors="replace")
+            + stderr_data.decode(errors="replace")
         )
 
 
@@ -269,13 +272,17 @@ def _generate_cpu(
     from .pipeline import create_animatediff_pipeline, create_lightning_pipeline, generate as _gen
 
     key = (use_lightning, lightning_steps)
-    with _cpu_cache_lock:
-        if key not in _cpu_pipe_cache:
-            _cpu_pipe_cache[key] = (
-                create_lightning_pipeline(step=lightning_steps)
-                if use_lightning
-                else create_animatediff_pipeline()
-            )
+    if key not in _cpu_pipe_cache:
+        # Build outside the lock so concurrent callers with different keys
+        # don't serialize. Two threads building the same key is safe —
+        # setdefault stores only the first and the other is discarded.
+        new_pipe = (
+            create_lightning_pipeline(step=lightning_steps)
+            if use_lightning
+            else create_animatediff_pipeline()
+        )
+        with _cpu_cache_lock:
+            _cpu_pipe_cache.setdefault(key, new_pipe)
     pipe = _cpu_pipe_cache[key]
     return _gen(
         pipe,

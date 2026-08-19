@@ -39,6 +39,7 @@ NEG_DEFAULT = "blurry, low quality, distorted, text, people, faces, modern build
 _cpu_pipes: dict = {}  # keyed by (lightning: bool, lightning_steps: int)
 _bh_device = None      # cached Blackhole/sim MeshDevice
 _bh_models = None      # cached (ttnn_model, ttnn_vae, config, torch_time_proj)
+_bh_lock = threading.Lock()
 
 
 def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
@@ -60,13 +61,15 @@ def _probe_sim(sim_so: Path) -> str | None:
     the Gradio server survives and can surface a clear error message.
     """
     import subprocess
+    # repr() produces a properly quoted and escaped Python string literal,
+    # preventing SyntaxError when the path contains single quotes or backslashes.
     probe = (
         "import sys, os; "
-        f"os.environ['TT_METAL_SIMULATOR']='{sim_so}'; "
+        f"os.environ['TT_METAL_SIMULATOR']={repr(str(sim_so))}; "
         "os.environ.setdefault('TT_METAL_SLOW_DISPATCH_MODE','1'); "
         "os.environ.setdefault('TT_METAL_DISABLE_SFPLOADMACRO','1'); "
         "os.environ.setdefault('TT_METAL_ARCH_NAME','blackhole'); "
-        f"sys.path.insert(0,'{Path.home() / 'tt-metal'}'); "
+        f"sys.path.insert(0,{repr(str(Path.home() / 'tt-metal'))}); "
         "import ttnn; "
         "d=ttnn.open_mesh_device(mesh_shape=ttnn.MeshShape(1,1),physical_device_ids=[0],l1_small_size=32768); "
         "ttnn.close_mesh_device(d); "
@@ -94,49 +97,52 @@ def _ensure_bh_device(mode: str, sim_path: str):
     global _bh_device, _bh_models
     if _bh_device is not None:
         return _bh_device, _bh_models
+    with _bh_lock:
+        if _bh_device is not None:
+            return _bh_device, _bh_models
 
-    if mode == "sim":
-        sim_so = Path(sim_path).expanduser() if sim_path else Path.home() / "sim/libttsim_bh.so"
-        if not sim_so.exists():
-            raise FileNotFoundError(
-                f"ttsim binary not found at {sim_so}. "
-                "Download from https://github.com/tenstorrent/ttsim/releases "
-                "or set the Sim binary path field."
+        if mode == "sim":
+            sim_so = Path(sim_path).expanduser() if sim_path else Path.home() / "sim/libttsim_bh.so"
+            if not sim_so.exists():
+                raise FileNotFoundError(
+                    f"ttsim binary not found at {sim_so}. "
+                    "Download from https://github.com/tenstorrent/ttsim/releases "
+                    "or set the Sim binary path field."
+                )
+            # Probe in a subprocess so an abort() in ttsim doesn't kill Gradio.
+            probe_err = _probe_sim(sim_so)
+            if probe_err is not None:
+                raise RuntimeError(
+                    f"ttsim device open failed: {probe_err}\n\n"
+                    "This usually means the ttsim binary is incompatible with the "
+                    "installed tt-metal version.  Download a matching ttsim release from "
+                    "https://github.com/tenstorrent/ttsim/releases and update the path."
+                )
+            os.environ["TT_METAL_SIMULATOR"] = str(sim_so)
+            os.environ.setdefault("TT_METAL_SLOW_DISPATCH_MODE", "1")
+            os.environ.setdefault("TT_METAL_DISABLE_SFPLOADMACRO", "1")
+            os.environ.setdefault("TT_METAL_ARCH_NAME", "blackhole")
+
+        TT_METAL_PATH = Path.home() / "tt-metal"
+        sys.path.insert(0, str(TT_METAL_PATH))
+
+        from animatediff_ttnn.ttnn_pipeline import setup_blackhole, _ensure_tt_metal_path
+        import ttnn
+        from models.demos.vision.generative.stable_diffusion.wormhole.common import SD_L1_SMALL_SIZE
+
+        if mode == "sim":
+            _ensure_tt_metal_path()
+            _bh_device = ttnn.open_mesh_device(
+                mesh_shape=ttnn.MeshShape(1, 1),
+                physical_device_ids=[0],
+                l1_small_size=SD_L1_SMALL_SIZE,
             )
-        # Probe in a subprocess so an abort() in ttsim doesn't kill Gradio.
-        probe_err = _probe_sim(sim_so)
-        if probe_err is not None:
-            raise RuntimeError(
-                f"ttsim device open failed: {probe_err}\n\n"
-                "This usually means the ttsim binary is incompatible with the "
-                "installed tt-metal version.  Download a matching ttsim release from "
-                "https://github.com/tenstorrent/ttsim/releases and update the path."
-            )
-        os.environ["TT_METAL_SIMULATOR"] = str(sim_so)
-        os.environ.setdefault("TT_METAL_SLOW_DISPATCH_MODE", "1")
-        os.environ.setdefault("TT_METAL_DISABLE_SFPLOADMACRO", "1")
-        os.environ.setdefault("TT_METAL_ARCH_NAME", "blackhole")
+        else:
+            _bh_device = setup_blackhole(device_ids=[0])
 
-    TT_METAL_PATH = Path.home() / "tt-metal"
-    sys.path.insert(0, str(TT_METAL_PATH))
-
-    from animatediff_ttnn.ttnn_pipeline import setup_blackhole, _ensure_tt_metal_path
-    import ttnn
-    from models.demos.vision.generative.stable_diffusion.wormhole.common import SD_L1_SMALL_SIZE
-
-    if mode == "sim":
-        _ensure_tt_metal_path()
-        _bh_device = ttnn.open_mesh_device(
-            mesh_shape=ttnn.MeshShape(1, 1),
-            physical_device_ids=[0],
-            l1_small_size=SD_L1_SMALL_SIZE,
-        )
-    else:
-        _bh_device = setup_blackhole(device_ids=[0])
-
-    from animatediff_ttnn.generation_helpers import load_sd14_ttnn
-    _bh_models = load_sd14_ttnn(_bh_device)
-    return _bh_device, _bh_models
+        from animatediff_ttnn.generation_helpers import load_sd14_ttnn
+        _bh_models = load_sd14_ttnn(_bh_device)
+        return _bh_device, _bh_models
 
 
 

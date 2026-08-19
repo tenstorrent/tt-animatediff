@@ -77,8 +77,13 @@ def ensure_blackhole(
             from animatediff_ttnn.ttnn_pipeline import setup_blackhole
             _device = setup_blackhole(device_ids=[0])
 
-        from animatediff_ttnn.generation_helpers import load_sd14_ttnn
-        _models = load_sd14_ttnn(_device)
+        try:
+            from animatediff_ttnn.generation_helpers import load_sd14_ttnn
+            _models = load_sd14_ttnn(_device)
+        except Exception:
+            # Reset so future calls don't hit the fast-path and return (device, None).
+            _device = None
+            raise
 
         return _device, _models
 
