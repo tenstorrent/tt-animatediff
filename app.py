@@ -7,8 +7,14 @@ Local (Blackhole hardware):
     pip install -e ".[ui]"
     python app.py
 
-HuggingFace Spaces (ttsim, no hardware):
-    Deployed from spaces/ — sets SPACE_MODE=sim automatically.
+HuggingFace Spaces:
+    spaces/app.py (not this file) is what's deployed — a separate, capped
+    CPU-Lightning demo that loads the published episod/tt-animatediff
+    pipeline via from_pretrained() rather than importing this module. This
+    file (the repo-root app.py) is the local Blackhole/CPU UI and is also
+    vendored verbatim into the Hugging Face model artifact as a usage
+    example (see scripts/build_hf_artifact.py); it is not itself deployed
+    as a Space.
 
 Streaming: the generate callback is a Python generator. After each denoising
 step, _latent_preview() converts the current noisy latents to a colourised

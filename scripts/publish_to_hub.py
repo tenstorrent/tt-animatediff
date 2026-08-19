@@ -118,7 +118,7 @@ def publish(
         print(f"  ... and {len(files) - limit} more")
 
     for path in files:
-        if path.suffix in {".pt", ".ckpt", ".safetensors", ".bin"}:
+        if path.suffix in {".pt", ".ckpt", ".safetensors", ".bin", ".pth", ".gguf", ".onnx", ".h5"}:
             print(f"REFUSING: weight-shaped file in the upload: {path}")
             return 1
 
@@ -138,7 +138,6 @@ def publish(
     if repo_type == "space":
         create_kwargs["space_sdk"] = "gradio"
 
-    api = HfApi()
     api.create_repo(**create_kwargs)
 
     try:
