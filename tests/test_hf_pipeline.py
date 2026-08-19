@@ -304,6 +304,75 @@ def test_output_type_np_stacks_frames(pipeline_module, monkeypatch):
     assert out.frames.shape == (2, 8, 8, 3)
 
 
+def test_call_forwards_only_real_generate_animation_kwargs():
+    """__call__'s whole job is forwarding kwargs into the real
+    animatediff_ttnn.generate_animation(). Every other test in this file
+    stubs that package with a **kwargs-only fake, so a misspelled or renamed
+    kwarg would pass the entire suite and only raise TypeError on a real
+    user's first call.
+
+    This test imports the REAL animatediff_ttnn (in-repo, no device opened,
+    no network touched — see CLAUDE.md) and cross-checks its actual
+    inspect.signature() against the keyword arguments hf/pipeline.py's
+    __call__ actually passes to generate_animation(...).
+
+    The forwarded set is derived by parsing pipeline.py's source with `ast`
+    and reading the keywords off the real generate_animation(...) call node
+    — not by re-typing the argument list into this test. A hand-copied list
+    is exactly the kind of thing that goes stale the next time __call__
+    changes; parsing the actual call cannot drift out of sync with it. If
+    someone renames e.g. ``temporal_alpha=`` to ``temporal_alpha_value=`` in
+    the call, or a future animatediff_ttnn drops/renames a parameter, the
+    forwarded set and the real signature stop overlapping and this test
+    fails — whichever side changed.
+    """
+    import ast
+    import inspect
+
+    import animatediff_ttnn
+
+    tree = ast.parse(PIPELINE_SRC.read_text())
+
+    call_node = None
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "generate_animation"
+        ):
+            call_node = node
+            break
+    assert call_node is not None, (
+        "could not find a `....generate_animation(...)` call in hf/pipeline.py "
+        "— has __call__ stopped delegating to it?"
+    )
+
+    forwarded = {kw.arg for kw in call_node.keywords if kw.arg is not None}
+    assert forwarded, "found the generate_animation(...) call but it passes no keyword arguments"
+
+    real_params = set(inspect.signature(animatediff_ttnn.generate_animation).parameters)
+    unbacked = forwarded - real_params
+    assert not unbacked, (
+        f"hf/pipeline.py forwards keyword(s) {sorted(unbacked)} that are not "
+        f"parameters of the real animatediff_ttnn.generate_animation "
+        f"signature ({sorted(real_params)}). A caller's first real generation "
+        "would fail with TypeError even though the (stub-based) test suite "
+        "is green."
+    )
+
+    # A floor, not just a non-empty check: catches the call being replaced by
+    # something that forwards a nearly-empty, technically-non-empty set.
+    # hf/pipeline.py's __call__ forwards 15 keyword arguments today
+    # (prompt, negative_prompt, num_frames, num_steps, guidance_scale, seed,
+    # temporal_alpha, height, width, mode, use_lightning, lightning_steps,
+    # chain_from, chain_save, chain_alpha). Update this count if that set
+    # deliberately changes.
+    assert len(forwarded) == 15, (
+        f"expected 15 forwarded keyword arguments, found {len(forwarded)}: "
+        f"{sorted(forwarded)}"
+    )
+
+
 def test_init_opens_no_device_and_generates_nothing(pipeline_module, monkeypatch):
     """Constructing the pipeline must not import ttnn, open a device, or generate."""
     stub = _stub_package(monkeypatch)
