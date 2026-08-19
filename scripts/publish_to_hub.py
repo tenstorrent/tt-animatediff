@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -41,6 +42,16 @@ SPACE_DIR = ROOT / "spaces"
 # artifact's README.md, so upload_folder already applies the card. A second
 # metadata/card write from this script would be a second source of truth.
 
+# Gallery sources: (source_path, destination_filename in staging bundle)
+GALLERY_SOURCES = [
+    (ROOT / "docs" / "assets" / "gallery" / "arctic-wave-standard.gif", "arctic-wave-standard.gif"),
+    (ROOT / "docs" / "assets" / "gallery" / "cathedral-standard.gif", "cathedral-standard.gif"),
+    (ROOT / "docs" / "assets" / "gallery" / "crystal-cave-standard.gif", "crystal-cave-standard.gif"),
+    (ROOT / "docs" / "assets" / "chain" / "glasses-cosmic.gif", "glasses-cosmic.gif"),
+    (ROOT / "docs" / "assets" / "chain" / "glasses-ocean.gif", "glasses-ocean.gif"),
+    (ROOT / "docs" / "assets" / "mayan-glyphs" / "Q1" / "imix.gif", "mayan-imix.gif"),
+]
+
 #: What --verify must find in the published config. If diffusers ever changes
 #: custom-pipeline resolution, this is the check that catches it.
 EXPECTED_CONFIG = {
@@ -49,6 +60,39 @@ EXPECTED_CONFIG = {
     "temporal_alpha": 0.35,
     "num_frames": 8,
 }
+
+
+def stage_space() -> Path:
+    """Stage Space files and gallery assets into build/space/.
+
+    Copies everything from spaces/ plus the six gallery GIFs into build/space/,
+    rebuilding from scratch each call to prevent stale uploads.
+
+    Returns: Path to the staged build/space/ directory.
+    Raises: FileNotFoundError if any gallery source is missing.
+    """
+    build_space = ROOT / "build" / "space"
+
+    # Rebuild from scratch
+    if build_space.exists():
+        shutil.rmtree(build_space)
+    build_space.mkdir(parents=True, exist_ok=True)
+
+    # Copy all files from spaces/ (including README.md, app.py, requirements.txt)
+    for item in SPACE_DIR.iterdir():
+        if item.is_file():
+            shutil.copy2(item, build_space / item.name)
+
+    # Create gallery directory and copy GIFs
+    gallery_dir = build_space / "gallery"
+    gallery_dir.mkdir(parents=True, exist_ok=True)
+
+    for source, dest_name in GALLERY_SOURCES:
+        if not source.exists():
+            raise FileNotFoundError(f"Gallery source missing: {source}")
+        shutil.copy2(source, gallery_dir / dest_name)
+
+    return build_space
 
 
 def publish(
@@ -156,7 +200,13 @@ def main(argv=None) -> int:
         if not SPACE_DIR.is_dir():
             print(f"missing {SPACE_DIR}")
             return 1
-        return publish(SPACE_REPO, SPACE_DIR, "space", args.yes, args.dry_run)
+        print("staging Space files and gallery assets ...")
+        try:
+            folder = stage_space()
+        except FileNotFoundError as e:
+            print(f"FAILED: {e}")
+            return 1
+        return publish(SPACE_REPO, folder, "space", args.yes, args.dry_run)
 
     print("building the artifact ...")
     folder = build_artifact(out_dir=DEFAULT_OUT)

@@ -16,3 +16,7 @@ scripts/record/recordings/*.mp4
 
 # HF artifact staging (rebuilt by scripts/build_hf_artifact.py)
 build/hf/
+
+# Space gallery and staging (rebuilt by scripts/publish_to_hub.py)
+spaces/gallery/
+build/space/

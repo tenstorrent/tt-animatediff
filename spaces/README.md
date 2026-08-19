@@ -5,20 +5,20 @@ colorFrom: teal
 colorTo: indigo
 sdk: gradio
 sdk_version: "4.44.1"
-app_file: spaces/app.py
+app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: AnimateDiff on Tenstorrent Blackhole (ttsim)
+short_description: AnimateDiff on Tenstorrent Blackhole — capped CPU demo
 ---
 
-# tt-animatediff — HuggingFace Space
+# tt-animatediff — CPU reference demo
 
-Generates animated GIFs using SD 1.4 with cross-frame temporal attention,
-running on the **ttsim** Blackhole simulator (bit-exact with real hardware).
+Loads [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff) and runs
+the **CPU** path with a distilled 4-step Lightning checkpoint, capped to 4 frames at
+384×384 for free-tier hardware.
 
-No Tenstorrent silicon required — ttsim runs on standard CPU x86_64.
-Slower than real hardware (~10–100× per operation); use 2 frames × 4 steps
-for a quick smoke test.
+Tenstorrent Blackhole is not reachable from Hugging Face infrastructure, so nothing here
+reflects hardware performance: a P300C runs the same model at **~12.5 s/frame**, 25
+steps, 512×512. The gallery in the app shows real Blackhole output.
 
-**Hardware path:** [github.com/tenstorrent/tt-animatediff](https://github.com/tenstorrent/tt-animatediff)
-**Showcase:** [tenstorrent.github.io/tt-animatediff](https://tenstorrent.github.io/tt-animatediff/)
+**Code:** [github.com/tenstorrent/tt-animatediff](https://github.com/tenstorrent/tt-animatediff)
