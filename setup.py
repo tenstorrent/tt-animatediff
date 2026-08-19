@@ -49,6 +49,10 @@ setup(
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
+            # tt-lang's functional simulator (sim.ttnnsim) imports greenlet.
+            # Without it tests/test_ttlang_temporal_attention.py silently
+            # importorskip()s its 9 simulator tests instead of running them.
+            "greenlet>=3.0.0",
         ],
         "ui": [
             "gradio>=4.0.0",
