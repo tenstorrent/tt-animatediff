@@ -108,9 +108,13 @@ def test_resolve_package_falls_back_to_load_source(pipeline_module, monkeypatch,
     pkg = tmp_path / "animatediff_ttnn"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("MARKER = 'vendored'\n")
-    monkeypatch.setattr(
-        pipeline_module, "_import_package", lambda: (_ for _ in ()).throw(ModuleNotFoundError())
-    )
+
+    def not_installed():
+        exc = ModuleNotFoundError("No module named 'animatediff_ttnn'")
+        exc.name = "animatediff_ttnn"
+        raise exc
+
+    monkeypatch.setattr(pipeline_module, "_import_package", not_installed)
     monkeypatch.setattr(pipeline_module, "_import_from_root", lambda root: root)
 
     assert pipeline_module.resolve_package(None, str(tmp_path)) == tmp_path
@@ -122,9 +126,13 @@ def test_resolve_package_downloads_vendored_code_as_last_resort(
     snapshot = tmp_path / "snap"
     (snapshot / "animatediff_ttnn").mkdir(parents=True)
     (snapshot / "animatediff_ttnn" / "__init__.py").write_text("MARKER = 'snapshot'\n")
-    monkeypatch.setattr(
-        pipeline_module, "_import_package", lambda: (_ for _ in ()).throw(ModuleNotFoundError())
-    )
+
+    def not_installed():
+        exc = ModuleNotFoundError("No module named 'animatediff_ttnn'")
+        exc.name = "animatediff_ttnn"
+        raise exc
+
+    monkeypatch.setattr(pipeline_module, "_import_package", not_installed)
     monkeypatch.setattr(pipeline_module, "_import_from_root", lambda root: root)
     seen = {}
 
@@ -141,9 +149,12 @@ def test_resolve_package_downloads_vendored_code_as_last_resort(
 
 
 def test_resolve_package_raises_with_install_hint(pipeline_module, monkeypatch):
-    monkeypatch.setattr(
-        pipeline_module, "_import_package", lambda: (_ for _ in ()).throw(ModuleNotFoundError())
-    )
+    def not_installed():
+        exc = ModuleNotFoundError("No module named 'animatediff_ttnn'")
+        exc.name = "animatediff_ttnn"
+        raise exc
+
+    monkeypatch.setattr(pipeline_module, "_import_package", not_installed)
     monkeypatch.setattr(pipeline_module, "_import_from_root", lambda root: None)
     monkeypatch.setattr(
         pipeline_module,
@@ -154,3 +165,30 @@ def test_resolve_package_raises_with_install_hint(pipeline_module, monkeypatch):
         pipeline_module.resolve_package("episod/tt-animatediff", None)
     assert "pip install" in str(excinfo.value)
     assert "tt-animatediff" in str(excinfo.value)
+
+
+def test_resolve_package_propagates_import_error_from_transitive_dep(
+    pipeline_module, monkeypatch
+):
+    """If animatediff_ttnn is installed but has a broken transitive dependency,
+    that ModuleNotFoundError (naming the *dependency*, not the package) must
+    propagate — layers 2 and 3 cannot fix an installed-but-broken package.
+    Verify the error is re-raised, not swallowed and fallen through to _snapshot_download."""
+
+    def broken_import():
+        # Simulate: animatediff_ttnn imports ttnn; ttnn import fails
+        exc = ModuleNotFoundError("No module named 'ttnn'")
+        exc.name = "ttnn"  # The failing module is ttnn, not animatediff_ttnn
+        raise exc
+
+    monkeypatch.setattr(pipeline_module, "_import_package", broken_import)
+    fail_if_called = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("_snapshot_download should not be called")
+    )
+    monkeypatch.setattr(pipeline_module, "_snapshot_download", fail_if_called)
+
+    # The error from the transitive dependency should propagate out,
+    # not be swallowed so that layer 3 gets called.
+    with pytest.raises(ModuleNotFoundError) as excinfo:
+        pipeline_module.resolve_package("episod/tt-animatediff", None)
+    assert str(excinfo.value) == "No module named 'ttnn'"

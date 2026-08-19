@@ -112,8 +112,13 @@ def resolve_package(code_repo: Optional[str], source: Optional[str]):
     """
     try:
         return _import_package()
-    except ModuleNotFoundError:
-        pass
+    except ModuleNotFoundError as exc:
+        # Only treat it as "package not installed" if it's actually the animatediff_ttnn
+        # package that failed to import. If exc.name is None or names a different
+        # module (e.g. a transitive dependency like ttnn), it's a real import error
+        # in an installed package and layers 2/3 cannot fix it — propagate instead.
+        if exc.name != PACKAGE_NAME:
+            raise
 
     if source:
         candidate = Path(source)
