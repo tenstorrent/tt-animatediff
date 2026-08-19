@@ -86,8 +86,8 @@ print(pipe.resolved_mode)  # "blackhole" or "cpu"
 - Model repo: [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
   — no weights; SD 1.4 and the MotionAdapter are resolved from upstream at generation time.
 - Demo Space: [`episod/tt-animatediff-demo`](https://huggingface.co/spaces/episod/tt-animatediff-demo)
-  — capped CPU-Lightning reference (4 frames, 4 steps, 384×384). Not representative of
-  Blackhole performance.
+  — capped CPU-Lightning reference (4 frames, 2 or 4 steps, 512×512). Not representative
+  of Blackhole performance; a 4-frame run takes several minutes on free-tier CPU.
 
 Rebuild and republish with `scripts/build_hf_artifact.py` and
 `scripts/publish_to_hub.py`; the Hub copy is generated from this checkout, never edited
