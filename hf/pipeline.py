@@ -90,6 +90,19 @@ def _snapshot_download(repo_id: str, allow_patterns=None, **kwargs) -> str:
     )
 
 
+def _ttnn_available() -> bool:
+    """True when the TTNN runtime can be imported in this process.
+
+    Broad except on purpose: a half-installed tt-metal raises things other than
+    ImportError, and every one of them means "no Blackhole backend here".
+    """
+    try:
+        importlib.import_module("ttnn")
+        return True
+    except Exception:
+        return False
+
+
 def resolve_package(code_repo: Optional[str], source: Optional[str]):
     """Return the animatediff_ttnn module, making it importable if needed.
 
@@ -198,3 +211,109 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
         Space, where ``mode="auto"`` always lands on CPU.
         """
         return self._resolved_mode
+
+    def _resolve_mode(self, mode: str) -> str:
+        """Map the requested backend onto one generate_animation() accepts.
+
+        ``auto`` is the only mode that falls back silently — that is its
+        documented purpose. An explicit ``blackhole`` request raises instead,
+        because a caller who asked for hardware needs to know they did not get
+        it rather than quietly waiting minutes per frame on CPU.
+        """
+        if mode not in VALID_MODES:
+            raise ValueError(
+                f"mode must be one of {VALID_MODES}, got {mode!r}"
+            )
+        if mode == "auto":
+            return "blackhole" if _ttnn_available() else "cpu"
+        if mode == "blackhole" and not _ttnn_available():
+            raise RuntimeError(
+                "mode='blackhole' was requested but the ttnn runtime is not "
+                "importable. Install tt-metal and activate its python_env "
+                "(source ~/tt-metal/python_env/bin/activate), or use "
+                "mode='cpu' / mode='auto'. See "
+                "https://github.com/tenstorrent/tt-animatediff#modes-reference"
+            )
+        return mode
+
+    def _config_default(self, value, key):
+        """Fall back to the configured default when an argument was omitted."""
+        return self.config[key] if value is None else value
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        num_frames: Optional[int] = None,
+        num_steps: Optional[int] = None,
+        guidance_scale: Optional[float] = None,
+        seed: int = 42,
+        temporal_alpha: Optional[float] = None,
+        height: int = 512,
+        width: int = 512,
+        mode: str = "auto",
+        use_lightning: bool = False,
+        lightning_steps: int = 4,
+        chain_from: Optional[str] = None,
+        chain_save: Optional[str] = None,
+        chain_alpha: float = 0.6,
+        output_type: str = "pil",
+    ) -> TTAnimateDiffPipelineOutput:
+        """Generate an animation.
+
+        Arguments left as None fall back to the values in ``model_index.json``,
+        so ``pipe("a nebula")`` is a complete call.
+
+        Args:
+            mode: "auto" (Blackhole if ttnn imports, else CPU), "blackhole"
+                (require hardware), "cpu", or "sim" (ttsim virtual device).
+            output_type: "pil" for PIL Images, "np" for a stacked
+                ``[frames, H, W, 3]`` float array in [0, 1].
+
+        Returns:
+            TTAnimateDiffPipelineOutput with ``.frames``.
+
+        Raises:
+            ValueError: unknown ``mode`` or ``output_type``.
+            RuntimeError: ``mode="blackhole"`` with no ttnn runtime, or a
+                device/weight-load failure propagated from the backend.
+            ImportError: the animatediff_ttnn package could not be resolved.
+        """
+        if output_type not in ("pil", "np"):
+            raise ValueError(
+                f"output_type must be 'pil' or 'np', got {output_type!r}"
+            )
+
+        resolved = self._resolve_mode(mode)
+        package = resolve_package(
+            self.config.get("code_repo"), self.config.get("_name_or_path")
+        )
+
+        frames = package.generate_animation(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_frames=self._config_default(num_frames, "num_frames"),
+            num_steps=self._config_default(num_steps, "num_steps"),
+            guidance_scale=self._config_default(guidance_scale, "guidance_scale"),
+            seed=seed,
+            temporal_alpha=self._config_default(temporal_alpha, "temporal_alpha"),
+            height=height,
+            width=width,
+            mode=resolved,
+            use_lightning=use_lightning,
+            lightning_steps=lightning_steps,
+            chain_from=chain_from,
+            chain_save=chain_save,
+            chain_alpha=chain_alpha,
+        )
+
+        # Only record the backend once generation actually succeeded, so
+        # resolved_mode never reports a run that did not happen.
+        self._resolved_mode = resolved
+
+        if output_type == "np":
+            return TTAnimateDiffPipelineOutput(
+                frames=np.stack([np.asarray(f, dtype=np.float32) / 255.0 for f in frames])
+            )
+        return TTAnimateDiffPipelineOutput(frames=list(frames))

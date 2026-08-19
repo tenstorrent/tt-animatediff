@@ -192,3 +192,128 @@ def test_resolve_package_propagates_import_error_from_transitive_dep(
     with pytest.raises(ModuleNotFoundError) as excinfo:
         pipeline_module.resolve_package("episod/tt-animatediff", None)
     assert str(excinfo.value) == "No module named 'ttnn'"
+
+
+def test_call_delegates_with_config_defaults(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: False)
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+
+    out = pipe("a swirling nebula")
+
+    assert len(stub.calls) == 1
+    call = stub.calls[0]
+    assert call["prompt"] == "a swirling nebula"
+    assert call["num_frames"] == 8          # from config
+    assert call["num_steps"] == 25          # from config
+    assert call["guidance_scale"] == 7.5    # from config
+    assert call["temporal_alpha"] == 0.35   # from config
+    assert call["mode"] == "cpu"            # auto with no ttnn
+    assert call["seed"] == 42
+    assert out.frames == [f"pil-frame-{i}" for i in range(8)]
+
+
+def test_call_explicit_arguments_win_over_config(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: False)
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+
+    pipe("x", num_frames=4, num_steps=6, guidance_scale=1.0, temporal_alpha=0.9, seed=7)
+
+    call = stub.calls[0]
+    assert (call["num_frames"], call["num_steps"]) == (4, 6)
+    assert call["guidance_scale"] == 1.0
+    assert call["temporal_alpha"] == 0.9
+    assert call["seed"] == 7
+
+
+def test_call_forwards_chain_and_lightning_arguments(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: True)
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+
+    pipe(
+        "x",
+        negative_prompt="blurry",
+        use_lightning=True,
+        lightning_steps=8,
+        chain_from="prev.pt",
+        chain_save="next.pt",
+        chain_alpha=0.4,
+        height=384,
+        width=384,
+    )
+
+    call = stub.calls[0]
+    assert call["negative_prompt"] == "blurry"
+    assert call["use_lightning"] is True
+    assert call["lightning_steps"] == 8
+    assert call["chain_from"] == "prev.pt"
+    assert call["chain_save"] == "next.pt"
+    assert call["chain_alpha"] == 0.4
+    assert (call["height"], call["width"]) == (384, 384)
+
+
+def test_auto_selects_blackhole_when_ttnn_present(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: True)
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+
+    pipe("x")
+
+    assert stub.calls[0]["mode"] == "blackhole"
+    assert pipe.resolved_mode == "blackhole"
+
+
+def test_explicit_blackhole_without_ttnn_raises(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: False)
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+
+    with pytest.raises(RuntimeError, match="ttnn"):
+        pipe("x", mode="blackhole")
+    assert stub.calls == [], "must not silently fall back to CPU"
+
+
+def test_invalid_mode_raises_value_error(pipeline_module, monkeypatch):
+    _stub_package(monkeypatch)
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+    with pytest.raises(ValueError, match="mode"):
+        pipe("x", mode="cuda")
+
+
+def test_resolved_mode_is_none_before_first_call(pipeline_module):
+    assert pipeline_module.TTAnimateDiffPipeline().resolved_mode is None
+
+
+def test_output_type_np_stacks_frames(pipeline_module, monkeypatch):
+    stub = _stub_package(monkeypatch)
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: False)
+
+    def generate_animation(**kwargs):
+        from PIL import Image
+
+        stub.calls.append(kwargs)
+        return [Image.new("RGB", (8, 8)) for _ in range(2)]
+
+    stub.generate_animation = generate_animation
+    pipe = pipeline_module.TTAnimateDiffPipeline()
+
+    out = pipe("x", num_frames=2, output_type="np")
+
+    assert out.frames.shape == (2, 8, 8, 3)
+
+
+def test_init_opens_no_device_and_generates_nothing(pipeline_module, monkeypatch):
+    """Constructing the pipeline must not import ttnn, open a device, or generate."""
+    stub = _stub_package(monkeypatch)
+    touched = []
+    monkeypatch.setattr(pipeline_module, "_ttnn_available", lambda: touched.append("ttnn"))
+    monkeypatch.setattr(
+        pipeline_module, "resolve_package", lambda *a: touched.append("resolve") or stub
+    )
+
+    pipeline_module.TTAnimateDiffPipeline()
+
+    assert touched == []
+    assert stub.calls == []
