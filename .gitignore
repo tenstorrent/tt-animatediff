@@ -13,3 +13,6 @@ weights/unet_lcm_*.pt
 weights/motion_adapter_lcm_*.pt
 scripts/record/recordings/*.gif
 scripts/record/recordings/*.mp4
+
+# HF artifact staging (rebuilt by scripts/build_hf_artifact.py)
+build/hf/
