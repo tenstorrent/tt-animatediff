@@ -77,7 +77,14 @@ def _import_from_root(root: Path):
     """
     if not (root / PACKAGE_NAME / "__init__.py").is_file():
         return None
-    sys.path.insert(0, str(root.resolve()))
+    # Idempotent insert. In the happy path this runs at most once per process
+    # (a successful import lands the package in sys.modules, so layer 1 of
+    # resolve_package short-circuits every later call), but if the import
+    # itself fails the entry is already on sys.path — a retry would otherwise
+    # stack a duplicate and shift import precedence.
+    resolved = str(root.resolve())
+    if resolved not in sys.path:
+        sys.path.insert(0, resolved)
     importlib.invalidate_caches()
     return importlib.import_module(PACKAGE_NAME)
 

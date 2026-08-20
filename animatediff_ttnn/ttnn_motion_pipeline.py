@@ -258,6 +258,17 @@ def forward_unet_staged(
     # selects frame i's conditioning, or the shared tensor in the single-prompt
     # case. Same shape either way — this is only a tensor selection.
     _per_frame_text = isinstance(encoder_hidden_states, (list, tuple))
+    if _per_frame_text and len(encoder_hidden_states) != num_frames:
+        # Checked here, beside the divisibility guard above, because _enc_for(i)
+        # is called deep inside the per-frame block loop: a short list would
+        # IndexError part-way through a UNet pass, with the device open and the
+        # model already compiled. Deterministic failure beats a late one.
+        raise ValueError(
+            f"encoder_hidden_states is a per-frame sequence of "
+            f"{len(encoder_hidden_states)} entries but num_frames is "
+            f"{num_frames}; prompt-travel conditioning needs exactly one "
+            f"embedding per frame"
+        )
 
     def _enc_for(i):
         return encoder_hidden_states[i] if _per_frame_text else encoder_hidden_states

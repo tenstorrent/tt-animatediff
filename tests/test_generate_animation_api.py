@@ -278,3 +278,62 @@ def test_public_api_names_are_exported():
                  "create_animatediff_pipeline", "generate"):
         assert name in animatediff_ttnn.__all__, f"{name} missing from __all__"
         assert hasattr(animatediff_ttnn, name), f"{name} not importable"
+
+
+# ── _ttnn_available robustness (PR #7 review) ──────────────────────────────
+
+
+def test_ttnn_available_survives_non_import_errors():
+    """A broken tt-metal install must read as "no backend", not crash mode="auto".
+
+    A missing shared library surfaces as OSError, not ImportError. Catching only
+    ImportError made generate_animation(mode="auto") propagate that instead of
+    falling back to CPU — the opposite of its documented contract.
+    """
+    import builtins
+
+    import animatediff_ttnn
+
+    real_import = builtins.__import__
+
+    def _raise_for_ttnn(name, *args, **kwargs):
+        if name == "ttnn":
+            raise OSError("libtt_metal.so: cannot open shared object file")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", _raise_for_ttnn):
+        assert animatediff_ttnn._ttnn_available() is False
+
+
+def test_ttnn_available_still_false_on_plain_import_error():
+    """The ordinary "not installed" case must keep working."""
+    import builtins
+
+    import animatediff_ttnn
+
+    real_import = builtins.__import__
+
+    def _raise_for_ttnn(name, *args, **kwargs):
+        if name == "ttnn":
+            raise ImportError("No module named 'ttnn'")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", _raise_for_ttnn):
+        assert animatediff_ttnn._ttnn_available() is False
+
+
+def test_auto_mode_falls_back_to_cpu_when_ttnn_import_raises_oserror():
+    """End-to-end: mode="auto" routes to the CPU path, not an OSError traceback."""
+    import builtins
+
+    import animatediff_ttnn
+
+    real_import = builtins.__import__
+
+    def _raise_for_ttnn(name, *args, **kwargs):
+        if name == "ttnn":
+            raise OSError("libtt_metal.so: cannot open shared object file")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", _raise_for_ttnn):
+        assert animatediff_ttnn._resolve_mode("auto") == "cpu"

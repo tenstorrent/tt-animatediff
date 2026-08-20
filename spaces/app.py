@@ -14,6 +14,8 @@ example.
 """
 
 import os
+import tempfile
+import uuid
 from pathlib import Path
 
 import gradio as gr
@@ -86,11 +88,16 @@ def generate(prompt, negative_prompt, num_frames, lightning_steps, seed):
         lightning_steps=int(lightning_steps),
     ).frames
 
-    out = "/tmp/tt-animatediff-space.gif"
+    # One file per request, not a fixed path. Gradio serves the returned path
+    # after this function returns, so a shared filename lets the next job
+    # overwrite the bytes a previous visitor is still being served — they would
+    # see someone else's animation. concurrency_limit=1 serializes generation
+    # but does nothing about that serve-after-return window.
+    out = Path(tempfile.gettempdir()) / f"tt-animatediff-{uuid.uuid4().hex}.gif"
     frames[0].save(
         out, save_all=True, append_images=frames[1:], duration=125, loop=0
     )
-    return out
+    return str(out)
 
 
 def _gallery_items():

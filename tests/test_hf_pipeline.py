@@ -386,3 +386,35 @@ def test_init_opens_no_device_and_generates_nothing(pipeline_module, monkeypatch
 
     assert touched == []
     assert stub.calls == []
+
+
+def test_import_from_root_does_not_duplicate_sys_path_entries(
+    pipeline_module, monkeypatch, tmp_path
+):
+    """Repeated resolution must not stack duplicate sys.path entries.
+
+    In the happy path _import_from_root runs once per process (a successful
+    import lands the package in sys.modules, so resolve_package's first layer
+    short-circuits afterwards). But if the import itself fails, the path entry is
+    already in place — a retry would otherwise push a duplicate and shift import
+    precedence for every later import in the process.
+    """
+    pkg = tmp_path / "animatediff_ttnn"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("MARKER = 'vendored'\n")
+
+    # Make the import itself fail so the function is re-enterable, isolating the
+    # sys.path behaviour from module caching.
+    def _boom(name):
+        raise ImportError("simulated broken package")
+
+    monkeypatch.setattr(pipeline_module.importlib, "import_module", _boom)
+    original = list(sys.path)
+    monkeypatch.setattr(sys, "path", original.copy())
+
+    for _ in range(3):
+        with pytest.raises(ImportError):
+            pipeline_module._import_from_root(tmp_path)
+
+    resolved = str(tmp_path.resolve())
+    assert sys.path.count(resolved) == 1, f"duplicated sys.path entry: {sys.path}"

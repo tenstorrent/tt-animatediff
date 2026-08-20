@@ -222,10 +222,13 @@ def test_export_gif_writes_an_animated_gif(frames, tmp_path):
 
 
 def test_export_gif_creates_parent_directories(frames, tmp_path):
-    """Callers pass nested output paths (output/run-3/anim.gif) routinely."""
+    """Callers pass nested output paths (output/run-3/anim.gif) routinely.
+
+    export_gif() mkdir(parents=True)s the destination's parent, so this asserts
+    rather than tolerating a failure: the earlier version skipped on
+    FileNotFoundError/OSError, which would have silently swallowed exactly the
+    regression this test exists to catch.
+    """
     out = tmp_path / "nested" / "deeper" / "out.gif"
-    try:
-        export_gif(frames, str(out))
-    except (FileNotFoundError, OSError):
-        pytest.skip("export_gif does not create parent directories; caller must")
+    export_gif(frames, str(out))
     assert out.is_file()

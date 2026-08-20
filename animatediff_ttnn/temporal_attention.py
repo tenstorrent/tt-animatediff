@@ -193,6 +193,38 @@ def _tt_guide_cpu(tensor: torch.Tensor, guidance_scale: float) -> torch.Tensor:
     return uncond + guidance_scale * (cond - uncond)
 
 
+def _validate_per_frame_text(text_embeddings_per_frame, num_frames: int) -> None:
+    """Reject a prompt-travel embedding list whose length is not num_frames.
+
+    Called before either generator touches ttnn, so a caller learns immediately
+    instead of after a device open and a multi-minute UNet compile.
+
+    A short list is not merely an IndexError waiting to happen: the chunked
+    sharding path *slices* this list (``[c0 : c0 + chunk]``), and a slice does
+    not raise on a short list — it silently yields fewer entries, producing a
+    mis-sized shard that the batch=2 kernel rejects with an opaque error far
+    from the real cause. A long list is just as wrong: the surplus embeddings
+    would be dropped without a word.
+
+    Args:
+        text_embeddings_per_frame: The per-frame conditioning, or None for the
+            shared single-prompt path (which is always valid).
+        num_frames: How many embeddings there must be.
+
+    Raises:
+        ValueError: the list length does not match num_frames.
+    """
+    if text_embeddings_per_frame is None:
+        return
+    if len(text_embeddings_per_frame) != num_frames:
+        raise ValueError(
+            f"text_embeddings_per_frame has "
+            f"{len(text_embeddings_per_frame)} entries but num_frames is "
+            f"{num_frames}; prompt-travel conditioning needs exactly one "
+            f"embedding per frame"
+        )
+
+
 def generate_frames_temporal(
     device,
     ttnn_model,
@@ -264,6 +296,9 @@ def generate_frames_temporal(
     Returns:
         List of PIL Images, length num_frames, with temporal coherence
     """
+    # Validate before anything expensive: no device, no compile, no ttnn import.
+    _validate_per_frame_text(text_embeddings_per_frame, num_frames)
+
     import ttnn as _ttnn
     from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
     # Plan how frames map onto chips. On a mesh we shard one CFG-doubled frame per
@@ -637,6 +672,9 @@ def generate_frames_motion(
     Returns:
         List of PIL Images, length num_frames
     """
+    # Validate before anything expensive: no device, no compile, no ttnn import.
+    _validate_per_frame_text(text_embeddings_per_frame, num_frames)
+
     import ttnn as _ttnn_guard
     _num_chips_motion = device.get_num_devices() if isinstance(device, _ttnn_guard.MeshDevice) else 1
     if num_frames % _num_chips_motion != 0:

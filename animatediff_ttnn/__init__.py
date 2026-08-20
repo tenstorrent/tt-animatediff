@@ -252,10 +252,19 @@ def _resolve_mode(mode: str) -> str:
 
 
 def _ttnn_available() -> bool:
+    """True when the TTNN runtime can be imported in this process.
+
+    Broad except on purpose. A half-installed tt-metal raises more than
+    ImportError — a missing shared library surfaces as OSError, and a partially
+    built ttnn can fail in other ways still — and every one of those means the
+    same thing here: no Blackhole backend. Narrowing this to ImportError makes
+    mode="auto" crash on a broken install instead of falling back to CPU, which
+    is the opposite of what generate_animation() documents it to do.
+    """
     try:
         import ttnn  # noqa: F401
         return True
-    except ImportError:
+    except Exception:
         return False
 
 

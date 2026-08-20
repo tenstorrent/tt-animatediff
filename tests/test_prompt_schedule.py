@@ -136,3 +136,73 @@ def test_parse_schedule_non_int_frame_raises():
 def test_parse_schedule_empty_frame_raises():
     with pytest.raises(ValueError):
         parse_schedule([":snowfall"])
+
+
+# ── per-frame conditioning length validation ────────────────────────────────
+#
+# Added after PR #7 review: both generators index (and, in the chunked sharding
+# path, *slice*) text_embeddings_per_frame by frame. A wrong-length list used to
+# surface as an IndexError deep in the denoising loop — or worse, a silent
+# truncation from the slice producing a mis-sized shard — after the device was
+# open and the UNet compiled. `_validate_per_frame_text` fails up front instead.
+
+
+def test_validate_per_frame_text_accepts_matching_length():
+    from animatediff_ttnn.temporal_attention import _validate_per_frame_text
+
+    _validate_per_frame_text([object(), object(), object()], num_frames=3)
+
+
+def test_validate_per_frame_text_allows_none_for_shared_prompt():
+    """None is the single-prompt path and is always valid."""
+    from animatediff_ttnn.temporal_attention import _validate_per_frame_text
+
+    _validate_per_frame_text(None, num_frames=8)
+
+
+@pytest.mark.parametrize("given,num_frames", [(2, 4), (5, 4), (1, 8), (16, 8)])
+def test_validate_per_frame_text_rejects_mismatched_length(given, num_frames):
+    """Both too-short and too-long are errors: a surplus would be dropped silently."""
+    from animatediff_ttnn.temporal_attention import _validate_per_frame_text
+
+    with pytest.raises(ValueError) as excinfo:
+        _validate_per_frame_text([object()] * given, num_frames=num_frames)
+    message = str(excinfo.value)
+    # The message must name both numbers — that is the whole point of failing here.
+    assert str(given) in message and str(num_frames) in message
+    assert "text_embeddings_per_frame" in message
+
+
+def test_generators_validate_before_touching_hardware():
+    """The check must run before the ttnn import, so a bad call fails on any machine.
+
+    Both generators are called with MagicMock stand-ins for every hardware
+    argument. If validation were still positioned after the device/scheduler
+    setup, these calls would raise something other than ValueError (or hang), so
+    this test pins the *ordering*, not just the message.
+    """
+    from unittest.mock import MagicMock
+
+    from animatediff_ttnn.temporal_attention import (
+        generate_frames_motion,
+        generate_frames_temporal,
+    )
+
+    common = dict(
+        device=MagicMock(),
+        ttnn_model=MagicMock(),
+        ttnn_vae=MagicMock(),
+        config=MagicMock(),
+        torch_time_proj=MagicMock(),
+        text_embeddings=torch.zeros(2, 96, 768),
+        num_frames=4,
+        num_steps=1,
+        text_embeddings_per_frame=[torch.zeros(2, 96, 768)] * 3,
+    )
+    # generate_frames_motion additionally requires the injected motion modules.
+    for generator, extra in (
+        (generate_frames_temporal, {}),
+        (generate_frames_motion, {"temporal_kernels": {}}),
+    ):
+        with pytest.raises(ValueError, match="text_embeddings_per_frame"):
+            generator(**common, **extra)
