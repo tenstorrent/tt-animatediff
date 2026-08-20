@@ -89,7 +89,8 @@ print(pipe.resolved_mode)  # "blackhole" or "cpu"
   — capped CPU-Lightning reference (4 frames, 2 or 4 steps, 512×512). Not representative
   of Blackhole performance; a 4-frame run takes several minutes on free-tier CPU.
 
-Rebuild and republish with `scripts/build_hf_artifact.py` and
+Rebuild and republish with `scripts/build_hf_artifact.py` (model artifact),
+`scripts/build_space_artifact.py` (Space bundle) and
 `scripts/publish_to_hub.py`; the Hub copy is generated from this checkout, never edited
 on the Hub.
 

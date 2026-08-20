@@ -333,21 +333,26 @@ def test_call_forwards_only_real_generate_animation_kwargs():
 
     tree = ast.parse(PIPELINE_SRC.read_text())
 
-    call_node = None
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "generate_animation"
-        ):
-            call_node = node
-            break
-    assert call_node is not None, (
+    # Every matching call site, not just the first: a second delegation added
+    # elsewhere in the file would otherwise go unchecked.
+    call_nodes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "generate_animation"
+    ]
+    assert call_nodes, (
         "could not find a `....generate_animation(...)` call in hf/pipeline.py "
         "— has __call__ stopped delegating to it?"
     )
 
-    forwarded = {kw.arg for kw in call_node.keywords if kw.arg is not None}
+    forwarded = {
+        kw.arg
+        for node in call_nodes
+        for kw in node.keywords
+        if kw.arg is not None
+    }
     assert forwarded, "found the generate_animation(...) call but it passes no keyword arguments"
 
     real_params = set(inspect.signature(animatediff_ttnn.generate_animation).parameters)
@@ -360,16 +365,25 @@ def test_call_forwards_only_real_generate_animation_kwargs():
         "is green."
     )
 
-    # A floor, not just a non-empty check: catches the call being replaced by
-    # something that forwards a nearly-empty, technically-non-empty set.
-    # hf/pipeline.py's __call__ forwards 15 keyword arguments today
-    # (prompt, negative_prompt, num_frames, num_steps, guidance_scale, seed,
-    # temporal_alpha, height, width, mode, use_lightning, lightning_steps,
-    # chain_from, chain_save, chain_alpha). Update this count if that set
-    # deliberately changes.
-    assert len(forwarded) == 15, (
-        f"expected 15 forwarded keyword arguments, found {len(forwarded)}: "
-        f"{sorted(forwarded)}"
+    # The check above is one-directional: it catches a forwarded name the
+    # backend does not accept, but not a *dropped* one. Derive the other
+    # direction from the signature instead of hardcoding a count (a magic
+    # number here goes stale the moment __call__ legitimately changes): every
+    # parameter the backend requires — no default — must still be forwarded,
+    # or a real call raises TypeError for a missing argument.
+    signature = inspect.signature(animatediff_ttnn.generate_animation)
+    required = {
+        name
+        for name, param in signature.parameters.items()
+        if param.default is inspect.Parameter.empty
+        and param.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    }
+    missing = required - forwarded
+    assert not missing, (
+        f"hf/pipeline.py stopped forwarding required parameter(s) "
+        f"{sorted(missing)} of animatediff_ttnn.generate_animation. A real "
+        "generation would fail with TypeError for a missing argument."
     )
 
 

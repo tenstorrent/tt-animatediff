@@ -3,10 +3,10 @@
 """Hugging Face Space for tt-animatediff — capped CPU reference demo.
 
 Blackhole hardware is unreachable from HF infrastructure, so this Space runs the
-**CPU** path with ByteDance's distilled 4-step Lightning checkpoint and hard
-caps that keep a generation finishable on a free-tier 2-vCPU box. It exists to
-prove the pipeline loads and runs anywhere; the pre-rendered gallery below is
-what the hardware path actually produces.
+**CPU** path with ByteDance's distilled Lightning checkpoints (2 or 4 steps,
+selectable) and hard caps that keep a generation finishable on a free-tier
+2-vCPU box. It exists to prove the pipeline loads and runs anywhere; the
+pre-rendered gallery below is what the hardware path actually produces.
 
 The pipeline is loaded exactly the way a user would load it, through
 from_pretrained against the Hub repo, so this file is also a working usage
@@ -101,9 +101,20 @@ def generate(prompt, negative_prompt, num_frames, lightning_steps, seed):
 
 
 def _gallery_items():
+    """Pre-rendered Blackhole GIFs staged into gallery/ at publish time.
+
+    Empty is a real possibility, not just a theoretical one: the bundle is
+    assembled by scripts/build_space_artifact.py, so a GALLERY_SOURCES
+    regression would ship a Space with nothing here. _gallery_is_empty() below
+    turns that into something a visitor (and we) can see.
+    """
     if not GALLERY_DIR.is_dir():
         return []
     return sorted(str(p) for p in GALLERY_DIR.glob("*.gif"))
+
+
+def _gallery_is_empty() -> bool:
+    return not _gallery_items()
 
 
 with gr.Blocks(title="tt-animatediff") as demo:
@@ -147,11 +158,22 @@ with gr.Blocks(title="tt-animatediff") as demo:
     )
 
     gr.Markdown("## Pre-rendered Blackhole output")
-    gr.Markdown(
-        "Generated on a Blackhole P300C at 512×512 — what the hardware path "
-        "actually produces, without waiting for the CPU demo above."
-    )
-    gr.Gallery(value=_gallery_items(), columns=3, height="auto", label=None)
+    if _gallery_is_empty():
+        # Say so rather than rendering an empty strip: this only happens if the
+        # staged bundle lost its gallery, and a blank area looks like a styling
+        # bug instead of the packaging regression it actually is.
+        gr.Markdown(
+            "_The pre-rendered gallery is missing from this deployment — see "
+            "`GALLERY_SOURCES` in `scripts/build_space_artifact.py`. The "
+            "[repo gallery](https://tenstorrent.github.io/tt-animatediff/gallery.html) "
+            "has the same output._"
+        )
+    else:
+        gr.Markdown(
+            "Generated on a Blackhole P300C at 512×512 — what the hardware path "
+            "actually produces, without waiting for the CPU demo above."
+        )
+        gr.Gallery(value=_gallery_items(), columns=3, height="auto", label=None)
 
 demo.queue(max_size=8)
 

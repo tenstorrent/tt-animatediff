@@ -20,3 +20,7 @@ build/hf/
 # Space gallery and staging (rebuilt by scripts/publish_to_hub.py)
 spaces/gallery/
 build/space/
+
+# Tooling scratch (not project output)
+.pytest_cache/
+.superpowers/

@@ -83,6 +83,7 @@ def build_artifact(
     out_dir: Path = DEFAULT_OUT,
     root: Path = ROOT,
     load_check: bool = True,
+    on_load_check=None,
 ) -> Path:
     """Rebuild the artifact tree and return its path.
 
@@ -91,6 +92,9 @@ def build_artifact(
         root: Repo checkout to build from.
         load_check: Round-trip the result through DiffusionPipeline in a
             subprocess. Off only for tests that build many trees.
+        on_load_check: Optional callable receiving the load check's stdout.
+            Lets the CLI show "load check OK" without this function doing I/O
+            of its own; None keeps the build silent.
 
     Raises:
         FileNotFoundError: a required source file is missing.
@@ -120,12 +124,14 @@ def build_artifact(
     )
 
     if load_check:
-        _assert_artifact_loads(out_dir)
+        output = _assert_artifact_loads(out_dir)
+        if on_load_check is not None and output:
+            on_load_check(output)
     return out_dir
 
 
-def _assert_artifact_loads(out_dir: Path) -> None:
-    """Load the tree through diffusers in a subprocess.
+def _assert_artifact_loads(out_dir: Path) -> str:
+    """Load the tree through diffusers in a subprocess, returning its output.
 
     A subprocess, because a custom pipeline is executed out of the shared
     ``~/.cache/huggingface/modules`` directory: loading in-process would leave
@@ -146,8 +152,10 @@ def _assert_artifact_loads(out_dir: Path) -> None:
             "assembled artifact failed its load check — refusing to offer it "
             f"for publish:\n{result.stdout}\n{result.stderr}"
         )
-    if result.stdout:
-        print(result.stdout, end="")
+    # Return the probe's output rather than printing it: this function asserts,
+    # and a caller that wants the "load check OK" line on the terminal can say
+    # so. main() does.
+    return result.stdout
 
 
 def main(argv=None) -> int:
@@ -156,7 +164,11 @@ def main(argv=None) -> int:
     parser.add_argument("--skip-load-check", action="store_true")
     args = parser.parse_args(argv)
 
-    out = build_artifact(out_dir=args.out, load_check=not args.skip_load_check)
+    out = build_artifact(
+        out_dir=args.out,
+        load_check=not args.skip_load_check,
+        on_load_check=lambda text: print(text, end=""),
+    )
     files = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
     print(f"built {out} ({len(files)} files)")
     for name in files[:12]:

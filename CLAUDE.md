@@ -168,7 +168,7 @@ is **not** a sibling of `__file__`. `resolve_package()` finds it via
 allow_patterns=["animatediff_ttnn/**"])` — which is why `code_repo` is in
 `model_index.json`.
 
-The Space upload is **staged**, not committed. `scripts/publish_to_hub.py --space` assembles `build/space/` from `spaces/` plus six gallery GIFs copied out of `docs/assets/` (see `GALLERY_SOURCES`), and uploads that. `spaces/gallery/` and `build/space/` are git-ignored. The GIFs total ~14 MB and already live in this repo, so committing copies into `spaces/gallery/` would have added them to git history permanently for no benefit. Consequence to remember: a file dropped into `spaces/` by hand reaches the Space, but a new gallery GIF does not unless it is added to `GALLERY_SOURCES`.
+The Space upload is **staged**, not committed. `scripts/build_space_artifact.py` assembles `build/space/` from `spaces/` plus six gallery GIFs copied out of `docs/assets/` (see `GALLERY_SOURCES` there); `scripts/publish_to_hub.py --space` calls it and uploads the result. `spaces/gallery/` and `build/space/` are git-ignored. The GIFs total ~14 MB and already live in this repo, so committing copies into `spaces/gallery/` would have added them to git history permanently for no benefit. Consequence to remember: a file dropped into `spaces/` by hand reaches the Space, but a new gallery GIF does not unless it is added to `GALLERY_SOURCES`.
 
 **Private-repo trap:** a Space gets no implicit credential for a **private** model repo. While
 `episod/tt-animatediff` stays private, the Space would build, reach "Running", and then 401 on

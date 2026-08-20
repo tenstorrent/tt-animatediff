@@ -273,6 +273,7 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
         height: int = 512,
         width: int = 512,
         mode: str = "auto",
+        sim_so: Optional[str] = None,
         use_lightning: bool = False,
         lightning_steps: int = 4,
         chain_from: Optional[str] = None,
@@ -297,6 +298,10 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
         Args:
             mode: "auto" (Blackhole if ttnn imports, else CPU), "blackhole"
                 (require hardware), "cpu", or "sim" (ttsim virtual device).
+            sim_so: Path to ``libttsim_bh.so``, used only when mode="sim".
+                The backend defaults to ``~/sim/libttsim_bh.so`` when this is
+                None, so mode="sim" silently depends on the binary sitting at
+                that exact path unless you pass this.
             output_type: "pil" for PIL Images, "np" for a stacked
                 ``[frames, H, W, 3]`` float array in [0, 1].
 
@@ -330,6 +335,7 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
             height=height,
             width=width,
             mode=resolved,
+            sim_so=sim_so,
             use_lightning=use_lightning,
             lightning_steps=lightning_steps,
             chain_from=chain_from,
@@ -345,4 +351,7 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
             return TTAnimateDiffPipelineOutput(
                 frames=np.stack([np.asarray(f, dtype=np.float32) / 255.0 for f in frames])
             )
+        # list() is a deliberate copy, not redundancy: the backend owns the
+        # sequence it returned, and callers mutate .frames (the Space appends
+        # to it when writing a GIF). Copying keeps those two from aliasing.
         return TTAnimateDiffPipelineOutput(frames=list(frames))

@@ -1,11 +1,24 @@
-# Space runtime. gradio must match sdk_version in README.md.
-# No ttnn/tt-metal: this Space is the CPU path by design.
+# Space runtime.
+#
+# gradio is pinned exactly and MUST match sdk_version in README.md — the Hub
+# builds against sdk_version, so a drift between the two means the Space runs a
+# different Gradio than this file claims.
 gradio==4.44.1
+#
+# The rest carry upper bounds on purpose. gradio 4.44.1 is a 2024-era pin, and
+# an unbounded resolver is free to pick a future major of diffusers or
+# transformers that no longer works alongside it — which would break the Space
+# build with nothing in this repo having changed. These bounds are the versions
+# the pipeline is actually exercised against (0.32.1 as the floor, 0.39.0 and
+# 0.40.0 verified in CI and locally); raise them deliberately, after testing.
 torch>=2.0.0
-diffusers>=0.32.1
-transformers>=4.30.0
-accelerate>=0.20.0
+diffusers>=0.32.1,<0.41
+transformers>=4.30.0,<6
+accelerate>=0.20.0,<2
 huggingface_hub>=0.20.0
 safetensors>=0.4.0
 Pillow>=9.0.0
 numpy>=1.24.0
+#
+# No ttnn / tt-metal: this Space is the CPU path by design — Blackhole is not
+# reachable from Hugging Face infrastructure.

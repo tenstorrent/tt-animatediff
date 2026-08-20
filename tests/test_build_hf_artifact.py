@@ -44,15 +44,24 @@ def test_model_index_keys_all_reach_the_pipeline_signature(tmp_path):
     import inspect
     import sys
 
-    spec = importlib.util.spec_from_file_location(
-        "tt_hf_pipeline_for_index_check", ROOT / "hf" / "pipeline.py"
-    )
+    name = "tt_hf_pipeline_for_index_check"
+    spec = importlib.util.spec_from_file_location(name, ROOT / "hf" / "pipeline.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules["tt_hf_pipeline_for_index_check"] = module
-    spec.loader.exec_module(module)
-    params = set(
-        inspect.signature(module.TTAnimateDiffPipeline.__init__).parameters
-    ) - {"self"}
+    # The registration is required, not incidental: hf/pipeline.py combines
+    # `from __future__ import annotations` with a @dataclass BaseOutput
+    # subclass, and dataclass field resolution looks the module up in
+    # sys.modules — without this, exec_module raises AttributeError on None.
+    # try/finally so the entry does not outlive the test and leak into the
+    # rest of the session.
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+        params = set(
+            inspect.signature(module.TTAnimateDiffPipeline.__init__).parameters
+        ) - {"self"}
+    finally:
+        sys.modules.pop(name, None)
+
     config_keys = {k for k in MODEL_INDEX if not k.startswith("_")}
     assert config_keys <= params, f"unbacked keys: {config_keys - params}"
 
@@ -95,3 +104,32 @@ def test_built_artifact_loads_through_diffusers(tmp_path):
     )
     assert type(pipe).__name__ == "TTAnimateDiffPipeline"
     assert pipe.config["temporal_alpha"] == 0.35
+
+
+def test_missing_copy_source_names_the_file(tmp_path, monkeypatch):
+    """A build that cannot find a required source must say which one.
+
+    The copy list is the one place a rename in this repo silently breaks the
+    artifact, so the error has to be actionable rather than a bare traceback.
+    """
+    from scripts import build_hf_artifact
+
+    monkeypatch.setattr(
+        build_hf_artifact,
+        "COPIES",
+        (("does/not/exist.md", "README.md"),),
+    )
+    with pytest.raises(FileNotFoundError, match="does/not/exist.md"):
+        build_hf_artifact.build_artifact(out_dir=tmp_path / "hf", load_check=False)
+
+
+def test_load_check_reports_through_the_callback_not_stdout(tmp_path, capsys):
+    """build_artifact() does no I/O of its own; the CLI opts in via on_load_check."""
+    seen = []
+    build_artifact(out_dir=tmp_path / "hf", on_load_check=seen.append)
+
+    assert seen and "TTAnimateDiffPipeline" in seen[0]
+    captured = capsys.readouterr()
+    assert "load check OK" not in captured.out, (
+        "build_artifact printed the load check itself; that belongs to the caller"
+    )

@@ -81,6 +81,15 @@ automatically. To install it explicitly:
 pip install 'animatediff-ttnn @ git+https://github.com/tenstorrent/tt-animatediff'
 ```
 
+## A note on the model tree
+
+The `base_model` entries in this repo's metadata make the Hub show
+`stable-diffusion-v1-4` and the AnimateDiff MotionAdapter in its model tree. Read
+that as "this pipeline resolves those weights at runtime", not as "these weights
+were fine-tuned into a new checkpoint" — nothing here is trained, and this repo
+ships no weights of its own. The Hub has no relation type that expresses
+"reimplementation for different hardware", which is what this actually is.
+
 ## Implementation phases
 
 | Phase | What runs where | Motion mechanism |
@@ -111,7 +120,9 @@ Blackhole figures are 8 frames at 512×512 on a single P300C chip (QB2 board, 4 
   sharding); 8 works on 1, 2, and 4 chips.
 - The LCM distillation track is closed — all four runs failed and no distilled weights
   ship here. `use_lightning=True` on CPU uses ByteDance's published checkpoint.
-- `mode="sim"` (ttsim virtual Blackhole) is bit-exact but 10–100× slower per op.
+- `mode="sim"` (ttsim virtual Blackhole) is bit-exact but 10–100× slower per op,
+  and needs the simulator binary: pass `sim_so="/path/to/libttsim_bh.so"`, or
+  leave it unset only if the binary is at `~/sim/libttsim_bh.so`.
 
 ## Licensing — read this before redistributing output
 
