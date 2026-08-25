@@ -113,6 +113,7 @@ def generate(
     guidance_scale: float = 7.5,
     num_inference_steps: int = 25,
     seed: int = 42,
+    on_step=None,
 ) -> List[Image.Image]:
     """Generate an animated sequence from a text prompt.
 
@@ -124,10 +125,24 @@ def generate(
         guidance_scale: CFG scale — higher = more prompt-adherent (7.5 is standard)
         num_inference_steps: Denoising steps (25 balances speed and quality)
         seed: Random seed for reproducibility
+        on_step: Optional ``on_step(step_idx, total_steps, frame_latents)``
+            called as denoising proceeds — the same signature
+            ``generate_frames_temporal`` takes, so one preview callback serves
+            both the CPU and TTNN paths. Adapted to diffusers'
+            ``callback_on_step_end`` shape by
+            ``animatediff_ttnn.preview.as_diffusers_callback``.
 
     Returns:
         List of PIL Images, one per frame, 512x512
     """
+    kwargs = {}
+    if on_step is not None:
+        from animatediff_ttnn.preview import as_diffusers_callback
+
+        kwargs["callback_on_step_end"] = as_diffusers_callback(
+            on_step, total_steps=num_inference_steps
+        )
+
     output = pipe(
         prompt=prompt,
         negative_prompt=negative_prompt,
@@ -135,6 +150,7 @@ def generate(
         guidance_scale=guidance_scale,
         num_inference_steps=num_inference_steps,
         generator=torch.Generator().manual_seed(seed),
+        **kwargs,
     )
     return output.frames[0]
 

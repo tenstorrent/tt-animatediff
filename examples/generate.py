@@ -211,6 +211,32 @@ def _build_parser() -> argparse.ArgumentParser:
             "a specific chip for parallel multi-process batch jobs."
         ),
     )
+    parser.add_argument(
+        "--preview-path",
+        type=str,
+        default=None,
+        dest="preview_path",
+        metavar="GIF",
+        help=(
+            "Write a rolling preview GIF of the in-flight latents to GIF as "
+            "denoising proceeds, and print a 'PREVIEW: <step>/<total> <path>' "
+            "line each time. Lets a GUI draining this process's stdout show the "
+            "animation forming. The preview is CPU-side (no VAE, no device "
+            "work), so it adds no latency to the hardware pipeline."
+        ),
+    )
+    parser.add_argument(
+        "--preview-every",
+        type=int,
+        default=None,
+        dest="preview_every",
+        metavar="N",
+        help=(
+            "Emit a preview every N steps (default: every step for runs of "
+            "<=10 steps, every 2nd step otherwise). The final step always "
+            "emits regardless."
+        ),
+    )
     return parser
 
 args = _build_parser().parse_args()
@@ -356,6 +382,7 @@ def run_cpu():
         guidance_scale=guidance,
         num_inference_steps=args.steps,
         seed=args.seed,
+        on_step=_preview_callback(args),
     )
     elapsed = time.time() - t1
     print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
@@ -394,6 +421,30 @@ def _open_device():
         # --device-id 0/1/2/3 in parallel (one process per chip).
         chip = [args.device_id] if args.device_id is not None else [0]
         return setup_blackhole(device_ids=chip)
+
+
+def _preview_callback(args):
+    """Build the per-step preview callback, or None when --preview-path is unset.
+
+    Kept trivially thin on purpose: the logic (cadence, atomic write, the line
+    format consumers parse) lives in `animatediff_ttnn.preview`, which is
+    importable and unit-tested without torch or hardware. Fail-soft — if the
+    preview module can't be imported for any reason, the run proceeds blind
+    rather than not at all.
+    """
+    if not getattr(args, "preview_path", None):
+        return None
+    try:
+        from animatediff_ttnn.preview import make_step_callback
+
+        return make_step_callback(
+            args.preview_path,
+            num_steps=args.steps,
+            every=getattr(args, "preview_every", None),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"  (previews unavailable: {exc})", file=sys.stderr)
+        return None
 
 
 def run_ttnn():
@@ -491,6 +542,7 @@ def run_ttnn():
                 chain_from=args.chain_from,
                 chain_save=args.chain_save,
                 chain_alpha=args.chain_alpha,
+                on_step=_preview_callback(args),
             )
         elapsed = time.time() - t1
         print(f"  Done in {elapsed:.1f}s ({elapsed / args.frames:.1f}s/frame)\n")
