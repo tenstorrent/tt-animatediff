@@ -63,7 +63,35 @@ python examples/generate.py --motion-adapter --motion-adapter-skip up1 up2 --fra
 
 # Simulator — no hardware, bit-exact Blackhole
 python examples/generate.py --mode sim --frames 2 --steps 4
+
+# Watch it form — write a rolling preview of the in-flight latents each step
+python examples/generate.py --preview-path out/preview.gif
 ```
+
+### Live previews (`--preview-path`)
+
+`--preview-path GIF` makes the runner rewrite `GIF` as denoising proceeds and
+print one line per update:
+
+```
+PREVIEW: 7/25 out/preview.gif
+```
+
+so a GUI or script draining stdout can show the animation forming instead of a
+spinner. `--preview-every N` overrides the cadence (default: every step for runs
+of ≤10 steps, every 2nd step otherwise; the final step always emits).
+
+- **It costs the hardware pipeline nothing.** The preview maps 3 of the 4 latent
+  channels to RGB with a tanh soft-clip and a bilinear upsample — pure CPU work
+  on the small latent grid, no VAE decode, no device work. Measured ~3% wall
+  clock on CPU and no measurable cost on Blackhole.
+- Previews render at **256×256**, half the output size: the source is a 64×64
+  latent grid, so a 512 upsample carries no more information.
+- The file is written atomically (temp file + rename), so a consumer polling
+  that path while it is rewritten never reads a half-written GIF.
+- It is a **latent proxy**, not a decoded frame — early steps genuinely look
+  like noise, and structure separates out partway through.
+- Works in both `--mode blackhole` and `--mode cpu`.
 
 ---
 

@@ -156,7 +156,7 @@ def generate(
 
     # Blackhole / sim — stream per-step previews then yield final
     from animatediff_ttnn.generation_helpers import encode_prompt
-    from animatediff_ttnn.temporal_attention import generate_frames_temporal, _latent_preview
+    from animatediff_ttnn.temporal_attention import generate_frames_temporal
     from animatediff_ttnn.pipeline import export_gif
 
     device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
@@ -168,20 +168,31 @@ def generate(
     result_holder = []
     error_holder = []
 
-    # Preview cadence: emit every step for ≤10 steps, every 2 steps otherwise.
-    # Avoids flooding Gradio with updates on long runs while still feeling live.
-    preview_every = 1 if steps <= 10 else 2
-
-    height, width = 512, 512
-
     preview_path = str(out_dir / "preview.gif")  # single file, overwritten each step
 
-    def on_step(step_idx, num_steps, frame_latents):
-        if step_idx % preview_every != 0 and step_idx != num_steps - 1:
+    # Cadence, rendering and the (atomic) write all come from the shared
+    # `animatediff_ttnn.preview` module, which the CLI runner uses too — this
+    # block used to hand-roll all three. Sharing it means the Space and the CLI
+    # can't drift on how often previews appear or how big they are, and the
+    # Space picks up the module's temp-file+rename write, so Gradio can no
+    # longer be handed a half-written GIF.
+    #
+    # `emit` is where the two differ: the CLI prints a line to stdout for a
+    # subprocess consumer to parse, while here the path goes straight onto the
+    # queue the Gradio handler thread is draining.
+    from animatediff_ttnn.preview import make_step_callback, parse_preview_line
+
+    def _to_queue(line: str) -> None:
+        parsed = parse_preview_line(line)
+        if parsed is None:
             return
-        preview_frames = _latent_preview(frame_latents, height, width)
-        export_gif(preview_frames, preview_path)
-        step_q.put((preview_path, None))
+        _step, _total, path = parsed
+        # main's queue contract is (preview_path | None, error | None) — a
+        # 2-tuple. The step/total are parsed but not forwarded here; the Space
+        # renders the image, not a step counter.
+        step_q.put((path, None))
+
+    on_step = make_step_callback(preview_path, num_steps=steps, emit=_to_queue)
 
     def worker():
         try:

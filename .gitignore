@@ -13,3 +13,6 @@ weights/unet_lcm_*.pt
 weights/motion_adapter_lcm_*.pt
 scripts/record/recordings/*.gif
 scripts/record/recordings/*.mp4
+
+# Local virtualenv (never committed; `git add -A` would otherwise stage it whole)
+.venv/
