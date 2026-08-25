@@ -134,33 +134,69 @@ def generate(
     out_dir = Path(tempfile.mkdtemp())
     final_path = str(out_dir / "output.gif")
 
+    # OUTPUT size. Distinct from the preview size, which `make_step_callback`
+    # picks on its own (256x256 — the latents are a 64x64 grid, so upsampling a
+    # preview to full output size buys nothing). Conflating the two is how these
+    # two names briefly went missing.
+    height, width = 512, 512
+
+    from animatediff_ttnn.pipeline import export_gif
+
+    # Every mode streams. `run_fn(on_step) -> frames` is the only thing that
+    # differs between them; the queue/thread/yield machinery below is shared.
+    #
+    # CPU used to be the exception ("CPU mode has no step-level callback hook —
+    # just run and yield final"), which was true until `pipeline.generate()`
+    # grew an `on_step` passthrough. Leaving it unstreamed would have left the
+    # UI's own blurb — "Preview updates stream in real time as each denoising
+    # step completes" — false for one of the three modes it offers.
     if mode == "cpu":
-        # CPU mode has no step-level callback hook — just run and yield final
-        from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
+        from animatediff_ttnn.pipeline import generate as cpu_generate
+
         pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
         guidance = 1.0 if lightning else 7.5
         # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
         # ignore the general steps slider and use the lightning_steps value instead.
-        cpu_steps = lightning_steps if lightning else steps
-        frames_list = cpu_generate(
-            pipe, prompt,
-            negative_prompt=negative_prompt,
-            num_frames=frames,
-            guidance_scale=guidance,
-            num_inference_steps=cpu_steps,
-            seed=seed,
-        )
-        export_gif(frames_list, final_path)
-        yield final_path
-        return
+        steps = lightning_steps if lightning else steps
 
-    # Blackhole / sim — stream per-step previews then yield final
-    from animatediff_ttnn.generation_helpers import encode_prompt
-    from animatediff_ttnn.temporal_attention import generate_frames_temporal
-    from animatediff_ttnn.pipeline import export_gif
+        def run_fn(on_step):
+            return cpu_generate(
+                pipe, prompt,
+                negative_prompt=negative_prompt,
+                num_frames=frames,
+                guidance_scale=guidance,
+                num_inference_steps=steps,
+                seed=seed,
+                on_step=on_step,
+            )
+    else:
+        from animatediff_ttnn.generation_helpers import encode_prompt
+        from animatediff_ttnn.temporal_attention import generate_frames_temporal
 
-    device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
-    text_embeddings = encode_prompt(prompt, negative_prompt)
+        device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
+        text_embeddings = encode_prompt(prompt, negative_prompt)
+
+        def run_fn(on_step):
+            return generate_frames_temporal(
+                device=device,
+                ttnn_model=ttnn_model,
+                ttnn_vae=ttnn_vae,
+                config=config,
+                torch_time_proj=torch_time_proj,
+                text_embeddings=text_embeddings,
+                num_frames=frames,
+                num_steps=steps,
+                guidance_scale=7.5,
+                seed=seed,
+                temporal_alpha=temporal_alpha,
+                use_lightning=lightning,
+                chain_from=chain_from_path,
+                chain_save=chain_save_path,
+                chain_alpha=chain_alpha,
+                on_step=on_step,
+                height=height,
+                width=width,
+            )
 
     # Queue carries (preview_gif_path | None, error | None)
     # None preview + None error = done, final result is ready
@@ -196,26 +232,7 @@ def generate(
 
     def worker():
         try:
-            fl = generate_frames_temporal(
-                device=device,
-                ttnn_model=ttnn_model,
-                ttnn_vae=ttnn_vae,
-                config=config,
-                torch_time_proj=torch_time_proj,
-                text_embeddings=text_embeddings,
-                num_frames=frames,
-                num_steps=steps,
-                guidance_scale=7.5,
-                seed=seed,
-                temporal_alpha=temporal_alpha,
-                use_lightning=lightning,
-                chain_from=chain_from_path,
-                chain_save=chain_save_path,
-                chain_alpha=chain_alpha,
-                on_step=on_step,
-                height=height,
-                width=width,
-            )
+            fl = run_fn(on_step)
             result_holder.append(fl)
         except Exception as exc:
             error_holder.append(exc)

@@ -91,7 +91,7 @@ of ≤10 steps, every 2nd step otherwise; the final step always emits).
   that path while it is rewritten never reads a half-written GIF.
 - It is a **latent proxy**, not a decoded frame — early steps genuinely look
   like noise, and structure separates out partway through.
-- Works in both `--mode blackhole` and `--mode cpu`.
+- Works in every mode — `blackhole`, `cpu` and `sim`.
 
 ---
 
