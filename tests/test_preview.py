@@ -230,3 +230,35 @@ def test_diffusers_adapter_never_raises_into_the_pipeline():
     torch = pytest.importorskip("torch")
     cb = preview.as_diffusers_callback(boom, total_steps=8)
     assert cb(object(), 0, 0, {"latents": torch.zeros(1, 4, 2, 8, 8)}) == {}
+
+
+# ── Streaming actually streams ───────────────────────────────────────────────
+#
+# Python block-buffers stdout whenever it is not a TTY — which is precisely the
+# case this feature exists for, since the consumer runs the runner under
+# subprocess.Popen(stdout=PIPE). Measured with a bare `print`: three lines
+# emitted a second apart all arrived together at process exit, so the "live"
+# preview showed nothing until the run had already finished. (Copilot PR#8
+# review.)
+
+def test_default_emit_flushes(monkeypatch):
+    seen = {}
+
+    def fake_print(line, **kw):
+        seen["line"] = line
+        seen["flush"] = kw.get("flush")
+
+    monkeypatch.setattr("builtins.print", fake_print)
+    preview.emit_line("PREVIEW: 1/4 /tmp/p.gif")
+    assert seen["line"] == "PREVIEW: 1/4 /tmp/p.gif"
+    assert seen["flush"] is True, "an unflushed print silently breaks streaming"
+
+
+def test_callback_uses_the_flushing_emit_by_default():
+    """The default must be `emit_line`, not the builtin `print` — the whole
+    streaming contract rests on it."""
+    import inspect
+
+    default = inspect.signature(preview.make_step_callback).parameters["emit"].default
+    assert default is preview.emit_line
+    assert default is not print

@@ -31,28 +31,34 @@ import animatediff_ttnn.generation_helpers as helpers  # noqa: E402
 
 @pytest.fixture()
 def app_mod(monkeypatch):
-    """Import `app.py` with `gradio` stubbed out."""
-    if "gradio" not in sys.modules:
-        gr = types.ModuleType("gradio")
+    """Import `app.py` with `gradio` stubbed out.
 
-        class _Error(Exception):
-            pass
+    Installed UNCONDITIONALLY. Guarding on "gradio not in sys.modules" would
+    mean that on any machine where the real gradio happens to be installed,
+    these tests build the real UI at import time — slower, and a different code
+    path than the one CI exercises. A test that runs differently depending on
+    what else is installed is not much of a test.
+    """
+    gr = types.ModuleType("gradio")
 
-        gr.Error = _Error
-        # `app.py` builds its UI at import time; give the builders enough shape
-        # to be constructed and discarded.
-        class _Any:
-            def __init__(self, *a, **k): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def __getattr__(self, _n): return _Any()
-            def __call__(self, *a, **k): return _Any()
+    class _Error(Exception):
+        pass
 
-        # Any attribute the UI reaches for resolves to the same inert widget,
-        # so this stub can't drift as app.py's layout changes.
-        gr.__getattr__ = lambda _name: _Any
-        gr.themes = types.SimpleNamespace(Soft=_Any, Base=_Any)
-        monkeypatch.setitem(sys.modules, "gradio", gr)
+    gr.Error = _Error
+    # `app.py` builds its UI at import time; give the builders enough shape
+    # to be constructed and discarded.
+    class _Any:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __getattr__(self, _n): return _Any()
+        def __call__(self, *a, **k): return _Any()
+
+    # Any attribute the UI reaches for resolves to the same inert widget,
+    # so this stub can't drift as app.py's layout changes.
+    gr.__getattr__ = lambda _name: _Any
+    gr.themes = types.SimpleNamespace(Soft=_Any, Base=_Any)
+    monkeypatch.setitem(sys.modules, "gradio", gr)
 
     # Import once — reloading re-enters torch's package init and trips a
     # circular import, and the gradio stub is already in place above.

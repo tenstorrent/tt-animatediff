@@ -35,8 +35,10 @@ from pathlib import Path
 #: this rather than parsing free-form log text.
 PREVIEW_PREFIX = "PREVIEW:"
 
-#: ``PREVIEW: <step>/<total> <path>``.  The path is captured greedily to the end
-#: of the line, so a path containing spaces survives the round trip.
+#: ``PREVIEW: <step>/<total> <path>``.  The path group runs to the end of the
+#: line, so a path containing spaces survives the round trip; it is non-greedy
+#: precisely so the trailing ``\s*$`` can strip trailing whitespace rather than
+#: swallowing it into the path.
 _PREVIEW_RE = re.compile(
     r"^\s*" + re.escape(PREVIEW_PREFIX) + r"\s+(\d+)/(\d+)\s+(.+?)\s*$"
 )
@@ -66,6 +68,20 @@ def _export_gif_fn():
     return export_gif
 
 
+def emit_line(line: str) -> None:
+    """Default ``emit``: print the announcement and FLUSH.
+
+    A bare ``print`` is not enough.  Python block-buffers stdout whenever it is
+    not a TTY, which is exactly the case this feature exists for — the consumer
+    runs us under ``subprocess.Popen(stdout=PIPE)``.  Measured with the plain
+    default: three lines printed a second apart all arrived together at process
+    exit, so a "live" preview would have shown nothing until the generation had
+    already finished.  Flushing per line is what makes the streaming contract
+    real without requiring the caller to remember ``python -u``.
+    """
+    print(line, flush=True)
+
+
 def parse_preview_line(line: str) -> "tuple[int, int, str] | None":
     """Parse a preview announcement into ``(step, total, path)``.
 
@@ -88,7 +104,7 @@ def make_step_callback(
     height: int = 256,
     width: int = 256,
     every: "int | None" = None,
-    emit=print,
+    emit=emit_line,
 ):
     """Build the ``on_step`` callback for ``generate_frames_temporal``.
 
@@ -106,7 +122,9 @@ def make_step_callback(
             FINAL step always emits regardless — it is the closest thing to the
             real result, so skipping it would leave the last thing on screen
             noticeably rougher than what was actually produced.
-        emit: where the announcement line goes (``print`` in the runner).
+        emit: where the announcement line goes.  Defaults to
+            :func:`emit_line`, which prints AND flushes — see its docstring for
+            why an unflushed ``print`` silently breaks streaming.
 
     Returns:
         ``on_step(step_idx, total_steps, frame_latents)``, or ``None``.
