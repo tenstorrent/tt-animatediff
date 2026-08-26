@@ -451,6 +451,19 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.10.0 — 2026-08-26
+- **Per-step latent previews from the CLI runner** — `examples/generate.py` gains
+  `--preview-path` / `--preview-every`, streaming a rolling preview GIF during generation in
+  every mode (`blackhole`, `cpu`, `sim`, including the `--motion-adapter` branch). Shared
+  cadence/atomic-write/transport logic lives in the new `animatediff_ttnn/preview.py`, used by
+  both `app.py` and the CLI so the flag behaves identically everywhere.
+- **Streaming fix** — the default `emit` now flushes every line; unflushed `print` left preview
+  lines block-buffered until process exit under `subprocess.Popen(stdout=PIPE)`, so nothing
+  streamed at all until the run had already finished.
+- **Parser fix** — the `PREVIEW:` line parser no longer anchors to the start of the physical
+  line, since the TTNN path can emit it immediately after a `\r`-terminated progress line with
+  no intervening `\n`.
+
 ### v0.9.0 — 2026-06-15
 - **Phase 3 batched D→H transfer** — `_apply_temporal` now pulls all N frame tensors from
   device in a single `ttnn.concat → ttnn.to_torch` call instead of N separate transfers.

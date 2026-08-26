@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -39,8 +40,17 @@ PREVIEW_PREFIX = "PREVIEW:"
 #: line, so a path containing spaces survives the round trip; it is non-greedy
 #: precisely so the trailing ``\s*$`` can strip trailing whitespace rather than
 #: swallowing it into the path.
+#:
+#: Matched with ``re.search``, not anchored to line start: the TTNN path writes
+#: a ``\r``-terminated progress line immediately before ``on_step`` with no
+#: trailing ``\n``, so the announcement can arrive as
+#: ``"  Step 1/9\rPREVIEW: 1/9 /tmp/p.gif"`` on the wire. A consumer reading in
+#: text mode is rescued by universal-newline translation, but one reading raw
+#: bytes and splitting on ``b"\n"`` is not — anchoring to the start of the
+#: physical line made the parser's success depend on how the caller opened the
+#: pipe.
 _PREVIEW_RE = re.compile(
-    r"^\s*" + re.escape(PREVIEW_PREFIX) + r"\s+(\d+)/(\d+)\s+(.+?)\s*$"
+    re.escape(PREVIEW_PREFIX) + r"\s+(\d+)/(\d+)\s+(.+?)\s*$"
 )
 
 #: Default preview cadence, mirroring ``app.py``: every step on a short run,
@@ -91,7 +101,7 @@ def parse_preview_line(line: str) -> "tuple[int, int, str] | None":
     """
     if not line:
         return None
-    m = _PREVIEW_RE.match(line)
+    m = _PREVIEW_RE.search(line)
     if m is None:
         return None
     return int(m.group(1)), int(m.group(2)), m.group(3)
@@ -133,17 +143,28 @@ def make_step_callback(
         return None
 
     cadence = every if every and every > 0 else default_every(num_steps)
-    target = Path(preview_path)
+    # Resolved so the emitted path is meaningful to a consumer process that may
+    # have a different cwd than the runner that spawned it.
+    target = Path(preview_path).resolve()
+    warned = False
 
     def on_step(step_idx: int, total_steps: int, frame_latents) -> None:
+        nonlocal warned
         is_final = step_idx == total_steps - 1
         if step_idx % cadence != 0 and not is_final:
             return
         try:
             frames = _latent_preview_fn()(frame_latents, height, width)
             _write_atomic(frames, target)
-        except Exception:
-            return  # a lost preview frame is never worth failing a run over
+        except Exception as exc:
+            # A lost preview frame is never worth failing a run over, but a
+            # permanent misconfiguration (read-only dir, bad path, typo'd
+            # directory) would otherwise fail silently on every single step,
+            # indistinguishable from the feature working. Warn once.
+            if not warned:
+                warned = True
+                print(f"preview: write failed, continuing without further warnings: {exc}", file=sys.stderr)
+            return
         try:
             emit(f"{PREVIEW_PREFIX} {step_idx + 1}/{total_steps} {target}")
         except Exception:
@@ -166,14 +187,29 @@ def _write_atomic(frames, target: Path) -> None:
     )
     os.close(fd)
     try:
+        # mkstemp creates at 0600; os.replace preserves the source file's mode,
+        # so without this the published GIF would silently go from the umask
+        # default (what app.py's in-place write produced) to owner-only.
+        os.chmod(tmp, 0o666 & ~_umask())
         _export_gif_fn()(frames, tmp)
         os.replace(tmp, target)
-    except Exception:
+    except BaseException:
+        # BaseException, not Exception: a Ctrl-C or kill during the (slow) GIF
+        # export must not leave `preview.<random>.gif` behind — a consumer
+        # globbing the output directory would otherwise pick up debris from
+        # every interrupted run.
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise
+
+
+def _umask() -> int:
+    """Read the process umask without side effects."""
+    current = os.umask(0)
+    os.umask(current)
+    return current
 
 
 def as_diffusers_callback(on_step, total_steps: int = 0):

@@ -523,6 +523,7 @@ def run_ttnn():
                 chain_alpha=args.chain_alpha,
                 injection_alpha=args.motion_adapter_alpha,
                 skip_keys=set(args.motion_adapter_skip),
+                on_step=_preview_callback(args),
             )
         else:
             # Default path: cross-frame temporal attention (no MotionAdapter)
