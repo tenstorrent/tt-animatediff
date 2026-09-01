@@ -177,3 +177,24 @@ def test_the_manifest_mesh_shape_env_matches_the_name_the_server_reads():
 def test_the_manifest_declares_the_diffusion_kind():
     """A vLLM kind would demand max_num_seqs and block_size, which mean nothing here."""
     assert _manifest()["kind"] == "tt-dit-server"
+
+
+def test_the_manifest_declares_a_single_chip_because_the_model_is_single_device():
+    """Found by serving, not by review.
+
+    The manifest first declared P300x2 (four chips). The server started, opened the mesh
+    and loaded the weights, then died in the lifespan with:
+
+        TT_FATAL: Can't convert a tensor distributed on MeshShape([1, 4]) mesh to
+        row-major logical tensor. Supply a mesh composer to concatenate multi-device shards.
+
+    animatediff_ttnn's working path hardcodes ``device_ids=[0]`` and mesh frame-sharding is
+    still a plan document. A four-chip declaration is therefore a promise the model cannot
+    keep, and it fails at serve time on someone else's machine rather than here.
+    """
+    mesh = _manifest()["serve"]["mesh_device"]
+    single = {"N150", "P100", "P150"}
+    assert mesh in single, (
+        f"mesh_device={mesh!r} claims more than one chip; animatediff_ttnn is single-device "
+        f"until docs/superpowers/plans/2026-06-15-mesh-frame-sharding.md lands"
+    )
