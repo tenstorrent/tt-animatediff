@@ -56,7 +56,8 @@ def test_the_asgi_attribute_is_what_uvicorn_will_load():
 
 def test_the_routes_are_the_ones_the_manifest_promises():
     paths = {r.path for r in app.routes}
-    assert {"/health", "/v1/models", "/v1/videos/generations"} <= paths
+    assert {"/health", "/tt-liveness", "/v1/models",
+            "/v1/videos/generations"} <= paths
 
 
 # ---- mesh shape ------------------------------------------------------------------------
@@ -105,11 +106,71 @@ def test_out_of_range_parameters_are_refused_at_the_edge(field, value):
 # ---- behaviour before the lifespan has run -----------------------------------------------
 
 
-def test_health_answers_before_the_model_is_warm():
-    """Liveness must be lock-free and engine-free, so it still answers while a generation
-    holds the device."""
-    body = TestClient(app).get("/health").json()
-    assert body["status"] == "starting"
+def test_health_is_a_READINESS_probe_and_refuses_traffic_before_the_model_is_warm():
+    """THE CORRECTION. This returned 200 {"status": "starting"} until the semantics were
+    checked against tt-inference-server's tt-media-server.
+
+    Despite the names, /health is the READINESS probe (gate traffic on it) and
+    /tt-liveness is the LIVENESS probe (restart on it). A readiness probe answering 200
+    while the pipeline is still loading tells a load balancer to route work to a server
+    that cannot do it -- reintroducing, one layer up, the exact failure the lifespan
+    design exists to prevent."""
+    r = TestClient(app).get("/health")
+    assert r.status_code == 503
+
+
+def test_health_body_is_vllm_compatible_when_ready():
+    """tt-media-server returns an empty dict when healthy, matching vLLM. Clients written
+    against one should not need a branch for the other."""
+    app.state.engine = {"hf_model": "x", "mesh_device": "P150", "mesh_shape": (1, 1)}
+    try:
+        r = TestClient(app).get("/health")
+        assert r.status_code == 200 and r.json() == {}
+    finally:
+        del app.state.engine
+
+
+def test_tt_liveness_reports_alive_while_the_model_is_still_warming():
+    """A warming model is ALIVE, not broken. Reporting it as failure would have an
+    orchestrator restart a server that is loading correctly -- which is the whole reason
+    liveness and readiness are separate probes."""
+    r = TestClient(app).get("/tt-liveness")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "alive"
+    assert body["model_ready"] is False
+
+
+def test_tt_liveness_carries_the_model_payload_once_warm():
+    """Matches tt-media-server's {"status": "alive", **check_is_model_ready()}."""
+    app.state.engine = {"hf_model": "guoyww/animatediff", "mesh_device": "P150",
+                        "mesh_shape": (1, 1)}
+    try:
+        body = TestClient(app).get("/tt-liveness").json()
+        assert body == {"status": "alive", "model_ready": True,
+                        "model": "guoyww/animatediff", "mesh_device": "P150",
+                        "mesh_shape": "1x1"}
+    finally:
+        del app.state.engine
+
+
+def test_the_two_probes_cannot_disagree_about_readiness():
+    """Both read one _readiness(). Two hand-maintained copies drift, and a liveness probe
+    that says ready while readiness says no is worse than either alone."""
+    from animatediff_ttnn.server.app import _readiness
+
+    c = TestClient(app)
+    assert _readiness()["model_ready"] is False
+    assert c.get("/tt-liveness").json()["model_ready"] is False
+    assert c.get("/health").status_code == 503
+
+    app.state.engine = {"hf_model": "x", "mesh_device": "P150", "mesh_shape": (1, 1)}
+    try:
+        assert _readiness()["model_ready"] is True
+        assert c.get("/tt-liveness").json()["model_ready"] is True
+        assert c.get("/health").status_code == 200
+    finally:
+        del app.state.engine
 
 
 def test_generation_is_refused_while_still_starting():

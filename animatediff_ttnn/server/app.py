@@ -196,16 +196,55 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="tt-animatediff", lifespan=lifespan)
 
 
-@app.get("/health")
-async def health() -> dict:
-    """Liveness. Cheap and lock-free on purpose, so it still answers during a generation."""
+def _readiness() -> dict:
+    """What both probes report about the model, in one place so they cannot disagree."""
     engine = getattr(app.state, "engine", None)
     return {
-        "status": "ok" if engine else "starting",
+        "model_ready": engine is not None,
         "model": (engine or {}).get("hf_model"),
         "mesh_device": (engine or {}).get("mesh_device"),
         "mesh_shape": "x".join(str(n) for n in (engine or {}).get("mesh_shape", ())),
     }
+
+
+@app.get("/tt-liveness")
+async def tt_liveness() -> dict:
+    """LIVENESS probe -- "is this process able to respond at all", restart on failure.
+
+    Matches tt-inference-server's tt-media-server
+    (``open_ai_api/tt_maintenance_api.py``): 200 with ``{"status": "alive", ...}`` plus the
+    model-readiness payload, and a non-200 ONLY on unrecoverable failure. A model that is
+    still warming is alive, not broken -- that is exactly the distinction this endpoint
+    exists to draw, and reporting it as failure would have an orchestrator restart a server
+    that is loading correctly.
+
+    Deliberately lock-free and engine-free, so it keeps answering while a generation holds
+    the device. A liveness probe that blocks behind the work it is monitoring is how a
+    healthy-but-busy server gets killed.
+    """
+    try:
+        return {"status": "alive", **_readiness()}
+    except Exception as exc:  # noqa: BLE001 - the one case that IS unrecoverable
+        raise HTTPException(status_code=500, detail=f"Liveness check failed: {exc}")
+
+
+@app.get("/health")
+async def health() -> dict:
+    """READINESS probe -- "should traffic be routed here", gate on it.
+
+    Despite the names, `/health` is readiness and `/tt-liveness` is liveness. That is
+    tt-media-server's convention, kept for compatibility with the Python server, and the
+    body is vLLM's: an empty dict when ready, 503 when not.
+
+    This returned 200 with ``{"status": "starting"}`` until the semantics were checked
+    against tt-media-server. A readiness probe answering 200 while the pipeline is still
+    loading tells a load balancer to send work to a server that cannot do it -- the precise
+    failure the lifespan design exists to prevent, reintroduced one layer up. The
+    diagnostic payload now lives on /tt-liveness, which is where tt-media-server puts it.
+    """
+    if not _readiness()["model_ready"]:
+        raise HTTPException(status_code=503, detail="Model not ready")
+    return {}
 
 
 @app.get("/v1/models")
