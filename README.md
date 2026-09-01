@@ -95,6 +95,35 @@ of ≤10 steps, every 2nd step otherwise; the final step always emits).
 
 ---
 
+## Hugging Face
+
+The pipeline is published as a weights-free diffusers custom pipeline:
+
+```python
+from diffusers import DiffusionPipeline
+
+pipe = DiffusionPipeline.from_pretrained(
+    "episod/tt-animatediff",
+    custom_pipeline="episod/tt-animatediff",
+    trust_remote_code=True,
+)
+frames = pipe("a swirling nebula, teal and gold").frames
+print(pipe.resolved_mode)  # "blackhole" or "cpu"
+```
+
+- Model repo: [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
+  — no weights; SD 1.4 and the MotionAdapter are resolved from upstream at generation time.
+- Demo Space: [`episod/tt-animatediff-demo`](https://huggingface.co/spaces/episod/tt-animatediff-demo)
+  — capped CPU-Lightning reference (4 frames, 2 or 4 steps, 512×512). Not representative
+  of Blackhole performance; a 4-frame run takes several minutes on free-tier CPU.
+
+Rebuild and republish with `scripts/build_hf_artifact.py` (model artifact),
+`scripts/build_space_artifact.py` (Space bundle) and
+`scripts/publish_to_hub.py`; the Hub copy is generated from this checkout, never edited
+on the Hub.
+
+---
+
 ## Lightning Mode
 
 On **Blackhole/sim**: `--lightning` switches to `EulerDiscreteScheduler` (trailing, linear)
@@ -174,6 +203,51 @@ file or add a setup script to download it at startup.
 
 ---
 
+## Python API
+
+The `animatediff_ttnn` package is importable as a Python library. The high-level
+`generate_animation()` entry point manages device lifetime, mode selection, and the
+CPU pipeline cache internally — no setup required.
+
+```python
+from animatediff_ttnn import generate_animation, export_mp4, export_gif
+
+# Auto mode: picks Blackhole if tt-metal is importable, CPU otherwise
+frames = generate_animation(
+    prompt="swirling nebula, teal and gold, cinematic",
+    num_frames=8,
+    num_steps=25,
+    seed=42,
+)
+export_mp4(frames, "output.mp4", fps=8)
+export_gif(frames, "output.gif")
+```
+
+**Key parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `prompt` | (required) | Text description of the animation |
+| `negative_prompt` | `""` | Features to suppress |
+| `num_frames` | `8` | Frame count |
+| `num_steps` | `25` | Denoising steps (use `4` for sim preview) |
+| `guidance_scale` | `7.5` | CFG scale — use `1.0` with CPU Lightning |
+| `seed` | `42` | Random seed |
+| `temporal_alpha` | `0.35` | Cross-frame attention blend (Blackhole/sim only, 0–1) |
+| `mode` | `"auto"` | `"auto"` · `"blackhole"` · `"sim"` · `"cpu"` |
+| `use_lightning` | `False` | Euler scheduler instead of PNDM |
+| `lightning_steps` | `4` | CPU Lightning checkpoint step count (2, 4, or 8) |
+| `chain_from` | `None` | Path to `.pt` latent file from a previous run for visual continuity |
+| `chain_save` | `None` | Save this run's final latents for use as `chain_from` next time |
+| `chain_alpha` | `0.6` | Blend weight for `chain_from` latents |
+| `on_step` | `None` | Callback `(step_idx, num_steps, frame_latents)` per denoising step — Blackhole/sim only |
+
+Returns `list[PIL.Image]`, one per frame. See the
+[full Python API reference](https://tenstorrent.github.io/tt-animatediff/usage.html#api)
+for all parameters and usage examples.
+
+---
+
 ## Modes Reference
 
 | Mode | Hardware | Speed (8 fr, 512²) | Temporal attention |
@@ -181,7 +255,7 @@ file or add a setup script to download it at startup.
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
 | `blackhole` | Blackhole P300C | **~12.5 s/frame** (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
-| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (8-step Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (25 steps, Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
 | `blackhole --motion-adapter` | Blackhole P300C | **~52 s/frame** (7 injection pts, batched D→H) | Full MotionAdapter Phase 3 ✓ |
 | `blackhole --motion-adapter --motion-adapter-skip up1 up2` | Blackhole P300C | **~7.7 s/frame** (5 injection pts) | Full MotionAdapter Phase 3 ✓ |
 | `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |

@@ -7,8 +7,14 @@ Local (Blackhole hardware):
     pip install -e ".[ui]"
     python app.py
 
-HuggingFace Spaces (ttsim, no hardware):
-    Deployed from spaces/ — sets SPACE_MODE=sim automatically.
+HuggingFace Spaces:
+    spaces/app.py (not this file) is what's deployed — a separate, capped
+    CPU-Lightning demo that loads the published episod/tt-animatediff
+    pipeline via from_pretrained() rather than importing this module. This
+    file (the repo-root app.py) is the local Blackhole/CPU UI and is also
+    vendored verbatim into the Hugging Face model artifact as a usage
+    example (see scripts/build_hf_artifact.py); it is not itself deployed
+    as a Space.
 
 Streaming: the generate callback is a Python generator. After each denoising
 step, _latent_preview() converts the current noisy latents to a colourised
@@ -39,6 +45,7 @@ NEG_DEFAULT = "blurry, low quality, distorted, text, people, faces, modern build
 _cpu_pipes: dict = {}  # keyed by (lightning: bool, lightning_steps: int)
 _bh_device = None      # cached Blackhole/sim MeshDevice
 _bh_models = None      # cached (ttnn_model, ttnn_vae, config, torch_time_proj)
+_bh_lock = threading.Lock()
 
 
 def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
@@ -52,45 +59,96 @@ def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
     return _cpu_pipes[key]
 
 
+def _probe_sim(sim_so: Path) -> str | None:
+    """Probe ttsim compatibility via subprocess; return error string or None if ok.
+
+    ttsim calls abort() on unsupported PCI register writes — that kills the
+    entire process.  Running the probe in a child process isolates the abort so
+    the Gradio server survives and can surface a clear error message.
+    """
+    import subprocess
+    # repr() produces a properly quoted and escaped Python string literal,
+    # preventing SyntaxError when the path contains single quotes or backslashes.
+    probe = (
+        "import sys, os; "
+        f"os.environ['TT_METAL_SIMULATOR']={repr(str(sim_so))}; "
+        "os.environ.setdefault('TT_METAL_SLOW_DISPATCH_MODE','1'); "
+        "os.environ.setdefault('TT_METAL_DISABLE_SFPLOADMACRO','1'); "
+        "os.environ.setdefault('TT_METAL_ARCH_NAME','blackhole'); "
+        f"sys.path.insert(0,{repr(str(Path.home() / 'tt-metal'))}); "
+        "import ttnn; "
+        "d=ttnn.open_mesh_device(mesh_shape=ttnn.MeshShape(1,1),physical_device_ids=[0],l1_small_size=32768); "
+        "ttnn.close_mesh_device(d); "
+        "print('ok')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0 or "ok" not in result.stdout:
+        # ttsim writes ERROR lines to stdout (direct fd write, not stderr)
+        for line in result.stdout.splitlines():
+            if "UnsupportedFunctionality" in line or "ERROR" in line:
+                return line.strip()
+        return (
+            f"ttsim probe failed (exit {result.returncode}). "
+            "The ttsim binary may be incompatible with the installed tt-metal version. "
+            f"Try downloading a newer release from https://github.com/tenstorrent/ttsim/releases"
+        )
+    return None
+
+
 def _ensure_bh_device(mode: str, sim_path: str):
     """Open the Blackhole or ttsim device (once per session)."""
     global _bh_device, _bh_models
     if _bh_device is not None:
         return _bh_device, _bh_models
+    with _bh_lock:
+        if _bh_device is not None:
+            return _bh_device, _bh_models
 
-    if mode == "sim":
-        sim_so = Path(sim_path).expanduser() if sim_path else Path.home() / "sim/libttsim_bh.so"
-        if not sim_so.exists():
-            raise FileNotFoundError(
-                f"ttsim binary not found at {sim_so}. "
-                "Download from https://github.com/tenstorrent/ttsim/releases "
-                "or set the Sim binary path field."
+        if mode == "sim":
+            sim_so = Path(sim_path).expanduser() if sim_path else Path.home() / "sim/libttsim_bh.so"
+            if not sim_so.exists():
+                raise FileNotFoundError(
+                    f"ttsim binary not found at {sim_so}. "
+                    "Download from https://github.com/tenstorrent/ttsim/releases "
+                    "or set the Sim binary path field."
+                )
+            # Probe in a subprocess so an abort() in ttsim doesn't kill Gradio.
+            probe_err = _probe_sim(sim_so)
+            if probe_err is not None:
+                raise RuntimeError(
+                    f"ttsim device open failed: {probe_err}\n\n"
+                    "This usually means the ttsim binary is incompatible with the "
+                    "installed tt-metal version.  Download a matching ttsim release from "
+                    "https://github.com/tenstorrent/ttsim/releases and update the path."
+                )
+            os.environ["TT_METAL_SIMULATOR"] = str(sim_so)
+            os.environ.setdefault("TT_METAL_SLOW_DISPATCH_MODE", "1")
+            os.environ.setdefault("TT_METAL_DISABLE_SFPLOADMACRO", "1")
+            os.environ.setdefault("TT_METAL_ARCH_NAME", "blackhole")
+
+        TT_METAL_PATH = Path.home() / "tt-metal"
+        sys.path.insert(0, str(TT_METAL_PATH))
+
+        from animatediff_ttnn.ttnn_pipeline import setup_blackhole, _ensure_tt_metal_path
+        import ttnn
+        from models.demos.vision.generative.stable_diffusion.wormhole.common import SD_L1_SMALL_SIZE
+
+        if mode == "sim":
+            _ensure_tt_metal_path()
+            _bh_device = ttnn.open_mesh_device(
+                mesh_shape=ttnn.MeshShape(1, 1),
+                physical_device_ids=[0],
+                l1_small_size=SD_L1_SMALL_SIZE,
             )
-        os.environ["TT_METAL_SIMULATOR"] = str(sim_so)
-        os.environ.setdefault("TT_METAL_SLOW_DISPATCH_MODE", "1")
-        os.environ.setdefault("TT_METAL_DISABLE_SFPLOADMACRO", "1")
-        os.environ.setdefault("TT_METAL_ARCH_NAME", "blackhole")
+        else:
+            _bh_device = setup_blackhole(device_ids=[0])
 
-    TT_METAL_PATH = Path.home() / "tt-metal"
-    sys.path.insert(0, str(TT_METAL_PATH))
-
-    from animatediff_ttnn.ttnn_pipeline import setup_blackhole, _ensure_tt_metal_path
-    import ttnn
-    from models.demos.vision.generative.stable_diffusion.wormhole.common import SD_L1_SMALL_SIZE
-
-    if mode == "sim":
-        _ensure_tt_metal_path()
-        _bh_device = ttnn.open_mesh_device(
-            mesh_shape=ttnn.MeshShape(1, 1),
-            physical_device_ids=[0],
-            l1_small_size=SD_L1_SMALL_SIZE,
-        )
-    else:
-        _bh_device = setup_blackhole(device_ids=[0])
-
-    from animatediff_ttnn.generation_helpers import load_sd14_ttnn
-    _bh_models = load_sd14_ttnn(_bh_device)
-    return _bh_device, _bh_models
+        from animatediff_ttnn.generation_helpers import load_sd14_ttnn
+        _bh_models = load_sd14_ttnn(_bh_device)
+        return _bh_device, _bh_models
 
 
 
@@ -123,13 +181,13 @@ def generate(
     seed = int(seed)
     lightning_steps = int(lightning_steps)
 
-    if not prompt.strip():
+    if not (prompt or "").strip():
         raise gr.Error("Prompt cannot be empty.")
     if not 0.0 <= temporal_alpha <= 1.0:
         raise gr.Error("Temporal alpha must be between 0 and 1.")
 
-    chain_from_path = chain_from.strip() or None
-    chain_save_path = chain_save.strip() or None
+    chain_from_path = (chain_from or "").strip() or None
+    chain_save_path = (chain_save or "").strip() or None
 
     out_dir = Path(tempfile.mkdtemp())
     final_path = str(out_dir / "output.gif")
@@ -151,13 +209,16 @@ def generate(
     # UI's own blurb — "Preview updates stream in real time as each denoising
     # step completes" — false for one of the three modes it offers.
     if mode == "cpu":
-        from animatediff_ttnn.pipeline import generate as cpu_generate
+        try:
+            from animatediff_ttnn.pipeline import generate as cpu_generate
 
-        pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
-        guidance = 1.0 if lightning else 7.5
-        # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
-        # ignore the general steps slider and use the lightning_steps value instead.
-        steps = lightning_steps if lightning else steps
+            pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
+            guidance = 1.0 if lightning else 7.5
+            # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
+            # ignore the general steps slider and use the lightning_steps value instead.
+            steps = lightning_steps if lightning else steps
+        except Exception as exc:
+            raise gr.Error(str(exc)) from exc
 
         def run_fn(on_step):
             return cpu_generate(
@@ -173,8 +234,11 @@ def generate(
         from animatediff_ttnn.generation_helpers import encode_prompt
         from animatediff_ttnn.temporal_attention import generate_frames_temporal
 
-        device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
-        text_embeddings = encode_prompt(prompt, negative_prompt)
+        try:
+            device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
+            text_embeddings = encode_prompt(prompt, negative_prompt)
+        except Exception as exc:
+            raise gr.Error(str(exc)) from exc
 
         def run_fn(on_step):
             return generate_frames_temporal(
@@ -222,11 +286,13 @@ def generate(
         parsed = parse_preview_line(line)
         if parsed is None:
             return
-        _step, _total, path = parsed
-        # main's queue contract is (preview_path | None, error | None) — a
-        # 2-tuple. The step/total are parsed but not forwarded here; the Space
-        # renders the image, not a step counter.
-        step_q.put((path, None))
+        step, total, path = parsed
+        # (preview_path | None, error | None, status | None). The status slot exists
+        # because this UI wires outputs=[output_gif, status_label] and so yields two
+        # values; main's single-output version put a 2-tuple here. Keeping the parsed
+        # step/total is what lets the label say which step you are looking at.
+        step_q.put((path, None,
+                    f"Denoising step {step}/{total} — preview (early steps look noisy)…"))
 
     on_step = make_step_callback(preview_path, num_steps=steps, emit=_to_queue)
 
@@ -237,7 +303,7 @@ def generate(
         except Exception as exc:
             error_holder.append(exc)
         finally:
-            step_q.put((None, None))  # sentinel
+            step_q.put((None, None, None))  # sentinel
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -245,20 +311,26 @@ def generate(
     # Yield previews as they arrive; stop when sentinel received
     while True:
         item = step_q.get()
-        preview_path, err = item
+        preview_gif, err, status = item
         if err is not None:
             raise gr.Error(str(err))
-        if preview_path is None:
+        if preview_gif is None:
             break
-        yield preview_path
+        yield preview_gif, status
 
     t.join()
 
     if error_holder:
         raise gr.Error(str(error_holder[0]))
 
-    export_gif(result_holder[0], final_path)
-    yield final_path
+    if not result_holder:
+        raise gr.Error("Generation worker exited without producing output.")
+
+    try:
+        export_gif(result_holder[0], final_path)
+    except Exception as exc:
+        raise gr.Error(f"Failed to encode output GIF: {exc}") from exc
+    yield final_path, "Done."
 
 
 # ── UI layout ─────────────────────────────────────────────────────────────
@@ -345,7 +417,13 @@ with gr.Blocks(title="tt-animatediff") as demo:
             run_btn = gr.Button("Generate", variant="primary")
 
         with gr.Column(scale=1):
-            output_gif = gr.Image(label="Output (streaming preview → final GIF)", type="filepath")
+            output_gif = gr.Image(label="Output", type="filepath")
+            status_label = gr.Textbox(
+                label="Status",
+                value="",
+                interactive=False,
+                lines=1,
+            )
 
     run_btn.click(
         fn=generate,
@@ -355,7 +433,7 @@ with gr.Blocks(title="tt-animatediff") as demo:
             sim_path, lightning, lightning_steps,
             chain_from_box, chain_save_box, chain_alpha_slider,
         ],
-        outputs=output_gif,
+        outputs=[output_gif, status_label],
     )
 
 if __name__ == "__main__":

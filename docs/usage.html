@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usage Guide — tt-animatediff</title>
+  <meta name="description" content="Comprehensive usage guide for tt-animatediff: CLI, Python API, Gradio UI, prompt guide, and troubleshooting.">
+  <style>
+    :root {
+      --bg0: #080f14; --bg1: #0d1b24; --bg2: #122130;
+      --teal: #4fd1c5; --teal-dim: rgba(79,209,197,.13); --teal-border: rgba(79,209,197,.28);
+      --teal2: #81e6d9;
+      --pink: #ec96b8; --pink-dim: rgba(236,150,184,.12); --pink-border: rgba(236,150,184,.3);
+      --gold: #f4c471; --gold-dim: rgba(244,196,113,.12); --gold-border: rgba(244,196,113,.28);
+      --gray-dim: rgba(96,125,139,.15); --gray-border: rgba(96,125,139,.3);
+      --green: #4ade80; --green-dim: rgba(74,222,128,.1); --green-border: rgba(74,222,128,.3);
+      --text: #e8f0f2; --text2: #b0c4d0; --muted: #607d8b;
+      --border: rgba(79,209,197,.1); --radius: 8px;
+      --sidebar-w: 220px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg0); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+           font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1, h2, h3, h4 { line-height: 1.25; font-weight: 700; }
+    code { font-family: Consolas, 'Courier New', monospace; font-size: .88em;
+           background: rgba(79,209,197,.08); color: var(--teal2); padding: .1em .35em;
+           border-radius: 3px; border: 1px solid rgba(79,209,197,.15); }
+    p { color: var(--text2); margin-bottom: .9rem; }
+    p:last-child { margin-bottom: 0; }
+
+    /* ── top bar ── */
+    .topbar { position: sticky; top: 0; z-index: 100; background: rgba(8,15,20,.94);
+              backdrop-filter: blur(8px); border-bottom: 1px solid var(--border);
+              display: flex; align-items: center; gap: 1.5rem; padding: 0 1.5rem; height: 48px; }
+    .topbar-logo { font-size: .82rem; font-weight: 700; color: var(--teal); letter-spacing: .03em; white-space: nowrap; }
+    .topbar-nav { display: flex; gap: 1.25rem; overflow-x: auto; scrollbar-width: none; }
+    .topbar-nav::-webkit-scrollbar { display: none; }
+    .topbar-nav a { font-size: .75rem; color: var(--muted); white-space: nowrap; transition: color .15s; padding: .25rem 0; }
+    .topbar-nav a:hover { color: var(--teal); text-decoration: none; }
+    .topbar-home { margin-left: auto; font-size: .75rem; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+    .topbar-home:hover { color: var(--teal); }
+
+    /* ── layout ── */
+    .layout { display: flex; min-height: calc(100vh - 48px); }
+
+    /* ── sidebar ── */
+    .sidebar { width: var(--sidebar-w); flex-shrink: 0; position: sticky; top: 48px; height: calc(100vh - 48px);
+               overflow-y: auto; padding: 2rem 0 2rem 1.25rem; border-right: 1px solid var(--border);
+               scrollbar-width: thin; scrollbar-color: var(--teal-border) transparent; }
+    .sidebar::-webkit-scrollbar { width: 4px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--teal-border); border-radius: 2px; }
+    .toc-label { font-size: .62rem; font-weight: 700; letter-spacing: .15em; text-transform: uppercase;
+                 color: var(--muted); margin-bottom: .75rem; margin-top: 1.5rem; display: block; }
+    .toc-label:first-child { margin-top: 0; }
+    .toc-list { list-style: none; display: flex; flex-direction: column; gap: .15rem; }
+    .toc-list a { font-size: .78rem; color: var(--text2); padding: .25rem .5rem; border-radius: 4px;
+                  display: block; transition: all .15s; border-left: 2px solid transparent; }
+    .toc-list a:hover { color: var(--teal); background: var(--teal-dim); border-left-color: var(--teal); text-decoration: none; }
+    .toc-list a.active { color: var(--teal); background: var(--teal-dim); border-left-color: var(--teal); }
+    .toc-sub a { padding-left: 1.25rem; font-size: .73rem; color: var(--muted); }
+
+    /* ── main ── */
+    .main { flex: 1; min-width: 0; padding: 3rem 2.5rem 5rem; }
+    .main-inner { max-width: 860px; }
+
+    /* ── hero ── */
+    .hero { padding-bottom: 2.5rem; border-bottom: 1px solid var(--border); margin-bottom: 3rem; }
+    .hero-badge { display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .14em;
+                  text-transform: uppercase; color: var(--teal); border: 1px solid var(--teal-border);
+                  border-radius: 20px; padding: .2rem .65rem; margin-bottom: 1rem; }
+    .hero h1 { font-size: clamp(1.6rem, 3vw, 2.4rem); margin-bottom: .6rem; }
+    .hero h1 em { color: var(--teal); font-style: normal; }
+    .hero p { font-size: 1rem; max-width: 620px; }
+
+    /* ── section ── */
+    .section { margin-bottom: 4rem; }
+    .section-head { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.5rem; padding-bottom: .75rem; border-bottom: 1px solid var(--border); }
+    .section-num { font-size: .62rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+    .section-head h2 { font-size: 1.35rem; }
+    h3 { font-size: 1rem; color: var(--text); margin: 1.75rem 0 .65rem; }
+    h4 { font-size: .82rem; color: var(--teal); letter-spacing: .04em; text-transform: uppercase; margin: 1.25rem 0 .5rem; }
+
+    /* ── mode chips ── */
+    .chip { display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+            padding: .18rem .5rem; border-radius: 3px; vertical-align: middle; margin-left: .35rem; }
+    .chip-bh  { background: var(--teal-dim);  color: var(--teal);  border: 1px solid var(--teal-border); }
+    .chip-cpu { background: var(--gray-dim);  color: var(--muted); border: 1px solid var(--gray-border); }
+    .chip-sim { background: var(--gold-dim);  color: var(--gold);  border: 1px solid var(--gold-border); }
+    .chip-ai  { background: var(--pink-dim);  color: var(--pink);  border: 1px solid var(--pink-border); }
+
+    /* ── code blocks ── */
+    .code-block { position: relative; background: #060d12; border: 1px solid var(--border);
+                  border-left: 3px solid var(--teal-border); border-radius: 0 var(--radius) var(--radius) 0;
+                  margin: 1rem 0 1.5rem; overflow-x: auto; }
+    .code-block pre { padding: 1.1rem 1.25rem; font-family: Consolas, 'Courier New', monospace;
+                      font-size: .8rem; line-height: 1.7; color: #c5dde8; white-space: pre; }
+    .code-block .cb-label { position: absolute; top: .5rem; right: .75rem; font-size: .6rem; font-weight: 700;
+                             letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+    .code-block .c  { color: var(--muted); }
+    .code-block .kw { color: var(--teal); }
+    .code-block .str{ color: #a8d8a8; }
+    .code-block .num{ color: var(--gold); }
+    .code-block .fn { color: #81cbda; }
+    .code-block .cm { color: #4a6875; font-style: italic; }
+    .code-block pre.bash .prompt { color: var(--muted); user-select: none; }
+    .code-block.pink  { border-left-color: var(--pink-border); }
+    .code-block.gold  { border-left-color: var(--gold-border); }
+    .code-block.gray  { border-left-color: var(--gray-border); }
+
+    /* ── param table ── */
+    .param-table-wrap { overflow-x: auto; margin: 1rem 0 1.5rem; }
+    .param-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .param-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: .68rem;
+                      text-transform: uppercase; letter-spacing: .1em; padding: .4rem .75rem .55rem;
+                      border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .param-table td { padding: .5rem .75rem; color: var(--text2); border-bottom: 1px solid rgba(79,209,197,.05); vertical-align: top; }
+    .param-table tr:last-child td { border-bottom: none; }
+    .param-table td:first-child { font-family: Consolas, 'Courier New', monospace; font-size: .78rem; color: var(--teal2); white-space: nowrap; }
+    .param-table td:nth-child(2) { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+    .param-table tr:hover td { background: rgba(79,209,197,.03); }
+
+    /* ── callout boxes ── */
+    .callout { border-radius: var(--radius); padding: .9rem 1.1rem; margin: 1rem 0 1.5rem;
+               border-left: 3px solid; font-size: .83rem; }
+    .callout p { font-size: .83rem; margin: 0; }
+    .callout-note { background: var(--teal-dim); border-color: var(--teal); }
+    .callout-note .callout-title { color: var(--teal); }
+    .callout-warn { background: var(--gold-dim); border-color: var(--gold); }
+    .callout-warn .callout-title { color: var(--gold); }
+    .callout-tip  { background: var(--green-dim); border-color: var(--green-border); }
+    .callout-tip .callout-title { color: var(--green); }
+    .callout-title { font-size: .65rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+                     display: block; margin-bottom: .3rem; }
+
+    /* ── step list ── */
+    .steps { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 1.1rem; margin: 1rem 0 1.5rem; }
+    .steps li { counter-increment: step; display: flex; gap: 1rem; align-items: flex-start; }
+    .steps li::before { content: counter(step); flex-shrink: 0; width: 26px; height: 26px; background: var(--teal-dim);
+                         border: 1px solid var(--teal-border); border-radius: 50%; display: flex; align-items: center;
+                         justify-content: center; font-size: .72rem; font-weight: 700; color: var(--teal);
+                         margin-top: .15rem; }
+    .steps li > div { flex: 1; }
+    .steps li p { font-size: .85rem; }
+
+    /* ── grid cards ── */
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .85rem; margin: 1rem 0 1.5rem; }
+    .feature-card { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
+    .feature-card h4 { margin-top: 0; font-size: .78rem; color: var(--text); text-transform: none; letter-spacing: 0; margin-bottom: .3rem; }
+    .feature-card p { font-size: .73rem; color: var(--muted); margin: 0; }
+
+    /* ── install tabs ── */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+    .tab { font-size: .75rem; font-weight: 600; padding: .55rem 1.1rem; color: var(--muted); cursor: pointer;
+           border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .15s; user-select: none; }
+    .tab:hover { color: var(--text2); }
+    .tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .tab-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin: 1rem 0 1.5rem; }
+    .tab-wrap .tabs { padding: 0 1rem; background: var(--bg1); border-bottom: 1px solid var(--border); border-radius: 0; margin: 0; }
+    .tab-wrap .tab-body { padding: 1.25rem; background: var(--bg0); }
+    .tab-wrap .tab-body .code-block { margin: .5rem 0 0; }
+
+    /* ── alpha guide ── */
+    .alpha-row { display: flex; align-items: center; gap: .75rem; padding: .45rem 0; border-bottom: 1px solid rgba(79,209,197,.06); }
+    .alpha-row:last-child { border-bottom: none; }
+    .alpha-val { font-family: Consolas, 'Courier New', monospace; font-size: .78rem; color: var(--teal2);
+                 min-width: 90px; flex-shrink: 0; }
+    .alpha-bar-wrap { flex: 1; height: 4px; background: rgba(79,209,197,.08); border-radius: 2px; }
+    .alpha-bar { height: 100%; background: var(--teal); border-radius: 2px; }
+    .alpha-desc { font-size: .78rem; color: var(--text2); min-width: 220px; }
+
+    /* ── footer ── */
+    footer { background: var(--bg1); border-top: 1px solid var(--border); padding: 2rem; text-align: center;
+             font-size: .78rem; color: var(--muted); }
+    footer a { color: var(--teal2); }
+
+    /* ── responsive ── */
+    @media (max-width: 720px) {
+      .sidebar { display: none; }
+      .main { padding: 2rem 1.25rem 4rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- top bar -->
+<nav class="topbar">
+  <span class="topbar-logo">tt-animatediff</span>
+  <div class="topbar-nav">
+    <a href="#install">Install</a>
+    <a href="#cli">CLI</a>
+    <a href="#api">Python API</a>
+    <a href="#gradio">Gradio UI</a>
+    <a href="#prompts">Prompts</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </div>
+  <a class="topbar-home" href="index.html">&#8592; Home</a>
+</nav>
+
+<div class="layout">
+
+  <!-- sidebar -->
+  <aside class="sidebar">
+    <span class="toc-label">Usage Guide</span>
+    <ul class="toc-list">
+      <li><a href="#install">Installation</a></li>
+      <li class="toc-sub"><a href="#install-cpu">CPU / any machine</a></li>
+      <li class="toc-sub"><a href="#install-blackhole">Blackhole hardware</a></li>
+      <li class="toc-sub"><a href="#install-sim">ttsim simulator</a></li>
+      <li class="toc-sub"><a href="#install-ui">Gradio UI</a></li>
+    </ul>
+    <span class="toc-label">Interfaces</span>
+    <ul class="toc-list">
+      <li><a href="#cli">CLI Reference</a></li>
+      <li class="toc-sub"><a href="#cli-flags">All flags</a></li>
+      <li class="toc-sub"><a href="#cli-recipes">Common recipes</a></li>
+      <li><a href="#api">Python API</a></li>
+      <li class="toc-sub"><a href="#api-generate">generate_animation()</a></li>
+      <li class="toc-sub"><a href="#api-export">export_mp4() / export_gif()</a></li>
+      <li class="toc-sub"><a href="#api-lowlevel">Low-level API</a></li>
+      <li><a href="#gradio">Gradio UI</a></li>
+    </ul>
+    <span class="toc-label">Guidance</span>
+    <ul class="toc-list">
+      <li><a href="#modes">Mode comparison</a></li>
+      <li><a href="#prompts">Prompt guide</a></li>
+      <li class="toc-sub"><a href="#prompt-patterns">Patterns</a></li>
+      <li class="toc-sub"><a href="#temporal-alpha">Temporal alpha</a></li>
+      <li><a href="#troubleshooting">Troubleshooting</a></li>
+    </ul>
+  </aside>
+
+  <!-- main content -->
+  <main class="main">
+  <div class="main-inner">
+
+    <!-- hero -->
+    <div class="hero">
+      <span class="hero-badge">Usage Guide</span>
+      <h1><em>tt-animatediff</em> — comprehensive usage</h1>
+      <p>AnimateDiff video generation on Tenstorrent Blackhole hardware. Three interfaces: CLI, Python API, and Gradio UI. All backed by the same SD&nbsp;1.4 TTNN UNet pipeline.</p>
+    </div>
+
+
+    <!-- ── 1. INSTALLATION ── -->
+    <div class="section" id="install">
+      <div class="section-head">
+        <span class="section-num">01</span>
+        <h2>Installation</h2>
+      </div>
+
+      <div class="callout callout-note">
+        <span class="callout-title">Prerequisites</span>
+        <p>Python 3.10+, 16 GB RAM for CPU mode. Blackhole hardware requires Tenstorrent Blackhole P100/P150/P300c or QB2 with <a href="https://github.com/tenstorrent/tt-metal">tt-metal</a> built and its Python env active. Model weights are downloaded automatically from HuggingFace on first run.</p>
+      </div>
+
+      <h3 id="install-cpu">CPU / any machine <span class="chip chip-cpu">CPU</span></h3>
+      <p>Runs Phase&nbsp;1: <code>diffusers.AnimateDiffPipeline</code> + full MotionAdapter on any machine. No Tenstorrent hardware needed.</p>
+      <div class="code-block">
+        <span class="cb-label">bash</span>
+        <pre class="bash"><span class="prompt">$ </span>git clone https://github.com/tenstorrent/tt-animatediff.git
+<span class="prompt">$ </span>cd tt-animatediff
+<span class="prompt">$ </span>pip install -r requirements.txt
+<span class="prompt">$ </span>python examples/generate.py --mode cpu --prompt "ocean waves at sunset"</pre>
+      </div>
+
+      <h3 id="install-blackhole">Blackhole hardware <span class="chip chip-bh">Blackhole</span></h3>
+      <p>Phase&nbsp;2.5: TTNN UNet on Blackhole with cross-frame temporal attention. Requires <a href="https://github.com/tenstorrent/tt-metal">tt-metal</a> built and its Python env active.</p>
+      <ol class="steps">
+        <li><div><p>Build tt-metal (one-time, ~30 min)</p>
+          <div class="code-block">
+            <pre class="bash"><span class="prompt">$ </span>git clone https://github.com/tenstorrent/tt-metal.git ~/tt-metal
+<span class="prompt">$ </span>cd ~/tt-metal && ./build_metal.sh</pre>
+          </div>
+        </div></li>
+        <li><div><p>Clone this repo and install dependencies</p>
+          <div class="code-block">
+            <pre class="bash"><span class="prompt">$ </span>git clone https://github.com/tenstorrent/tt-animatediff.git
+<span class="prompt">$ </span>cd tt-animatediff && pip install -e .</pre>
+          </div>
+        </div></li>
+        <li><div><p>Activate the tt-metal Python env before each session</p>
+          <div class="code-block">
+            <pre class="bash"><span class="prompt">$ </span>source ~/tt-metal/python_env/bin/activate</pre>
+          </div>
+        </div></li>
+        <li><div><p>Generate your first animation</p>
+          <div class="code-block">
+            <pre class="bash"><span class="prompt">$ </span>python examples/generate.py --prompt "aurora borealis over a frozen lake"</pre>
+          </div>
+        </div></li>
+      </ol>
+      <div class="callout callout-note">
+        <span class="callout-title">First run</span>
+        <p>The TTNN UNet JIT-compiles on first use (~2–3 min). Compiled kernels are cached — subsequent runs are fast.</p>
+      </div>
+
+      <h3 id="install-sim">ttsim simulator <span class="chip chip-sim">sim</span></h3>
+      <p>Bit-exact Blackhole simulation on any Linux/x86_64 machine. No hardware required.</p>
+      <div class="code-block">
+        <span class="cb-label">bash</span>
+        <pre class="bash"><span class="prompt">$ </span>mkdir -p ~/sim
+<span class="prompt">$ </span>wget -O ~/sim/libttsim_bh.so \
+    https://github.com/tenstorrent/ttsim/releases/download/v1.7.0/libttsim_bh.so
+<span class="prompt">$ </span>source ~/tt-metal/python_env/bin/activate
+<span class="prompt">$ </span>python examples/generate.py --mode sim --frames 2 --steps 4</pre>
+      </div>
+      <p>See <a href="SIMULATOR.md">docs/SIMULATOR.md</a> for the full simulator setup guide.</p>
+
+      <h3 id="install-ui">Gradio web UI <span class="chip chip-bh">Blackhole</span><span class="chip chip-cpu">CPU</span><span class="chip chip-sim">sim</span></h3>
+      <div class="code-block">
+        <span class="cb-label">bash</span>
+        <pre class="bash"><span class="prompt">$ </span>pip install -e ".[ui]"
+<span class="prompt">$ </span>python app.py
+<span class="prompt"># </span>Open http://localhost:7860</pre>
+      </div>
+    </div>
+
+
+    <!-- ── 2. CLI ── -->
+    <div class="section" id="cli">
+      <div class="section-head">
+        <span class="section-num">02</span>
+        <h2>CLI Reference</h2>
+      </div>
+      <p>All modes are driven by a single entry point: <code>examples/generate.py</code>.</p>
+
+      <h3 id="cli-flags">All flags</h3>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>--prompt TEXT</td><td>(required)</td><td>Text description of the animation</td></tr>
+            <tr><td>--negative-prompt TEXT</td><td>standard exclusions</td><td>Features to suppress</td></tr>
+            <tr><td>--mode MODE</td><td>blackhole</td><td><code>cpu</code> · <code>blackhole</code> · <code>sim</code></td></tr>
+            <tr><td>--frames N</td><td>8</td><td>Number of frames (2–24). Multi-chip QB2: must be a multiple of the chip count</td></tr>
+            <tr><td>--steps N</td><td>25</td><td>Denoising steps. Use 4 for quick sim previews</td></tr>
+            <tr><td>--seed N</td><td>42</td><td>Random seed. Same seed + same prompt = same animation</td></tr>
+            <tr><td>--temporal-alpha F</td><td>0.35</td><td>Cross-frame attention blend (Blackhole/sim only). 0.0–1.0</td></tr>
+            <tr><td>--lightning</td><td>off</td><td>Use Euler scheduler. On Blackhole: same step count, different solver. On CPU: distilled 4-step adapter</td></tr>
+            <tr><td>--lightning-steps N</td><td>4</td><td>CPU Lightning checkpoint step count. Must be 2, 4, or 8</td></tr>
+            <tr><td>--motion-adapter</td><td>off</td><td>Phase 3: inject AnimateDiff MotionAdapter at 7 UNet points (Blackhole/sim only)</td></tr>
+            <tr><td>--motion-adapter-skip KEY…</td><td>—</td><td>Skip injection points by name. E.g. <code>--motion-adapter-skip up1 up2</code> for 6.75× speedup</td></tr>
+            <tr><td>--sim PATH</td><td>~/sim/libttsim_bh.so</td><td>Path to ttsim binary (sim mode only)</td></tr>
+            <tr><td>--device-id N</td><td>0</td><td>Blackhole chip index (0-based). Use for multi-process parallel dispatch</td></tr>
+            <tr><td>--chain-from PATH</td><td>—</td><td>Load latents from a previous run to blend visual continuity</td></tr>
+            <tr><td>--chain-save PATH</td><td>—</td><td>Save this run's final latents for use with <code>--chain-from</code></td></tr>
+            <tr><td>--chain-alpha F</td><td>0.6</td><td>Blend weight for chain latents (0 = ignore, 1 = replace base noise)</td></tr>
+            <tr><td>--output PATH</td><td>output/out.gif</td><td>Output GIF path</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="cli-recipes">Common recipes</h3>
+
+      <h4>Fast preview on any machine</h4>
+      <div class="code-block gray">
+        <pre class="bash"><span class="c"># CPU, 4 frames, 10 steps — quick feedback on a new prompt</span>
+<span class="prompt">$ </span>python examples/generate.py --mode cpu --frames 4 --steps 10 \
+    --prompt "crackling campfire in a dark forest, cinematic"</pre>
+      </div>
+
+      <h4>Standard Blackhole generation</h4>
+      <div class="code-block">
+        <pre class="bash"><span class="c"># 8 frames, 25 steps, ~100 s total on P300C</span>
+<span class="prompt">$ </span>python examples/generate.py \
+    --prompt "aurora borealis over a frozen tundra, long exposure" \
+    --frames 8 --steps 25 --seed 1337</pre>
+      </div>
+
+      <h4>Fast MotionAdapter (skip up1+up2)</h4>
+      <div class="code-block">
+        <pre class="bash"><span class="c"># ~7.7 s/frame — faster than Phase 2.5, full encoder-side attention</span>
+<span class="prompt">$ </span>python examples/generate.py --motion-adapter \
+    --motion-adapter-skip up1 up2 --frames 8 \
+    --prompt "mycelium network pulsing with bioluminescence"</pre>
+      </div>
+
+      <h4>Prompt chaining — visual narrative continuity</h4>
+      <div class="code-block">
+        <pre class="bash"><span class="c"># Run 1: save latents</span>
+<span class="prompt">$ </span>python examples/generate.py --prompt "a seed germinating in dark soil" \
+    --chain-save chain.pt --output scene1.gif
+
+<span class="c"># Run 2: blend from run 1's latents</span>
+<span class="prompt">$ </span>python examples/generate.py --prompt "a sapling reaching toward sunlight" \
+    --chain-from chain.pt --chain-alpha 0.6 --output scene2.gif</pre>
+      </div>
+
+      <h4>Simulator — no hardware</h4>
+      <div class="code-block gold">
+        <pre class="bash"><span class="c"># 2 frames, 4 steps — quick compatibility check</span>
+<span class="prompt">$ </span>python examples/generate.py --mode sim --frames 2 --steps 4 \
+    --prompt "test render"</pre>
+      </div>
+    </div>
+
+
+    <!-- ── 3. PYTHON API ── -->
+    <div class="section" id="api">
+      <div class="section-head">
+        <span class="section-num">03</span>
+        <h2>Python API</h2>
+      </div>
+      <p>Import <code>animatediff_ttnn</code> directly from Python. The high-level <code>generate_animation()</code> entry point manages device lifetime, mode selection, and caching internally — no setup code needed.</p>
+
+      <h3 id="api-generate">generate_animation()</h3>
+      <div class="code-block">
+        <span class="cb-label">python</span>
+        <pre><span class="kw">from</span> animatediff_ttnn <span class="kw">import</span> generate_animation, export_mp4, export_gif
+
+<span class="cm"># Simplest call — auto mode picks Blackhole if tt-metal is importable, else CPU</span>
+frames = <span class="fn">generate_animation</span>(
+    prompt=<span class="str">"swirling nebula, teal and gold, cinematic"</span>,
+)
+
+<span class="cm"># Save as MP4 or GIF</span>
+<span class="fn">export_mp4</span>(frames, <span class="str">"output.mp4"</span>, fps=<span class="num">8</span>)
+<span class="fn">export_gif</span>(frames, <span class="str">"output.gif"</span>)</pre>
+      </div>
+
+      <h4>Full signature</h4>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>prompt</td><td>(required)</td><td>Text description of the animation</td></tr>
+            <tr><td>negative_prompt</td><td>""</td><td>Features to suppress</td></tr>
+            <tr><td>num_frames</td><td>8</td><td>Frame count. Blackhole multi-chip: must be a multiple of chip count</td></tr>
+            <tr><td>num_steps</td><td>25</td><td>Denoising steps. Use 4 for fast preview/sim</td></tr>
+            <tr><td>guidance_scale</td><td>7.5</td><td>CFG scale. Use 1.0 with CPU Lightning mode</td></tr>
+            <tr><td>seed</td><td>42</td><td>Random seed for reproducibility</td></tr>
+            <tr><td>temporal_alpha</td><td>0.35</td><td>Cross-frame attention blend (Blackhole/sim only). 0–1</td></tr>
+            <tr><td>height</td><td>512</td><td>Output frame height in pixels</td></tr>
+            <tr><td>width</td><td>512</td><td>Output frame width in pixels</td></tr>
+            <tr><td>mode</td><td>"auto"</td><td><code>"auto"</code> · <code>"blackhole"</code> · <code>"sim"</code> · <code>"cpu"</code></td></tr>
+            <tr><td>sim_so</td><td>None</td><td>Path to <code>libttsim_bh.so</code> (sim mode). Defaults to <code>~/sim/libttsim_bh.so</code></td></tr>
+            <tr><td>use_lightning</td><td>False</td><td>Euler scheduler instead of PNDM</td></tr>
+            <tr><td>lightning_steps</td><td>4</td><td>CPU Lightning checkpoint step count (2, 4, or 8). Ignored on Blackhole/sim</td></tr>
+            <tr><td>chain_from</td><td>None</td><td>Path to a <code>.pt</code> latent file from a previous run for visual continuity</td></tr>
+            <tr><td>chain_save</td><td>None</td><td>Path to save this run's final latents for use as <code>chain_from</code> next time</td></tr>
+            <tr><td>chain_alpha</td><td>0.6</td><td>Blend weight for chain latents</td></tr>
+            <tr><td>on_step</td><td>None</td><td>Callback <code>(step_idx, num_steps, frame_latents)</code> called after each denoising step (Blackhole/sim only)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>Returns:</strong> <code>list[PIL.Image]</code> — one image per frame, in generation order.</p>
+
+      <h4>Mode selection</h4>
+      <p><code>mode="auto"</code> tries to import <code>ttnn</code> and picks <code>"blackhole"</code> if available, <code>"cpu"</code> otherwise. The TTNN device and compiled UNet are initialized on the first call and held for the lifetime of the process — subsequent calls are fast.</p>
+
+      <h4>Per-step progress callback</h4>
+      <div class="code-block">
+        <span class="cb-label">python</span>
+        <pre><span class="kw">from</span> animatediff_ttnn <span class="kw">import</span> generate_animation
+
+<span class="kw">def</span> <span class="fn">on_step</span>(step_idx, num_steps, frame_latents):
+    pct = <span class="num">100</span> * (step_idx + <span class="num">1</span>) / num_steps
+    <span class="fn">print</span>(<span class="str">f"  step {step_idx+1}/{num_steps} ({pct:.0f}%)"</span>)
+
+frames = <span class="fn">generate_animation</span>(
+    prompt=<span class="str">"lava flow through volcanic rock, molten orange glow"</span>,
+    mode=<span class="str">"blackhole"</span>,
+    num_frames=<span class="num">8</span>,
+    on_step=on_step,
+)</pre>
+      </div>
+
+      <h4>CPU Lightning</h4>
+      <div class="code-block gray">
+        <span class="cb-label">python</span>
+        <pre><span class="cm"># CPU Lightning: 4-step distilled adapter, ~20 s/frame</span>
+frames = <span class="fn">generate_animation</span>(
+    prompt=<span class="str">"crystalline cave, blue ice, shafts of light"</span>,
+    mode=<span class="str">"cpu"</span>,
+    use_lightning=<span class="kw">True</span>,
+    lightning_steps=<span class="num">4</span>,   <span class="cm"># must match checkpoint: 2, 4, or 8</span>
+    guidance_scale=<span class="num">1.0</span>,   <span class="cm"># distilled — CFG baked in</span>
+)</pre>
+      </div>
+
+      <h4>Prompt chaining</h4>
+      <div class="code-block">
+        <span class="cb-label">python</span>
+        <pre><span class="cm"># Scene 1 — save latents</span>
+frames1 = <span class="fn">generate_animation</span>(
+    prompt=<span class="str">"a lone lighthouse in a stormy sea"</span>,
+    chain_save=<span class="str">"lighthouse.pt"</span>,
+)
+
+<span class="cm"># Scene 2 — blend from scene 1 for visual DNA continuity</span>
+frames2 = <span class="fn">generate_animation</span>(
+    prompt=<span class="str">"a calm harbour at dawn, same coastline"</span>,
+    chain_from=<span class="str">"lighthouse.pt"</span>,
+    chain_alpha=<span class="num">0.6</span>,
+)</pre>
+      </div>
+
+      <h3 id="api-export">Export functions</h3>
+      <div class="code-block">
+        <span class="cb-label">python</span>
+        <pre><span class="kw">from</span> animatediff_ttnn <span class="kw">import</span> export_mp4, export_gif
+
+<span class="cm"># MP4 — libx264 / yuv420p, requires ffmpeg on PATH</span>
+<span class="fn">export_mp4</span>(frames, <span class="str">"output.mp4"</span>, fps=<span class="num">8</span>)
+
+<span class="cm"># GIF — no external dependencies</span>
+<span class="fn">export_gif</span>(frames, <span class="str">"output.gif"</span>)</pre>
+      </div>
+      <p><code>export_mp4</code> requires <code>ffmpeg</code> on <code>$PATH</code>. Install with <code>sudo apt install ffmpeg</code> (Ubuntu) or <code>brew install ffmpeg</code> (macOS).</p>
+
+      <h3 id="api-lowlevel">Low-level API</h3>
+      <p>Direct access to phase-specific pipelines for scripting and testing:</p>
+      <div class="code-block">
+        <span class="cb-label">python</span>
+        <pre><span class="cm"># Phase 1 — CPU baseline</span>
+<span class="kw">from</span> animatediff_ttnn.pipeline <span class="kw">import</span> create_animatediff_pipeline, generate, export_gif
+
+pipe = <span class="fn">create_animatediff_pipeline</span>()
+frames = <span class="fn">generate</span>(pipe, <span class="str">"ocean waves at sunset"</span>, num_frames=<span class="num">8</span>)
+
+<span class="cm"># Phase 2.5 — Blackhole temporal attention (requires device + models)</span>
+<span class="kw">from</span> animatediff_ttnn.session <span class="kw">import</span> ensure_blackhole
+<span class="kw">from</span> animatediff_ttnn.generation_helpers <span class="kw">import</span> encode_prompt
+<span class="kw">from</span> animatediff_ttnn.temporal_attention <span class="kw">import</span> generate_frames_temporal
+
+device, (ttnn_model, ttnn_vae, config, time_proj) = <span class="fn">ensure_blackhole</span>()
+embeddings = <span class="fn">encode_prompt</span>(<span class="str">"ocean"</span>, <span class="str">"blurry"</span>)
+frames = <span class="fn">generate_frames_temporal</span>(device, ttnn_model, ttnn_vae,
+    config, time_proj, embeddings, num_frames=<span class="num">8</span>, ...)</pre>
+      </div>
+    </div>
+
+
+    <!-- ── 4. GRADIO UI ── -->
+    <div class="section" id="gradio">
+      <div class="section-head">
+        <span class="section-num">04</span>
+        <h2>Gradio UI</h2>
+      </div>
+      <p>A browser-based interface for interactive generation with real-time denoising previews.</p>
+
+      <h3>Starting the UI</h3>
+
+      <div class="tab-wrap">
+        <div class="tabs">
+          <span class="tab active" onclick="switchTab(this,'gradio-bh')">Blackhole</span>
+          <span class="tab" onclick="switchTab(this,'gradio-cpu')">CPU only</span>
+          <span class="tab" onclick="switchTab(this,'gradio-sim')">Simulator</span>
+        </div>
+        <div class="tab-body">
+          <div class="tab-panel active" id="gradio-bh">
+            <div class="code-block" style="margin:0">
+              <pre class="bash"><span class="prompt">$ </span>pip install -e ".[ui]"
+<span class="prompt">$ </span>source ~/tt-metal/python_env/bin/activate
+<span class="prompt">$ </span>python app.py
+<span class="prompt"># </span>Open http://localhost:7860, select Mode: blackhole</pre>
+            </div>
+          </div>
+          <div class="tab-panel" id="gradio-cpu">
+            <div class="code-block" style="margin:0">
+              <pre class="bash"><span class="prompt">$ </span>pip install -e ".[ui]"
+<span class="prompt">$ </span>python app.py
+<span class="prompt"># </span>Open http://localhost:7860, select Mode: cpu</pre>
+            </div>
+          </div>
+          <div class="tab-panel" id="gradio-sim">
+            <div class="code-block" style="margin:0">
+              <pre class="bash"><span class="prompt">$ </span>pip install -e ".[ui]"
+<span class="prompt">$ </span>source ~/tt-metal/python_env/bin/activate
+<span class="prompt">$ </span>python app.py
+<span class="prompt"># </span>Open http://localhost:7860
+<span class="prompt"># </span>Select Mode: sim — enter sim binary path if not ~/sim/libttsim_bh.so</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3>Parameters reference</h3>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Parameter</th><th>Range / Type</th><th>Default</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Mode</td><td>blackhole · cpu · sim</td><td>blackhole</td><td>Selects compute backend</td></tr>
+            <tr><td>Prompt</td><td>text</td><td>—</td><td>See <a href="#prompts">Prompt guide</a></td></tr>
+            <tr><td>Negative prompt</td><td>text</td><td>standard exclusions</td><td></td></tr>
+            <tr><td>Frames</td><td>2–24</td><td>8</td><td>Recommend 2–4 for sim</td></tr>
+            <tr><td>Steps</td><td>4–50</td><td>25</td><td>Use 4 for sim/Lightning preview</td></tr>
+            <tr><td>Seed</td><td>integer</td><td>42</td><td>Fixed seed = reproducible output</td></tr>
+            <tr><td>Temporal alpha</td><td>0.0–1.0</td><td>0.35</td><td>Blackhole/sim only. See <a href="#temporal-alpha">tuning guide</a></td></tr>
+            <tr><td>Lightning</td><td>checkbox</td><td>off</td><td>Euler solver. CPU requires matching Lightning checkpoint</td></tr>
+            <tr><td>Lightning steps</td><td>2 · 4 · 8</td><td>4</td><td>CPU Lightning only</td></tr>
+            <tr><td>Chain from / save</td><td>file path</td><td>—</td><td>Blackhole/sim only. Visual continuity across runs</td></tr>
+            <tr><td>Chain alpha</td><td>0.0–1.0</td><td>0.6</td><td>Blend weight for chain latents</td></tr>
+            <tr><td>Sim binary path</td><td>file path</td><td>~/sim/libttsim_bh.so</td><td>Sim mode only</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout callout-note">
+        <span class="callout-title">Streaming previews</span>
+        <p>On Blackhole/sim, the UI streams a colourised preview after each denoising step. Early steps look noisy — that's normal. The final frame is VAE-decoded. Preview generation is pure CPU tensor ops with no hardware overhead.</p>
+      </div>
+    </div>
+
+
+    <!-- ── 5. MODE COMPARISON ── -->
+    <div class="section" id="modes">
+      <div class="section-head">
+        <span class="section-num">05</span>
+        <h2>Mode comparison</h2>
+      </div>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Mode</th><th>Hardware</th><th>Speed (8fr, 512²)</th><th>Temporal quality</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>cpu</td><td>None</td><td>~2 min/frame</td><td>Full MotionAdapter ✓</td><td>Any machine, 16 GB RAM</td></tr>
+            <tr><td>cpu --lightning</td><td>None</td><td>~20 s/frame</td><td>Full MotionAdapter ✓</td><td>4-step distilled adapter, CFG=1.0</td></tr>
+            <tr><td>blackhole</td><td>Blackhole P300C</td><td><strong>~12.5 s/frame</strong></td><td>Cross-frame blend</td><td>PNDM · 25 steps · CFG=7.5</td></tr>
+            <tr><td>blackhole --lightning</td><td>Blackhole P300C</td><td><strong>~12.0 s/frame</strong></td><td>Cross-frame blend</td><td>Euler solver · same step count</td></tr>
+            <tr><td>blackhole --motion-adapter</td><td>Blackhole P300C</td><td>~52 s/frame</td><td>Full MotionAdapter Phase 3 ✓</td><td>7 injection points, batched D→H</td></tr>
+            <tr><td>blackhole --motion-adapter --motion-adapter-skip up1 up2</td><td>Blackhole P300C</td><td><strong>~7.7 s/frame</strong></td><td>Encoder-side MotionAdapter ✓</td><td>5 injection points, fastest Blackhole mode</td></tr>
+            <tr><td>sim</td><td>None (ttsim)</td><td>10–100× slower than silicon</td><td>Cross-frame blend</td><td>Bit-exact, Linux/x86_64 only</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:.78rem;color:var(--muted)">Timings measured on QB2 (4 × P300C), warm model (TTNN JIT compiled). See <a href="benchmarks.html">benchmarks page</a> for full breakdown.</p>
+    </div>
+
+
+    <!-- ── 6. PROMPT GUIDE ── -->
+    <div class="section" id="prompts">
+      <div class="section-head">
+        <span class="section-num">06</span>
+        <h2>Prompt guide</h2>
+      </div>
+      <p>This pipeline uses <strong>SD&nbsp;1.4</strong> in all modes. Knowing its characteristics produces consistently better results.</p>
+
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>Natural scenes</h4>
+          <p>Forests, mountains, oceans, sky, fire, water. SD 1.4's strongest domain.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Painterly styles</h4>
+          <p>Oil painting, watercolor, impressionism, concept art. Style cues land reliably.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Cinematic lighting</h4>
+          <p>Golden hour, neon, moonlight, candlelight, volumetric fog, depth of field.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Architecture</h4>
+          <p>Temples, ruins, castles, sci-fi structures, cathedrals.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Cosmic / abstract</h4>
+          <p>Nebulae, galaxies, aurora, energy fields, geometric patterns, mandalas.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Motion-friendly</h4>
+          <p>Crackling fire, flowing lava, drifting smoke, pulsing mycelium, aurora shimmer.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-warn">
+        <span class="callout-title">Avoid</span>
+        <p><strong>Photorealistic people / faces</strong> — anatomy drifts frame-to-frame. <strong>Text in the image</strong> — SD 1.4 cannot render legible text. <strong>Prompts over ~60 words</strong> — CLIP truncates at 77 tokens.</p>
+      </div>
+
+      <h3 id="prompt-patterns">Patterns that work</h3>
+      <div class="code-block">
+        <span class="cb-label">examples</span>
+        <pre><span class="cm"># Style before subject</span>
+<span class="str">"watercolor painting of ancient ruins at sunset, soft brushstrokes, muted palette"</span>
+
+<span class="cm"># Cinematic descriptors</span>
+<span class="str">"cinematic 4K, dramatic side lighting, volumetric fog, depth of field"</span>
+
+<span class="cm"># Specific motion verbs</span>
+<span class="str">"crackling campfire"</span>  <span class="str">"ocean waves crashing"</span>  <span class="str">"aurora borealis shimmering"</span>
+<span class="str">"shifting cosmos"</span>     <span class="str">"lava flowing"</span>           <span class="str">"smoke drifting"</span>
+
+<span class="cm"># Combine style + lighting + subject</span>
+<span class="str">"oil painting of a cathedral at dusk, dramatic crepuscular rays, golden hour, impressionist"</span>
+
+<span class="cm"># Negative prompt — always include these</span>
+<span class="str">"blurry, low quality, distorted, text, people, faces, modern buildings"</span></pre>
+      </div>
+
+      <h3 id="temporal-alpha">Temporal alpha tuning <span class="chip chip-bh">Blackhole</span><span class="chip chip-sim">sim</span></h3>
+      <p>Controls how strongly frames are blended together during cross-frame attention in Phase 2.5.</p>
+
+      <div style="background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:1.1rem 1.25rem;margin:1rem 0 1.5rem;">
+        <div class="alpha-row">
+          <span class="alpha-val">0.0</span>
+          <div class="alpha-bar-wrap"><div class="alpha-bar" style="width:0%"></div></div>
+          <span class="alpha-desc">No cross-frame mixing — frames denoised independently</span>
+        </div>
+        <div class="alpha-row">
+          <span class="alpha-val">0.2–0.3</span>
+          <div class="alpha-bar-wrap"><div class="alpha-bar" style="width:25%"></div></div>
+          <span class="alpha-desc">Subtle coherence, slight variation frame-to-frame</span>
+        </div>
+        <div class="alpha-row">
+          <span class="alpha-val">0.35 ★</span>
+          <div class="alpha-bar-wrap"><div class="alpha-bar" style="width:35%"></div></div>
+          <span class="alpha-desc">Default — good balance for most subjects</span>
+        </div>
+        <div class="alpha-row">
+          <span class="alpha-val">0.5–0.7</span>
+          <div class="alpha-bar-wrap"><div class="alpha-bar" style="width:60%"></div></div>
+          <span class="alpha-desc">Strong coherence; backgrounds stabilize, fine detail may flatten</span>
+        </div>
+        <div class="alpha-row">
+          <span class="alpha-val">1.0</span>
+          <div class="alpha-bar-wrap"><div class="alpha-bar" style="width:100%"></div></div>
+          <span class="alpha-desc">Maximum blending — very similar frames, minimal motion</span>
+        </div>
+      </div>
+
+      <p><strong>Rule of thumb:</strong> fast motion (fire, water) → <code>0.2–0.35</code>. Slow atmospheric drift (aurora, cosmos) → <code>0.4–0.6</code>.</p>
+
+      <h3>Step count guidance</h3>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Mode</th><th>Minimum</th><th>Sweet spot</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>PNDM standard (Blackhole/sim)</td><td>4 (preview)</td><td><strong>25</strong></td><td>Diminishing returns beyond 30</td></tr>
+            <tr><td>Euler Lightning (Blackhole/sim)</td><td>4</td><td><strong>25</strong></td><td>Base TTNN UNet — same CFG=7.5, different solver</td></tr>
+            <tr><td>Euler Lightning (CPU)</td><td>2</td><td><strong>4</strong></td><td>Real distilled adapter — CFG=1.0 baked in; more steps degrades quality</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- ── 7. TROUBLESHOOTING ── -->
+    <div class="section" id="troubleshooting">
+      <div class="section-head">
+        <span class="section-num">07</span>
+        <h2>Troubleshooting</h2>
+      </div>
+
+      <h3>ImportError: No module named 'ttnn'</h3>
+      <p>The tt-metal Python env is not active. Run <code>source ~/tt-metal/python_env/bin/activate</code> before any Blackhole or sim command. In <code>mode="auto"</code> this causes automatic fallback to CPU — no error is raised.</p>
+
+      <h3>TT_FATAL / hardware abort</h3>
+      <p>A chip may be in a bad state. Try <code>tt-smi -s</code> to check chip health. If chip 3 is listed as hung (BOARD_ID_HIGH 0x461, BOARD_ID_LOW 0x31924055), the <code>setup_blackhole()</code> function reads hwmon sentinel values to skip dead chips automatically.</p>
+
+      <h3>ValueError: num_frames must be a multiple of num_chips</h3>
+      <p>On a QB2 (4-chip mesh), frame count must be a multiple of 4: use 4, 8, 12, or 16. This constraint applies to Phase 2.5 and the Gradio UI's Blackhole mode.</p>
+
+      <h3>TTNN JIT compilation taking a long time</h3>
+      <p>First-run UNet kernel compilation takes 2–3 minutes. Compiled kernels are cached — subsequent runs start in seconds. Do not interrupt the first run.</p>
+
+      <h3>export_mp4: ffmpeg not found</h3>
+      <div class="code-block">
+        <pre class="bash"><span class="prompt">$ </span>sudo apt install ffmpeg      <span class="cm"># Ubuntu / Debian</span>
+<span class="prompt">$ </span>brew install ffmpeg          <span class="cm"># macOS</span></pre>
+      </div>
+
+      <h3>ttsim probe failed</h3>
+      <p>The ttsim binary version is incompatible with the installed tt-metal version. Download a matching release from <a href="https://github.com/tenstorrent/ttsim/releases">github.com/tenstorrent/ttsim/releases</a>. The probe runs in a subprocess to prevent a simulator <code>abort()</code> from killing the Gradio server.</p>
+
+      <h3>CPU Lightning: quality degrades with more steps</h3>
+      <p>The distilled <code>ByteDance/AnimateDiff-Lightning</code> checkpoint is trained for exactly 2, 4, or 8 steps with <code>guidance_scale=1.0</code> (baked in). Using more steps or a different CFG scale degrades output. Use <code>--lightning-steps</code> to match the checkpoint and don't override <code>guidance_scale</code>.</p>
+
+      <h3>Gradio UI: preview looks like noise</h3>
+      <p>Normal for the first several denoising steps. The latent-space preview uses a fast tanh-colourised mapping (no VAE) — noise is expected until ~step 10 of a 25-step run. Watch for structure emerging in the middle steps.</p>
+    </div>
+
+  </div><!-- /main-inner -->
+  </main>
+</div><!-- /layout -->
+
+<footer>
+  <a href="https://github.com/tenstorrent/tt-animatediff">GitHub</a> ·
+  <a href="index.html">Home</a> ·
+  <a href="benchmarks.html">Benchmarks</a> ·
+  <a href="gallery.html">Gallery</a> ·
+  <a href="INTEGRATION_GUIDE.md">Integration</a>
+</footer>
+
+<script>
+  // tab switching
+  function switchTab(el, panelId) {
+    const wrap = el.closest('.tab-wrap');
+    wrap.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    wrap.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    wrap.querySelector('#' + panelId).classList.add('active');
+  }
+
+  // highlight active TOC link on scroll
+  const sections = document.querySelectorAll('[id]');
+  const tocLinks = document.querySelectorAll('.toc-list a');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        tocLinks.forEach(a => {
+          a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id);
+        });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

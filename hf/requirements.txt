@@ -1,0 +1,19 @@
+# Runtime deps for the episod/tt-animatediff artifact.
+# ttnn / tt-metal are deliberately absent: they are not on PyPI and the CPU
+# path must install cleanly without them. See the model card for the TTNN path.
+#
+# gradio is deliberately NOT listed here either. The artifact bundles app.py
+# (the local Blackhole/CPU UI) verbatim as a usage example, and app.py does
+# `import gradio` — but making gradio a hard pipeline dependency would mean
+# nobody can `pip install` this artifact for the pipeline alone without also
+# installing gradio. If you want to run the bundled app.py, install it
+# yourself: `pip install gradio`.
+torch>=2.0.0
+numpy>=1.24.0
+Pillow>=9.0.0
+diffusers>=0.32.1
+transformers>=4.30.0
+accelerate>=0.20.0
+huggingface_hub>=0.20.0
+safetensors>=0.4.0
+tqdm>=4.65.0

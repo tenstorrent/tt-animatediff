@@ -52,6 +52,10 @@ setup(
             # fastapi's TestClient is a thin wrapper over httpx; without it the server
             # tests fail at import rather than skipping.
             "httpx>=0.24.0",
+            # tt-lang's functional simulator (sim.ttnnsim) imports greenlet.
+            # Without it tests/test_ttlang_temporal_attention.py silently
+            # importorskip()s its 9 simulator tests instead of running them.
+            "greenlet>=3.0.0",
         ],
         "ui": [
             "gradio>=4.0.0",
