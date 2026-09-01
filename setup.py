@@ -49,9 +49,20 @@ setup(
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
+            # fastapi's TestClient is a thin wrapper over httpx; without it the server
+            # tests fail at import rather than skipping.
+            "httpx>=0.24.0",
         ],
         "ui": [
             "gradio>=4.0.0",
+        ],
+        # The ASGI serving surface (animatediff_ttnn/server/). Matches the packages
+        # tt-model-manager's tt-dit-server kind installs for this app, so a bundle and a
+        # local `pip install -e .[serve]` run the same stack.
+        "serve": [
+            "fastapi>=0.110.0",
+            "uvicorn>=0.27.0",
+            "pydantic>=2.0.0",
         ],
     },
     entry_points={},

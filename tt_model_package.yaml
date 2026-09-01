@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
+#
+# tt-model-manager v5.1 container package for tt-animatediff.
+#
+#   tt-model package tt_model_package.yaml
+#   tt-model serve tenstorrent/tt-animatediff
+#
+# This is a DIFFUSION model, so it uses `kind: tt-dit-server` rather than either vLLM
+# kind: there are no tokens, no KV cache and no continuous batching, so the whole engine
+# layer means nothing to it. What it needs instead is a warm pipeline behind a small HTTP
+# surface, which animatediff_ttnn/server/app.py provides.
+
+schema: "5.1"
+name: tt-animatediff
+repo: tenstorrent/tt-animatediff
+weights: guoyww/animatediff
+kind: tt-dit-server
+arch: blackhole
+
+source:
+  # ttnn itself is built from this tree in the image.
+  tt_metal:
+    repo: https://github.com/tenstorrent/tt-metal
+    ref: v0.77.0
+  code:
+    - models/common
+  # The model's own package does NOT live in tt-metal -- it is this repo. `extra_code`
+  # ships it from here, pinned to a ref so the package is reproducible by whoever pulls
+  # it and not only by the machine that built it.
+  extra_code:
+    - root:
+        repo: https://github.com/tenstorrent/tt-animatediff
+        ref: v0.10.0
+      paths:
+        - animatediff_ttnn
+  ubuntu: "22.04"
+  python: "3.12"
+
+runtime:
+  # Resolved by uvicorn exactly as written; covered by source.extra_code above.
+  app: animatediff_ttnn.server.app:app
+  # The kind's default is FLUX2_MESH_SHAPE, which means nothing to this model. The server
+  # reads the name below and refuses a malformed value rather than defaulting -- an
+  # unnoticed (1,1) would convert against the wrong mesh and return bad frames, not an error.
+  mesh_shape_env: ANIMATEDIFF_MESH_SHAPE
+  # Beyond the kind's own fastapi/uvicorn/pydantic/pillow. torch comes from the image's
+  # CPU build (the kind's verify step asserts +cpu and tt-metal's pin), so it is not listed.
+  packages:
+    - diffusers>=0.32.1
+    - transformers>=4.30.0
+    - accelerate>=0.20.0
+    - safetensors
+
+serve:
+  hardware: p300x2
+  mesh_device: P300x2
+  port: 8000
