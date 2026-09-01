@@ -24,3 +24,6 @@ build/space/
 # Tooling scratch (not project output)
 .pytest_cache/
 .superpowers/
+
+# Local virtualenv (never committed; `git add -A` would otherwise stage it whole)
+.venv/

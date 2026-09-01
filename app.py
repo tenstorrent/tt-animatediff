@@ -192,64 +192,56 @@ def generate(
     out_dir = Path(tempfile.mkdtemp())
     final_path = str(out_dir / "output.gif")
 
+    # OUTPUT size. Distinct from the preview size, which `make_step_callback`
+    # picks on its own (256x256 — the latents are a 64x64 grid, so upsampling a
+    # preview to full output size buys nothing). Conflating the two is how these
+    # two names briefly went missing.
+    height, width = 512, 512
+
+    from animatediff_ttnn.pipeline import export_gif
+
+    # Every mode streams. `run_fn(on_step) -> frames` is the only thing that
+    # differs between them; the queue/thread/yield machinery below is shared.
+    #
+    # CPU used to be the exception ("CPU mode has no step-level callback hook —
+    # just run and yield final"), which was true until `pipeline.generate()`
+    # grew an `on_step` passthrough. Leaving it unstreamed would have left the
+    # UI's own blurb — "Preview updates stream in real time as each denoising
+    # step completes" — false for one of the three modes it offers.
     if mode == "cpu":
-        # CPU mode has no step-level callback hook — just run and yield final
         try:
-            from animatediff_ttnn.pipeline import generate as cpu_generate, export_gif
+            from animatediff_ttnn.pipeline import generate as cpu_generate
+
             pipe = _ensure_cpu_pipeline(lightning=lightning, lightning_steps=lightning_steps)
             guidance = 1.0 if lightning else 7.5
             # CPU Lightning uses distilled checkpoints that only support 2/4/8 steps;
             # ignore the general steps slider and use the lightning_steps value instead.
-            cpu_steps = lightning_steps if lightning else steps
-            frames_list = cpu_generate(
+            steps = lightning_steps if lightning else steps
+        except Exception as exc:
+            raise gr.Error(str(exc)) from exc
+
+        def run_fn(on_step):
+            return cpu_generate(
                 pipe, prompt,
                 negative_prompt=negative_prompt,
                 num_frames=frames,
                 guidance_scale=guidance,
-                num_inference_steps=cpu_steps,
+                num_inference_steps=steps,
                 seed=seed,
+                on_step=on_step,
             )
-            export_gif(frames_list, final_path)
+    else:
+        from animatediff_ttnn.generation_helpers import encode_prompt
+        from animatediff_ttnn.temporal_attention import generate_frames_temporal
+
+        try:
+            device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
+            text_embeddings = encode_prompt(prompt, negative_prompt)
         except Exception as exc:
             raise gr.Error(str(exc)) from exc
-        yield final_path, "Done."
-        return
 
-    # Blackhole / sim — stream per-step previews then yield final
-    from animatediff_ttnn.generation_helpers import encode_prompt
-    from animatediff_ttnn.temporal_attention import generate_frames_temporal, _latent_preview
-    from animatediff_ttnn.pipeline import export_gif
-
-    try:
-        device, (ttnn_model, ttnn_vae, config, torch_time_proj) = _ensure_bh_device(mode, sim_path)
-        text_embeddings = encode_prompt(prompt, negative_prompt)
-    except Exception as exc:
-        raise gr.Error(str(exc)) from exc
-
-    # Queue carries (preview_gif_path | None, error | None)
-    # None preview + None error = done, final result is ready
-    step_q: queue.Queue = queue.Queue()
-    result_holder = []
-    error_holder = []
-
-    # Preview cadence: emit every step for ≤10 steps, every 2 steps otherwise.
-    # Avoids flooding Gradio with updates on long runs while still feeling live.
-    preview_every = 1 if steps <= 10 else 2
-
-    height, width = 512, 512
-
-    preview_path = str(out_dir / "preview.gif")  # single file, overwritten each step
-
-    def on_step(step_idx, num_steps, frame_latents):
-        if step_idx % preview_every != 0 and step_idx != num_steps - 1:
-            return
-        preview_frames = _latent_preview(frame_latents, height, width)
-        export_gif(preview_frames, preview_path)
-        step_q.put((preview_path, None, f"Denoising step {step_idx + 1}/{num_steps} — preview (early steps look noisy)…"))
-
-    def worker():
-        try:
-            fl = generate_frames_temporal(
+        def run_fn(on_step):
+            return generate_frames_temporal(
                 device=device,
                 ttnn_model=ttnn_model,
                 ttnn_vae=ttnn_vae,
@@ -269,6 +261,44 @@ def generate(
                 height=height,
                 width=width,
             )
+
+    # Queue carries (preview_gif_path | None, error | None)
+    # None preview + None error = done, final result is ready
+    step_q: queue.Queue = queue.Queue()
+    result_holder = []
+    error_holder = []
+
+    preview_path = str(out_dir / "preview.gif")  # single file, overwritten each step
+
+    # Cadence, rendering and the (atomic) write all come from the shared
+    # `animatediff_ttnn.preview` module, which the CLI runner uses too — this
+    # block used to hand-roll all three. Sharing it means the Space and the CLI
+    # can't drift on how often previews appear or how big they are, and the
+    # Space picks up the module's temp-file+rename write, so Gradio can no
+    # longer be handed a half-written GIF.
+    #
+    # `emit` is where the two differ: the CLI prints a line to stdout for a
+    # subprocess consumer to parse, while here the path goes straight onto the
+    # queue the Gradio handler thread is draining.
+    from animatediff_ttnn.preview import make_step_callback, parse_preview_line
+
+    def _to_queue(line: str) -> None:
+        parsed = parse_preview_line(line)
+        if parsed is None:
+            return
+        step, total, path = parsed
+        # (preview_path | None, error | None, status | None). The status slot exists
+        # because this UI wires outputs=[output_gif, status_label] and so yields two
+        # values; main's single-output version put a 2-tuple here. Keeping the parsed
+        # step/total is what lets the label say which step you are looking at.
+        step_q.put((path, None,
+                    f"Denoising step {step}/{total} — preview (early steps look noisy)…"))
+
+    on_step = make_step_callback(preview_path, num_steps=steps, emit=_to_queue)
+
+    def worker():
+        try:
+            fl = run_fn(on_step)
             result_holder.append(fl)
         except Exception as exc:
             error_holder.append(exc)

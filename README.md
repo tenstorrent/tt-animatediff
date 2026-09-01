@@ -63,7 +63,35 @@ python examples/generate.py --motion-adapter --motion-adapter-skip up1 up2 --fra
 
 # Simulator — no hardware, bit-exact Blackhole
 python examples/generate.py --mode sim --frames 2 --steps 4
+
+# Watch it form — write a rolling preview of the in-flight latents each step
+python examples/generate.py --preview-path out/preview.gif
 ```
+
+### Live previews (`--preview-path`)
+
+`--preview-path GIF` makes the runner rewrite `GIF` as denoising proceeds and
+print one line per update:
+
+```
+PREVIEW: 7/25 out/preview.gif
+```
+
+so a GUI or script draining stdout can show the animation forming instead of a
+spinner. `--preview-every N` overrides the cadence (default: every step for runs
+of ≤10 steps, every 2nd step otherwise; the final step always emits).
+
+- **It costs the hardware pipeline nothing.** The preview maps 3 of the 4 latent
+  channels to RGB with a tanh soft-clip and a bilinear upsample — pure CPU work
+  on the small latent grid, no VAE decode, no device work. Measured ~3% wall
+  clock on CPU and no measurable cost on Blackhole.
+- Previews render at **256×256**, half the output size: the source is a 64×64
+  latent grid, so a 512 upsample carries no more information.
+- The file is written atomically (temp file + rename), so a consumer polling
+  that path while it is rewritten never reads a half-written GIF.
+- It is a **latent proxy**, not a decoded frame — early steps genuinely look
+  like noise, and structure separates out partway through.
+- Works in every mode — `blackhole`, `cpu` and `sim`.
 
 ---
 
@@ -496,6 +524,19 @@ application plugin, or Python library — see
 ---
 
 ## Changelog
+
+### v0.10.0 — 2026-08-26
+- **Per-step latent previews from the CLI runner** — `examples/generate.py` gains
+  `--preview-path` / `--preview-every`, streaming a rolling preview GIF during generation in
+  every mode (`blackhole`, `cpu`, `sim`, including the `--motion-adapter` branch). Shared
+  cadence/atomic-write/transport logic lives in the new `animatediff_ttnn/preview.py`, used by
+  both `app.py` and the CLI so the flag behaves identically everywhere.
+- **Streaming fix** — the default `emit` now flushes every line; unflushed `print` left preview
+  lines block-buffered until process exit under `subprocess.Popen(stdout=PIPE)`, so nothing
+  streamed at all until the run had already finished.
+- **Parser fix** — the `PREVIEW:` line parser no longer anchors to the start of the physical
+  line, since the TTNN path can emit it immediately after a `\r`-terminated progress line with
+  no intervening `\n`.
 
 ### v0.9.0 — 2026-06-15
 - **Phase 3 batched D→H transfer** — `_apply_temporal` now pulls all N frame tensors from
