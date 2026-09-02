@@ -56,6 +56,11 @@ setup(
             # Without it tests/test_ttlang_temporal_attention.py silently
             # importorskip()s its 9 simulator tests instead of running them.
             "greenlet>=3.0.0",
+            # scripts/benchmark_serving.py drives the served model over HTTP, and
+            # tests/test_benchmark_serving.py imports it. It arrives transitively via
+            # huggingface_hub today; declared here so the suite does not depend on
+            # that staying true.
+            "requests>=2.28.0",
         ],
         "ui": [
             "gradio>=4.0.0",

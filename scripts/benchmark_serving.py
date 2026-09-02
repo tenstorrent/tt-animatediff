@@ -44,8 +44,29 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
+from urllib.parse import urlsplit
 
 import requests
+
+
+def validated_base_url(raw: str) -> str:
+    """Check --base-url is an http(s) address, and return it without a trailing slash.
+
+    Every request this script makes is built from this one operator-supplied value:
+    there is no request context here and no untrusted caller, so this is argument
+    validation rather than an SSRF control. It earns its place by failing on a
+    malformed value with a message that names the problem -- ``127.0.0.1:8000`` with
+    the scheme left off otherwise reaches requests as a relative URL and comes back
+    as a MissingSchema traceback pointing at the library, not at the flag.
+    """
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https"):
+        raise SystemExit(
+            f"--base-url must start with http:// or https://, got {raw!r}"
+        )
+    if not parts.hostname:
+        raise SystemExit(f"--base-url has no host: {raw!r}")
+    return raw.rstrip("/")
 
 
 def wait_for_ready(base_url: str, timeout: int = 600) -> float:
@@ -140,27 +161,28 @@ def main() -> int:
     ap.add_argument("--skip-concurrency", action="store_true")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    base_url = validated_base_url(args.base_url)
 
-    waited = wait_for_ready(args.base_url)
+    waited = wait_for_ready(base_url)
     print(f"server ready (waited {waited:.1f}s)\n")
 
     print("step sweep:")
-    rows = sweep(args.base_url, frames=args.frames, step_values=args.steps,
+    rows = sweep(base_url, frames=args.frames, step_values=args.steps,
                  repeats=args.repeats)
 
     for f in args.frame_sweep or []:
         print(f"\nframe sweep (steps={args.steps[len(args.steps)//2]}):")
-        rows += sweep(args.base_url, frames=f,
+        rows += sweep(base_url, frames=f,
                       step_values=[args.steps[len(args.steps) // 2]], repeats=args.repeats)
 
     conc: Optional[Dict] = None
     if not args.skip_concurrency:
         print("\nconcurrency probe:")
-        conc = concurrency_probe(args.base_url, frames=args.frames, steps=args.steps[0])
+        conc = concurrency_probe(base_url, frames=args.frames, steps=args.steps[0])
         print(f"  {conc['n_concurrent']} at once: {conc['wall_clock_s']}s vs "
               f"{conc['single_request_s']}s single -> {conc['reading']}")
 
-    report = {"base_url": args.base_url, "rows": rows, "concurrency": conc}
+    report = {"base_url": base_url, "rows": rows, "concurrency": conc}
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(report, fh, indent=1)
