@@ -19,6 +19,12 @@ Thread safety: the initialization lock guarantees that concurrent first
 calls (e.g. two InvokeAI nodes racing at startup) serialize correctly.
 After the first call returns, subsequent calls are lock-free reads.
 
+The lock-free fast path requires BOTH globals, and initialization publishes
+_models before _device, because the two are not set at the same instant: the
+device opens in well under a second and then the weights compile for tens of
+seconds. A fast path gated on _device alone would hand a caller arriving in
+that window a device with no models.
+
 Process lifetime: the device is held open until close() is called or the
 process exits. TTNN does not support opening the same device twice in one
 process, so callers must not open their own device independently when
@@ -57,13 +63,13 @@ def ensure_blackhole(
         RuntimeError: device open failed (hardware not present, driver error, etc.).
     """
     global _device, _models
-    if _device is not None:
+    if _device is not None and _models is not None:
         return _device, _models
 
     with _lock:
         # Re-check inside the lock — another thread may have initialized while
         # we were waiting.
-        if _device is not None:
+        if _device is not None and _models is not None:
             return _device, _models
 
         if mode == "sim":
@@ -71,20 +77,23 @@ def ensure_blackhole(
 
         _ensure_tt_metal_on_path()
 
+        # Build into locals and publish at the end. Nothing is visible to a
+        # lock-free reader until both halves exist, so a failed load leaves the
+        # globals untouched rather than needing to undo a partial write, and a
+        # concurrent caller blocks on the lock instead of reading through it.
         if mode == "sim":
-            _device = _open_sim_device()
+            device = _open_sim_device()
         else:
             from animatediff_ttnn.ttnn_pipeline import setup_blackhole
-            _device = setup_blackhole(device_ids=[0])
+            device = setup_blackhole(device_ids=[0])
 
-        try:
-            from animatediff_ttnn.generation_helpers import load_sd14_ttnn
-            _models = load_sd14_ttnn(_device)
-        except Exception:
-            # Reset so future calls don't hit the fast-path and return (device, None).
-            _device = None
-            raise
+        from animatediff_ttnn.generation_helpers import load_sd14_ttnn
+        models = load_sd14_ttnn(device)
 
+        # _device last: it is the gate the fast path reads first, so publishing
+        # it after _models means seeing it set implies the models are there too.
+        _models = models
+        _device = device
         return _device, _models
 
 

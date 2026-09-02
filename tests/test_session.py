@@ -100,11 +100,13 @@ def test_cached_call_ignores_a_changed_mode(fake_backend):
 # ---------------------------------------------------------------------------
 
 def test_model_load_failure_does_not_leave_a_poisoned_device(fake_backend):
-    """Regression guard: a failed load must clear _device, not cache it.
+    """Regression guard: a failed load must leave no device in the globals.
 
     Before the fix, _device stayed set while _models stayed None, so the
     fast-path at the top of ensure_blackhole() returned (device, None) forever
     and every later generate_animation() call crashed unpacking that None.
+    Initialization now publishes both globals only after the load returns, so
+    a failure leaves them as they were rather than needing to be undone.
     """
     fake_backend["load"].side_effect = RuntimeError("L1 allocation failed")
 
@@ -258,3 +260,58 @@ def test_tt_metal_is_added_to_sys_path_once(monkeypatch, tmp_path):
     session._ensure_tt_metal_on_path()
 
     assert sys.path.count(tt_metal) == 1
+
+
+# ---------------------------------------------------------------------------
+# Concurrent first call -- the half-initialized singleton
+# ---------------------------------------------------------------------------
+
+def test_concurrent_first_call_never_sees_a_half_initialized_singleton(fake_backend):
+    """A caller racing the first initialization must never get (device, None).
+
+    The device opens in well under a second; loading and compiling the weights
+    takes tens of seconds. So the window in which _device is set and _models is
+    not is not a hairline -- it is essentially the whole warm-up, and any second
+    caller arriving during it hits the lock-free fast-path at the top of
+    ensure_blackhole().
+
+    The observer thread below is started from *inside* the patched loader, i.e.
+    exactly mid-initialization. It must block until initialization completes and
+    then return the full tuple, not read the globals as they stand.
+    """
+    import threading
+
+    observed = {}
+    observer_done = threading.Event()
+
+    def observer():
+        try:
+            observed["result"] = session.ensure_blackhole(mode="blackhole")
+        except BaseException as exc:  # pragma: no cover - surfaced via the assert
+            observed["error"] = exc
+        finally:
+            observer_done.set()
+
+    thread = threading.Thread(target=observer, name="racing-caller")
+
+    def load_while_another_caller_arrives(device):
+        thread.start()
+        # If the fast-path is properly gated the observer blocks on the lock and
+        # this wait times out, which is the passing case. If it is not gated the
+        # observer returns immediately with the half-initialized state.
+        observer_done.wait(timeout=0.5)
+        return fake_backend["models"]
+
+    fake_backend["load"].side_effect = load_while_another_caller_arrives
+
+    device, models = session.ensure_blackhole(mode="blackhole")
+    thread.join(timeout=10)
+    assert not thread.is_alive(), "racing caller never returned"
+
+    assert "error" not in observed, f"racing caller raised {observed.get('error')!r}"
+    assert observed["result"] == (device, models), (
+        f"racing caller saw {observed['result']!r}, expected the initialized "
+        f"{(device, models)!r}"
+    )
+    assert fake_backend["setup"].call_count == 1, "device must be opened exactly once"
+    assert fake_backend["load"].call_count == 1, "weights must be loaded exactly once"
