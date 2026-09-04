@@ -104,8 +104,14 @@ def test_cpu_mode_streams_previews_then_the_final_gif(app_mod, monkeypatch, tmp_
     ))
 
     assert len(yielded) > 1, "CPU mode must stream, not yield only the final GIF"
-    assert yielded[-1].endswith("output.gif")
-    assert all(p.endswith(".gif") for p in yielded)
+    # generate() yields (gif_path, status) because the UI wires
+    # outputs=[output_gif, status_label]. It yielded a bare path while that UI had a
+    # single output; the tuple is the contract now, and this test was updated to it
+    # rather than deleted -- what it asserts (CPU mode streams, and the last frame is
+    # the finished GIF) is true under either shape and is worth keeping.
+    paths = [y[0] if isinstance(y, tuple) else y for y in yielded]
+    assert paths[-1].endswith("output.gif")
+    assert all(p.endswith(".gif") for p in paths)
 
 
 def test_cpu_lightning_overrides_the_step_count(app_mod, monkeypatch):

@@ -195,3 +195,69 @@ def test_apply_temporal_alpha_half_blend():
         assert torch.allclose(result[i], expected, atol=1e-5), (
             f"result[{i}] alpha-blend mismatch"
         )
+
+
+# ── per-frame conditioning length validation (PR #7 review) ─────────────────
+
+
+def test_forward_unet_staged_rejects_mismatched_per_frame_conditioning():
+    """A per-frame encoder_hidden_states list must be exactly num_frames long.
+
+    _enc_for(i) indexes this sequence inside the per-frame block loop, so a
+    short list used to IndexError part-way through a UNet pass — with the device
+    open and the model already compiled. The guard sits beside the existing
+    num_frames/num_chips check, before the deferred tt-metal imports, so this
+    test needs no hardware and no ttnn.
+    """
+    ttnn_stub = MagicMock()
+    ttnn_stub.MeshDevice = type("MeshDevice", (), {})
+
+    with patch.dict("sys.modules", {"ttnn": ttnn_stub}):
+        from animatediff_ttnn.ttnn_motion_pipeline import forward_unet_staged
+
+        with pytest.raises(ValueError) as excinfo:
+            forward_unet_staged(
+                ttnn_model=MagicMock(),
+                frame_samples=[MagicMock()] * 4,
+                timestep=MagicMock(),
+                # 3 embeddings for 4 frames
+                encoder_hidden_states=[MagicMock()] * 3,
+                config=MagicMock(),
+                temporal_kernels={},
+                device=MagicMock(),
+                num_frames=4,
+            )
+
+    message = str(excinfo.value)
+    assert "encoder_hidden_states" in message
+    assert "3" in message and "4" in message
+
+
+def test_forward_unet_staged_accepts_shared_conditioning_tensor():
+    """The single-prompt path passes one shared tensor, not a sequence.
+
+    That must not trip the new length check — it only applies to list/tuple
+    conditioning. We assert by getting *past* validation: the call then fails on
+    the mocked tt-metal internals, which is a different error than ValueError.
+    """
+    ttnn_stub = MagicMock()
+    ttnn_stub.MeshDevice = type("MeshDevice", (), {})
+
+    with patch.dict("sys.modules", {"ttnn": ttnn_stub}):
+        from animatediff_ttnn.ttnn_motion_pipeline import forward_unet_staged
+
+        with pytest.raises(Exception) as excinfo:
+            forward_unet_staged(
+                ttnn_model=MagicMock(),
+                frame_samples=[MagicMock()] * 4,
+                timestep=MagicMock(),
+                encoder_hidden_states=MagicMock(),  # shared, not a sequence
+                config=MagicMock(),
+                temporal_kernels={},
+                device=MagicMock(),
+                num_frames=4,
+            )
+
+    assert "encoder_hidden_states" not in str(excinfo.value), (
+        "shared-tensor conditioning must not be rejected by the length check"
+    )

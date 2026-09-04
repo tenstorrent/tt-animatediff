@@ -134,3 +134,67 @@ not using the SD demo UNet wrapper).
 ### LCM distillation (closed)
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
+
+## Hugging Face publishing track (2026-08-19)
+
+`episod/tt-animatediff` is a **weights-free diffusers custom pipeline**; the Space
+`episod/tt-animatediff-demo` is a capped CPU-Lightning demo. Both are built from this
+checkout by `scripts/build_hf_artifact.py` and uploaded by `scripts/publish_to_hub.py`
+(private on create, `--yes` required to write, `--dry-run` inert, `--verify` read-only).
+Never hand-edit either repo on the Hub — the next build overwrites it.
+
+Spec: `docs/superpowers/specs/2026-08-19-hf-model-repo-design.md`.
+Plan: `docs/superpowers/plans/2026-08-19-hf-model-repo.md`.
+Release steps, including the one the tests cannot enforce (repinning
+`tt_model_package.yaml`'s `extra_code` ref to the new tag): `docs/RELEASING.md`.
+
+### Two diffusers traps that make `hf/pipeline.py` look wrong
+
+Both were measured, and both bite silently on the **older** supported diffusers:
+
+1. **Never write `import animatediff_ttnn` in `hf/pipeline.py`** — not even indented
+   inside a method. diffusers' `check_imports` regex-scans the file (`^\s*import`), and
+   on **0.32.1 it raises ImportError at load time** for any module not installed, so
+   every user without the package pip-installed would be unable to load the pipeline at
+   all. 0.39.0 only warns. Use `importlib.import_module(PACKAGE_NAME)`.
+   `tests/test_hf_pipeline.py::test_pipeline_py_never_imports_the_package_literally`
+   guards this.
+2. **`__init__` must take named parameters with defaults and no `**kwargs`.** diffusers
+   derives its expected-component list from the signature, so a `**kwargs`-only
+   `__init__` fails with `ValueError: Pipeline ... expected ['kwargs']`.
+
+Also measured: diffusers executes `pipeline.py` out of
+`~/.cache/huggingface/modules/diffusers_modules/`, so the vendored `animatediff_ttnn/`
+is **not** a sibling of `__file__`. `resolve_package()` finds it via
+`config._name_or_path`, falling back to `snapshot_download(code_repo,
+allow_patterns=["animatediff_ttnn/**"])` — which is why `code_repo` is in
+`model_index.json`.
+
+The Space upload is **staged**, not committed. `scripts/build_space_artifact.py` assembles `build/space/` from `spaces/` plus six gallery GIFs copied out of `docs/assets/` (see `GALLERY_SOURCES` there); `scripts/publish_to_hub.py --space` calls it and uploads the result. `spaces/gallery/` and `build/space/` are git-ignored. The GIFs total ~14 MB and already live in this repo, so committing copies into `spaces/gallery/` would have added them to git history permanently for no benefit. Consequence to remember: a file dropped into `spaces/` by hand reaches the Space, but a new gallery GIF does not unless it is added to `GALLERY_SOURCES`.
+
+**Visibility, and what actually blocks the Space (2026-09-04).** `episod/tt-animatediff` is
+now **public** — verified anonymously (`GET /api/models/...` and a `model_index.json` fetch with
+no token both 200). That closes the private-repo trap: a Space gets no implicit credential for a
+*private* model repo, so while it stayed private the Space would have built, reached "Running",
+and then 401'd on a visitor's first click (its `from_pretrained(MODEL_REPO, ...)` had nothing to
+authenticate with). If that repo is ever made private again, the Space needs an `HF_TOKEN`
+secret instead. Noted in `spaces/README.md` too.
+
+**The Space's dependency pins are load-bearing, not tidiness.** gradio is pinned at 4.44.1
+to match `sdk_version`, and three more pins exist only because a deploy failed without them:
+`python_version: "3.12"` in the card (3.13 dropped stdlib `audioop`, which gradio's pydub
+imports), `huggingface_hub<1` (gradio's own oauth.py imports `HfFolder`, removed in 1.0) and
+`pydantic<2.11` (gradio-client 1.3.0's schema walker assumes `additionalProperties` is a dict;
+2.11 emits a bool). That last one fails as a **RUNNING Space serving 503s**, per request inside
+gradio's route, so "stage: RUNNING" is not evidence the Space works — fetch `/config`
+anonymously. `tests/test_build_space_artifact.py` guards all of them, and
+`spaces/requirements.txt` carries the reasoning. Verify a change to that file in a clean venv
+(install it, import `build/space/app.py`, call `demo.get_api_info()`) rather than by deploying.
+
+**The Space is published and public** (`episod/tt-animatediff-demo`, 2026-09-04). It got there
+only after PRO was enabled on the account: `create_repo(repo_type="space")` had been returning
+**402 Payment Required** — "Static Spaces are free for everyone, but hosting Gradio and Docker
+Spaces on free cpu-basic requires a PRO subscription". Keep that mapping in mind, because the
+402 arrives from `create_repo` and reads like a script bug: if `whoami()["isPro"]` is False,
+`publish_to_hub.py --space --yes` cannot succeed, and the alternatives are an org with the
+entitlement or a **static** gallery-only Space (which is not the demo this repo built).

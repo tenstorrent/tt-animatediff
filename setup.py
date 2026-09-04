@@ -49,9 +49,29 @@ setup(
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
+            # fastapi's TestClient is a thin wrapper over httpx; without it the server
+            # tests fail at import rather than skipping.
+            "httpx>=0.24.0",
+            # tt-lang's functional simulator (sim.ttnnsim) imports greenlet.
+            # Without it tests/test_ttlang_temporal_attention.py silently
+            # importorskip()s its 9 simulator tests instead of running them.
+            "greenlet>=3.0.0",
+            # scripts/benchmark_serving.py drives the served model over HTTP, and
+            # tests/test_benchmark_serving.py imports it. It arrives transitively via
+            # huggingface_hub today; declared here so the suite does not depend on
+            # that staying true.
+            "requests>=2.28.0",
         ],
         "ui": [
             "gradio>=4.0.0",
+        ],
+        # The ASGI serving surface (animatediff_ttnn/server/). Matches the packages
+        # tt-model-manager's tt-dit-server kind installs for this app, so a bundle and a
+        # local `pip install -e .[serve]` run the same stack.
+        "serve": [
+            "fastapi>=0.110.0",
+            "uvicorn>=0.27.0",
+            "pydantic>=2.0.0",
         ],
     },
     entry_points={},
