@@ -103,11 +103,19 @@ def publish(
         api.upload_folder(folder_path=str(folder), repo_id=repo_id, repo_type=repo_type)
     except Exception as e:
         print(f"\nupload_folder failed: {e}")
-        print(f"WARNING: {repo_id} was created (private) but upload did not complete.")
+        print(f"WARNING: {repo_id} exists but the upload did not complete.")
         print("Re-running with --yes is safe (create_repo uses exist_ok=True).")
         return 1
 
-    print(f"\nuploaded to https://huggingface.co/{repo_id} (private)")
+    # Report the visibility the repo ACTUALLY has, not the one create_repo asked for.
+    # `private=True` is ignored for a repo that already exists, so this line said
+    # "(private)" about a public repo the moment either of these was flipped -- and this
+    # line is what a reader checks before deciding whether to flip it.
+    try:
+        visibility = "private" if api.repo_info(repo_id, repo_type=repo_type).private else "PUBLIC"
+    except Exception:
+        visibility = "visibility unknown"
+    print(f"\nuploaded to https://huggingface.co/{repo_id} ({visibility})")
     return 0
 
 
