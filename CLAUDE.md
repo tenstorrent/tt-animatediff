@@ -180,6 +180,17 @@ and then 401'd on a visitor's first click (its `from_pretrained(MODEL_REPO, ...)
 authenticate with). If that repo is ever made private again, the Space needs an `HF_TOKEN`
 secret instead. Noted in `spaces/README.md` too.
 
+**The Space's dependency pins are load-bearing, not tidiness.** gradio is pinned at 4.44.1
+to match `sdk_version`, and three more pins exist only because a deploy failed without them:
+`python_version: "3.12"` in the card (3.13 dropped stdlib `audioop`, which gradio's pydub
+imports), `huggingface_hub<1` (gradio's own oauth.py imports `HfFolder`, removed in 1.0) and
+`pydantic<2.11` (gradio-client 1.3.0's schema walker assumes `additionalProperties` is a dict;
+2.11 emits a bool). That last one fails as a **RUNNING Space serving 503s**, per request inside
+gradio's route, so "stage: RUNNING" is not evidence the Space works — fetch `/config`
+anonymously. `tests/test_build_space_artifact.py` guards all of them, and
+`spaces/requirements.txt` carries the reasoning. Verify a change to that file in a clean venv
+(install it, import `build/space/app.py`, call `demo.get_api_info()`) rather than by deploying.
+
 **The Space is published and public** (`episod/tt-animatediff-demo`, 2026-09-04). It got there
 only after PRO was enabled on the account: `create_repo(repo_type="space")` had been returning
 **402 Payment Required** — "Static Spaces are free for everyone, but hosting Gradio and Docker
