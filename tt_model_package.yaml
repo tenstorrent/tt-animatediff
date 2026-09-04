@@ -24,14 +24,34 @@ source:
     repo: https://github.com/tenstorrent/tt-metal
     ref: v0.77.0
   code:
+    # The image DELETES tt-metal's own models/ and copies this allowlist in as the only
+    # `models` package there is (see the Dockerfile's metal-local stage), so this list is
+    # not a hint -- it is the whole tree the server gets.
+    #
+    # models/common is not imported by animatediff_ttnn directly; the SD demo below pulls
+    # it in. The demo IS the model: load_sd14_ttnn, the schedulers, the VAE and the UNet
+    # all come from models/demos/vision/generative/stable_diffusion/wormhole (32 files,
+    # the transitive closure of every `models.*` import under animatediff_ttnn/).
+    #
+    # The kind's verify step CANNOT catch a miss here for this model. It imports the ASGI
+    # attribute, and app.py deliberately defers every ttnn and model import into a
+    # function so the module is importable on a machine with no card -- so nothing
+    # touches models.demos until the lifespan warms the pipeline, by which point the
+    # image has shipped. tests/test_server_app.py guards the list instead.
     - models/common
+    - models/demos/vision/generative/stable_diffusion/wormhole
   # The model's own package does NOT live in tt-metal -- it is this repo. `extra_code`
   # ships it from here, pinned to a ref so the package is reproducible by whoever pulls
   # it and not only by the machine that built it.
   extra_code:
     - root:
         repo: https://github.com/tenstorrent/tt-animatediff
-        ref: v0.10.0
+        # A COMMIT, not a tag, and deliberately: no tag carries animatediff_ttnn/server
+        # yet. v0.10.0 sat here and predates the ASGI app entirely, so a consumer staging
+        # this manifest would have got a code tree with no runtime.app in it -- and the
+        # kind's verify step imports that attribute, so the failure would have landed in
+        # their image build. Bump this to the release tag once one is cut from this work.
+        ref: 0395fff698a704659f51b4db9ba0b0c18ad51262
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
