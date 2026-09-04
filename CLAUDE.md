@@ -180,10 +180,10 @@ and then 401'd on a visitor's first click (its `from_pretrained(MODEL_REPO, ...)
 authenticate with). If that repo is ever made private again, the Space needs an `HF_TOKEN`
 secret instead. Noted in `spaces/README.md` too.
 
-The Space is still unpublished, and the reason is now billing, not credentials.
-`create_repo(repo_type="space")` returns **402 Payment Required**: "Static Spaces are free for
-everyone, but hosting Gradio and Docker Spaces on free cpu-basic requires a PRO subscription."
-The `episod` account is not PRO (`whoami()["isPro"] is False`). So `publish_to_hub.py --space
---yes` cannot succeed as things stand — it needs PRO on that account, or publishing under an org
-with the entitlement, or reshaping the demo as a **static** Space (gallery only, no inference,
-which is not the demo this repo built). Do not read a 402 here as a bug in the script.
+**The Space is published and public** (`episod/tt-animatediff-demo`, 2026-09-04). It got there
+only after PRO was enabled on the account: `create_repo(repo_type="space")` had been returning
+**402 Payment Required** — "Static Spaces are free for everyone, but hosting Gradio and Docker
+Spaces on free cpu-basic requires a PRO subscription". Keep that mapping in mind, because the
+402 arrives from `create_repo` and reads like a script bug: if `whoami()["isPro"]` is False,
+`publish_to_hub.py --space --yes` cannot succeed, and the alternatives are an org with the
+entitlement or a **static** gallery-only Space (which is not the demo this repo built).
