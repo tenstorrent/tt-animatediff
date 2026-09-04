@@ -22,9 +22,10 @@ Tenstorrent Blackhole is not reachable from Hugging Face infrastructure, so noth
 reflects hardware performance: a P300C runs the same model at **~12.5 s/frame**, 25
 steps, 512×512. The gallery in the app shows real Blackhole output.
 
-**Deploying this Space:** the model repo (`episod/tt-animatediff`) must either be
-**public**, or the Space needs an `HF_TOKEN` secret with read access to it — a Space
-gets no implicit credential for a private model repo, so without one of these it will
-build and reach "Running" and then 401 on a visitor's first click.
+**Deploying this Space:** `episod/tt-animatediff` is **public**, which is what makes this
+Space work without a secret. A Space gets no implicit credential for a *private* model
+repo, so if that repo is ever made private again this Space will build, reach "Running",
+and then 401 on a visitor's first click — at which point it needs an `HF_TOKEN` secret
+with read access instead.
 
 **Code:** [github.com/tenstorrent/tt-animatediff](https://github.com/tenstorrent/tt-animatediff)

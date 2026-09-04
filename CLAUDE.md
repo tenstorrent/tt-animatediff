@@ -170,8 +170,18 @@ allow_patterns=["animatediff_ttnn/**"])` — which is why `code_repo` is in
 
 The Space upload is **staged**, not committed. `scripts/build_space_artifact.py` assembles `build/space/` from `spaces/` plus six gallery GIFs copied out of `docs/assets/` (see `GALLERY_SOURCES` there); `scripts/publish_to_hub.py --space` calls it and uploads the result. `spaces/gallery/` and `build/space/` are git-ignored. The GIFs total ~14 MB and already live in this repo, so committing copies into `spaces/gallery/` would have added them to git history permanently for no benefit. Consequence to remember: a file dropped into `spaces/` by hand reaches the Space, but a new gallery GIF does not unless it is added to `GALLERY_SOURCES`.
 
-**Private-repo trap:** a Space gets no implicit credential for a **private** model repo. While
-`episod/tt-animatediff` stays private, the Space would build, reach "Running", and then 401 on
-a visitor's first click (its `from_pretrained(MODEL_REPO, ...)` call has nothing to authenticate
-with). Publishing the Space for real needs either an `HF_TOKEN` secret set on the Space, or the
-model repo made public first. Noted in `spaces/README.md` too.
+**Visibility, and what actually blocks the Space (2026-09-04).** `episod/tt-animatediff` is
+now **public** — verified anonymously (`GET /api/models/...` and a `model_index.json` fetch with
+no token both 200). That closes the private-repo trap: a Space gets no implicit credential for a
+*private* model repo, so while it stayed private the Space would have built, reached "Running",
+and then 401'd on a visitor's first click (its `from_pretrained(MODEL_REPO, ...)` had nothing to
+authenticate with). If that repo is ever made private again, the Space needs an `HF_TOKEN`
+secret instead. Noted in `spaces/README.md` too.
+
+The Space is still unpublished, and the reason is now billing, not credentials.
+`create_repo(repo_type="space")` returns **402 Payment Required**: "Static Spaces are free for
+everyone, but hosting Gradio and Docker Spaces on free cpu-basic requires a PRO subscription."
+The `episod` account is not PRO (`whoami()["isPro"] is False`). So `publish_to_hub.py --space
+--yes` cannot succeed as things stand — it needs PRO on that account, or publishing under an org
+with the entitlement, or reshaping the demo as a **static** Space (gallery only, no inference,
+which is not the demo this repo built). Do not read a 402 here as a bug in the script.
