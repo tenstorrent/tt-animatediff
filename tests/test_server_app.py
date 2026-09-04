@@ -366,3 +366,48 @@ def test_the_pinned_extra_code_ref_actually_contains_what_it_ships():
         ).returncode == 0, (
             f"extra_code ref {ref} does not contain {app_rel}, which runtime.app names"
         )
+
+
+def test_the_pinned_extra_code_ref_ships_the_package_we_are_developing():
+    """The guard that outlives the nickname.
+
+    Whether the ref is a tag or a commit sha is cosmetic; what matters is that the tree it
+    names is the tree we are shipping. Staging clones the ref, so the moment
+    ``animatediff_ttnn/`` changes in a commit and the pin does not move, the package a
+    consumer builds is silently older than the manifest describing it -- and every other
+    check here still passes, because the paths exist and the app attribute resolves at the
+    old ref too.
+
+    Compares committed trees rather than the working tree on purpose: mid-edit work is not
+    shipped and should not fail this, but a *commit* that changes the package means the pin
+    is stale and this must go red.
+    """
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+
+    def tree_of(rev: str, rel: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", f"{rev}:{rel}"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    for extra in _manifest()["source"].get("extra_code", []):
+        root = extra["root"]
+        if not isinstance(root, dict) or "ref" not in root:
+            continue  # a local path root ships the working tree; nothing to compare
+        ref = root["ref"]
+        if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet",
+                           f"{ref}^{{commit}}"], capture_output=True).returncode != 0:
+            pytest.skip(
+                f"extra_code ref {ref} is not in this clone (shallow checkout); "
+                "cannot compare its tree offline"
+            )
+        for rel in extra["paths"]:
+            pinned, head = tree_of(ref, rel), tree_of("HEAD", rel)
+            assert pinned and pinned == head, (
+                f"extra_code ref {ref} ships {rel} at tree {pinned or '<missing>'}, but "
+                f"HEAD has {head}. The pin must move whenever {rel} changes, or consumers "
+                "stage an older package than this manifest claims."
+            )

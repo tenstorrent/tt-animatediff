@@ -145,6 +145,8 @@ Never hand-edit either repo on the Hub — the next build overwrites it.
 
 Spec: `docs/superpowers/specs/2026-08-19-hf-model-repo-design.md`.
 Plan: `docs/superpowers/plans/2026-08-19-hf-model-repo.md`.
+Release steps, including the one the tests cannot enforce (repinning
+`tt_model_package.yaml`'s `extra_code` ref to the new tag): `docs/RELEASING.md`.
 
 ### Two diffusers traps that make `hf/pipeline.py` look wrong
 

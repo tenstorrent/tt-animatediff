@@ -525,6 +525,31 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.11.0 — unreleased
+- **Servable by tt-model-manager** — new `animatediff_ttnn/server/app.py` (FastAPI/uvicorn)
+  and a `tt_model_package.yaml` manifest for the `tt-dit-server` kind. `POST
+  /v1/videos/generations` mirrors tt-media-server's shape, plus `GET /v1/models` and two
+  probes whose names invert their jobs: `/health` is **readiness** (503 until the model is
+  warm) and `/tt-liveness` is **liveness** (200 while warming, and lock-free so it still
+  answers mid-generation). The device opens and the model warms in the ASGI lifespan,
+  because that is what the supervisor's readiness signal actually waits for.
+- **Installable from the Hugging Face Hub** — [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
+  is a weights-free diffusers custom pipeline, built by `scripts/build_hf_artifact.py` and
+  uploaded by `scripts/publish_to_hub.py`. `DiffusionPipeline.from_pretrained(...,
+  trust_remote_code=True)` gets `generate_animation()` with mode resolution and the
+  Lightning/motion-adapter wiring.
+- **`generate_animation()` and a device session** — a top-level callable plus
+  `animatediff_ttnn/session.py`, which holds the open device and compiled weights for the
+  process so repeated calls do not pay the UNet compile again.
+- **Prompt travel** — scheduled and interpolated per-frame conditioning, wired through
+  `examples/generate.py` and `forward_unet_staged()`.
+- **Serving benchmarks** — `docs/measurements/serving-benchmark.json`: latency fits
+  `2.84 s + 0.571 s/step` at 8 frames (residuals ≤ 0.04 s), linear in frames, and three
+  concurrent requests take 1.016× serial, so the device lock holds.
+- **188 new CPU-only tests** across 14 files, no card and no tt-metal required, plus a CI
+  serving-contract job that asserts the manifest and the app agree and that the server
+  module imports with no ttnn.
+
 ### v0.10.0 — 2026-08-26
 - **Per-step latent previews from the CLI runner** — `examples/generate.py` gains
   `--preview-path` / `--preview-every`, streaming a rolling preview GIF during generation in

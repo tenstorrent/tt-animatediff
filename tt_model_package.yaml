@@ -50,7 +50,14 @@ source:
         # yet. v0.10.0 sat here and predates the ASGI app entirely, so a consumer staging
         # this manifest would have got a code tree with no runtime.app in it -- and the
         # kind's verify step imports that attribute, so the failure would have landed in
-        # their image build. Bump this to the release tag once one is cut from this work.
+        # their image build.
+        #
+        # Tags here are cut on main after merge, so this moves to v0.11.0 then -- step 5 of
+        # docs/RELEASING.md. What actually matters is not whether this is a tag or a sha but
+        # that the tree it names IS the animatediff_ttnn/ being shipped; a sha is immutable,
+        # so it is the safer placeholder in the meantime. test_server_app.py's
+        # ..._ships_the_package_we_are_developing compares the two trees and fails when they
+        # diverge (it skips on a shallow clone, so run the suite locally after repinning).
         ref: 0395fff698a704659f51b4db9ba0b0c18ad51262
       paths:
         - animatediff_ttnn
