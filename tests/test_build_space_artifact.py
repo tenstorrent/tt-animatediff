@@ -160,3 +160,35 @@ def test_transformers_is_capped_to_the_major_this_is_exercised_against():
     run. A deploy duly installed transformers 5.16.1.
     """
     assert "<5" in _requirement("transformers")
+
+
+def test_starlette_is_capped_below_1():
+    """Deploy 4 died here, and it is the one that taught how to verify this file.
+
+    gradio 4.44.1's routes.py calls `templates.TemplateResponse(name, context)` in the
+    pre-0.29 positional order. starlette 1.0 removed that signature, so it reads the
+    context dict as the template name and jinja2 raises `TypeError: unhashable type:
+    'dict'` -- while RENDERING THE PAGE. gradio declares `fastapi<1.0` and nothing about
+    starlette, so the resolver took 1.6.0.
+
+    It survived a local check that imported app.py and called get_api_info(), because
+    neither renders a template, and it survived an anonymous GET /config, because that is
+    a different route. Only fetching "/" sees it. fastapi 0.141.1 wants starlette>=0.46,
+    and <1 leaves 0.52.1, so the cap costs no downgrade.
+    """
+    req = _requirement("starlette")
+    assert "<1" in req, req
+    assert ">=0.46" in req, f"fastapi needs starlette>=0.46; {req} would downgrade it"
+
+
+def test_every_dependency_a_deploy_broke_on_stays_capped():
+    """One test that fails if any of the four caps is quietly dropped.
+
+    Each of these was learned by a Space that built successfully and then did not work.
+    Raising one is a deliberate act that needs a launch-and-fetch check behind it --
+    see the header of spaces/requirements.txt.
+    """
+    caps = {"huggingface_hub": "<1", "pydantic": "<2.11", "starlette": "<1", "transformers": "<5"}
+    missing = {name: _requirement(name) for name, cap in caps.items()
+               if cap not in _requirement(name)}
+    assert not missing, f"a cap a deploy paid for has been dropped: {missing}"

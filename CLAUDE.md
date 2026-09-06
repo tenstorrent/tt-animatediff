@@ -185,11 +185,20 @@ to match `sdk_version`, and three more pins exist only because a deploy failed w
 `python_version: "3.12"` in the card (3.13 dropped stdlib `audioop`, which gradio's pydub
 imports), `huggingface_hub<1` (gradio's own oauth.py imports `HfFolder`, removed in 1.0) and
 `pydantic<2.11` (gradio-client 1.3.0's schema walker assumes `additionalProperties` is a dict;
-2.11 emits a bool). That last one fails as a **RUNNING Space serving 503s**, per request inside
-gradio's route, so "stage: RUNNING" is not evidence the Space works — fetch `/config`
-anonymously. `tests/test_build_space_artifact.py` guards all of them, and
-`spaces/requirements.txt` carries the reasoning. Verify a change to that file in a clean venv
-(install it, import `build/space/app.py`, call `demo.get_api_info()`) rather than by deploying.
+2.11 emits a bool) and `starlette>=0.46,<1` (gradio calls `TemplateResponse(name, context)` in
+the pre-0.29 positional order, which starlette 1.0 removed, so jinja2 gets the context dict as
+a template name).
+
+**The two failure modes to know.** The last two both present as a **RUNNING Space that serves
+nothing** — the crash is per request inside gradio's own route, not at startup. So "stage:
+RUNNING" is never evidence the Space works.
+
+**And the check has to be the right one.** `import app.py`, `demo.get_api_info()` and a
+`GET /config` all passed while starlette 1.x was breaking every page load, because none of
+them renders a template. Verify a change to `spaces/requirements.txt` by installing it in a
+clean venv, LAUNCHING `build/space/app.py`, and fetching **`/`** — then, after deploying,
+fetch `/` again anonymously. `tests/test_build_space_artifact.py` guards every cap, and
+`spaces/requirements.txt` carries the reasoning per line.
 
 **The Space is published and public** (`episod/tt-animatediff-demo`, 2026-09-04). It got there
 only after PRO was enabled on the account: `create_repo(repo_type="space")` had been returning

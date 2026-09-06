@@ -46,6 +46,19 @@ huggingface_hub>=0.20.0,<1
 # locally against the same component types app.py builds:
 #     2.9.2 OK | 2.10.6 OK | 2.11.0 TypeError | 2.12.0 TypeError
 pydantic>=2.0,<2.11
+#
+# starlette<1 is the fourth of these, and the one that proves a lesson about how these
+# get verified. gradio 4.44.1's routes.py calls `templates.TemplateResponse(name, context)`
+# in the pre-0.29 positional order; starlette 1.0 removed that signature, so it reads the
+# context DICT as the template name and jinja2 raises `TypeError: unhashable type: 'dict'`
+# rendering the page. gradio declares `fastapi<1.0` and nothing about starlette, so the
+# resolver took 1.6.0. fastapi 0.141.1 itself wants starlette>=0.46, and <1 leaves 0.52.1,
+# so nothing downgrades.
+#
+# It slipped through a local check that imported app.py and called get_api_info(), because
+# neither renders a template. Only an HTTP GET of "/" does. Verify this file by launching
+# the app and fetching the page, not by importing it.
+starlette>=0.46,<1
 safetensors>=0.4.0
 Pillow>=9.0.0
 numpy>=1.24.0
