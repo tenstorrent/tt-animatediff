@@ -265,7 +265,75 @@ def test_cpu_cache_separates_lightning_from_standard(clean_cpu_cache):
     assert create_std.call_count == 1
     assert create_light.call_count == 1
     create_light.assert_called_once_with(step=8)
-    assert set(clean_cpu_cache) == {(False, 4), (True, 8)}
+    # Both were BUILT, but only the last is held: see the eviction tests below.
+    assert set(clean_cpu_cache) == {(True, 8)}
+
+
+# ---------------------------------------------------------------------------
+# The cache is bounded, because its key comes from a UI
+# ---------------------------------------------------------------------------
+
+def test_a_second_step_count_evicts_the_first(clean_cpu_cache):
+    """Measured: one CPU pipeline is 7.8 GB resident, two are 14.6 GB, and loading the
+    second peaks at 17.8 GB — past the 16 GB of a free cpu-basic Space. The demo Space
+    worked for anyone who tried one step count and OOMed for anyone who tried both, so
+    the cache holds one by default."""
+    with patch("animatediff_ttnn.pipeline.create_lightning_pipeline") as create, \
+         patch("animatediff_ttnn.pipeline.generate", return_value=[]):
+        create.side_effect = lambda step: MagicMock(name=f"pipe{step}")
+        generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=2)
+        generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=4)
+
+    assert len(clean_cpu_cache) == 1, f"held {len(clean_cpu_cache)} pipelines, not 1"
+    assert set(clean_cpu_cache) == {(True, 4)}
+
+
+def test_the_old_pipeline_is_dropped_BEFORE_the_new_one_is_built(clean_cpu_cache):
+    """The ordering IS the fix; holding both briefly is what OOMs the box.
+
+    Asserts the wiring rather than the arithmetic: a version that evicted after building
+    would still satisfy "cache holds one" at the end, and still die at the peak. So this
+    observes the cache from inside the builder.
+    """
+    seen_during_build = []
+
+    def _build(step):
+        seen_during_build.append(dict(animatediff_ttnn._cpu_pipe_cache))
+        return MagicMock(name=f"pipe{step}")
+
+    with patch("animatediff_ttnn.pipeline.create_lightning_pipeline", side_effect=_build), \
+         patch("animatediff_ttnn.pipeline.generate", return_value=[]):
+        generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=2)
+        generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=4)
+
+    assert len(seen_during_build) == 2
+    assert seen_during_build[1] == {}, (
+        "the previous pipeline was still cached while the next one was being built, so "
+        f"both were resident at the peak: {seen_during_build[1]}"
+    )
+
+
+def test_the_cap_is_raisable_for_machines_with_the_memory(clean_cpu_cache, monkeypatch):
+    """A 16 GB Space is not every caller. The bound is a default, not a ceiling."""
+    monkeypatch.setattr(animatediff_ttnn, "_CPU_PIPE_CACHE_MAX", 2)
+    with patch("animatediff_ttnn.pipeline.create_lightning_pipeline") as create, \
+         patch("animatediff_ttnn.pipeline.generate", return_value=[]):
+        create.side_effect = lambda step: MagicMock(name=f"pipe{step}")
+        generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=2)
+        generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=4)
+
+    assert set(clean_cpu_cache) == {(True, 2), (True, 4)}
+
+
+def test_reusing_the_same_step_count_does_not_reload(clean_cpu_cache):
+    """Eviction must not cost the common case: same settings twice, one build."""
+    with patch("animatediff_ttnn.pipeline.create_lightning_pipeline") as create, \
+         patch("animatediff_ttnn.pipeline.generate", return_value=[]):
+        create.side_effect = lambda step: MagicMock(name=f"pipe{step}")
+        for _ in range(3):
+            generate_animation(prompt="p", mode="cpu", use_lightning=True, lightning_steps=4)
+
+    assert create.call_count == 1
 
 
 # ---------------------------------------------------------------------------

@@ -93,8 +93,9 @@ BANNER = """
     <strong>So expect roughly:</strong> 2 frames at 2 steps &asymp; <strong>15 s</strong>
     of compute, 4 frames at 4 steps &asymp; <strong>1 min 40 s</strong>. Add
     <strong>60&ndash;90 s</strong> the first time you use a step count &mdash; it downloads
-    a 908&nbsp;MB checkpoint and loads the pipeline. Switching between 2 and 4 steps pays
-    that once each.
+    a 908&nbsp;MB checkpoint and loads the pipeline. <strong>Every switch between 2 and 4
+    steps reloads</strong>: one pipeline is 7.8&nbsp;GB of the box's 16&nbsp;GB, so only one
+    is kept in memory. Sticking to one step count keeps it warm.
   </p>
   <p style="margin:6px 0">
     A long wait is the queue working, not a hang. <strong>Start with 2 frames at 2 steps</strong>

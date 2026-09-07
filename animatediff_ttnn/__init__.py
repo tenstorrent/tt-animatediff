@@ -35,6 +35,8 @@ Low-level phase-specific APIs for scripts and tests::
 
 from __future__ import annotations
 
+import gc
+import os
 import threading
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -53,6 +55,18 @@ except Exception:
 from .pipeline import create_animatediff_pipeline, generate, export_gif
 
 # Per-mode CPU pipeline cache: (use_lightning, lightning_steps) → pipe
+#
+# BOUNDED, and the bound is load-bearing rather than tidiness. The key contains
+# lightning_steps, which in any UI is chosen by whoever is clicking — so an unbounded
+# cache here is a memory leak keyed on user input. Measured on this repo's CPU path
+# (512×512, fp32): one pipeline is 7.8 GB resident, a second takes it to 14.6 GB, and
+# loading the second peaks at 17.8 GB. A free Hugging Face cpu-basic Space has 16 GB,
+# which is exactly where it died — the demo Space OOMed the moment a visitor tried both
+# step counts, having worked perfectly for anyone who tried one.
+#
+# Default 1, so switching step counts costs a ~60 s reload instead of a crash. Raise it
+# via ANIMATEDIFF_CPU_PIPE_CACHE on a machine with the memory to spare.
+_CPU_PIPE_CACHE_MAX = max(1, int(os.environ.get("ANIMATEDIFF_CPU_PIPE_CACHE", "1")))
 _cpu_pipe_cache: dict = {}
 _cpu_cache_lock = threading.Lock()
 
@@ -281,18 +295,30 @@ def _generate_cpu(
     from .pipeline import create_animatediff_pipeline, create_lightning_pipeline, generate as _gen
 
     key = (use_lightning, lightning_steps)
-    if key not in _cpu_pipe_cache:
-        # Build outside the lock so concurrent callers with different keys
-        # don't serialize. Two threads building the same key is safe —
-        # setdefault stores only the first and the other is discarded.
-        new_pipe = (
-            create_lightning_pipeline(step=lightning_steps)
-            if use_lightning
-            else create_animatediff_pipeline()
-        )
-        with _cpu_cache_lock:
-            _cpu_pipe_cache.setdefault(key, new_pipe)
-    pipe = _cpu_pipe_cache[key]
+    with _cpu_cache_lock:
+        pipe = _cpu_pipe_cache.get(key)
+        if pipe is None:
+            # Evict BEFORE building, not after. Freeing afterwards would hold both
+            # pipelines at once, which is the 17.8 GB peak that kills a 16 GB box —
+            # the exact thing the bound exists to prevent.
+            #
+            # Building under the lock is deliberate for the same reason, and reverses an
+            # earlier choice to build outside it: letting two threads build different
+            # keys concurrently avoided serialising them, and put two pipelines in memory
+            # to do it. On the machines this path is for, serialising is the cheaper side.
+            while len(_cpu_pipe_cache) >= _CPU_PIPE_CACHE_MAX:
+                del _cpu_pipe_cache[next(iter(_cpu_pipe_cache))]
+                gc.collect()
+            pipe = (
+                create_lightning_pipeline(step=lightning_steps)
+                if use_lightning
+                else create_animatediff_pipeline()
+            )
+            _cpu_pipe_cache[key] = pipe
+    # NOTE: this bounds the CACHE, not concurrent in-flight use. A caller that runs two
+    # generations with different keys at once still holds two pipelines until the first
+    # returns, because eviction only drops the cache's reference. The demo Space sets
+    # concurrency_limit=1, so it cannot happen there.
     return _gen(
         pipe,
         prompt,
