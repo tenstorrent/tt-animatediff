@@ -113,82 +113,61 @@ def test_the_card_sdk_version_matches_the_pinned_gradio():
     assert _requirement("gradio") == f"gradio=={_card_front_matter()['sdk_version']}"
 
 
-def test_the_card_pins_a_python_that_still_has_audioop():
-    """Deploy 1 died here.
+def test_the_card_pins_the_interpreter_it_was_verified_on():
+    """No longer about audioop.
 
-    The Hub's default image is Python 3.13, where `audioop` was removed from the stdlib
-    (PEP 594). gradio 4.44.1 pulls in pydub, which imports it, so the Space built cleanly
-    and then died on `import gradio` before app.py ran a line of its own.
+    Under gradio 4.44.1 this pin was mandatory: 3.13 dropped stdlib `audioop` and
+    gradio's pydub imports it, so the Space built and then died on `import gradio`.
+    gradio 6 ships audioop-lts for 3.13, so that reason is gone -- the pin stays only so
+    the interpreter this is verified against locally is the one the Hub runs.
     """
     version = str(_card_front_matter().get("python_version", ""))
-    assert version, "python_version must be pinned, or the Hub picks 3.13 and gradio cannot import"
-    major, minor = (int(p) for p in version.split(".")[:2])
-    assert (major, minor) < (3, 13), (
-        f"python_version {version} has no stdlib audioop; gradio {_card_front_matter()['sdk_version']} "
-        "needs pydub, which imports it"
+    assert version, "python_version must be pinned so local verification matches the Hub"
+    major, minor = (int(part) for part in version.split(".")[:2])
+    assert (major, minor) >= (3, 10), f"python_version {version} is below gradio's floor"
+
+
+def test_transformers_floor_clears_its_cve_fixes():
+    """CVE-2026-9856/-5241/-4372 (HIGH) and -1839 (MEDIUM) are fixed across transformers
+    5.3, 5.5 and 5.10, so 5.10 is the floor that clears all four. The `<5` cap that used
+    to sit here made every one of them unavoidable."""
+    assert ">=5.10" in _requirement("transformers"), _requirement("transformers")
+
+
+def test_starlette_floor_clears_its_cve_fixes():
+    """CVE-2026-54283/-48818 (HIGH) and -48710/-48817 (MEDIUM) are fixed across starlette
+    1.0.1, 1.1.0 and 1.3.1. gradio 6 only requires >=1.0.1, which still admits two of
+    them, so this floor has to be ours rather than inherited."""
+    assert ">=1.3.1" in _requirement("starlette"), _requirement("starlette")
+
+
+def test_no_compatibility_cap_is_reintroduced_below_a_security_floor():
+    """The guard that matters most here, because re-adding a cap is the obvious wrong fix.
+
+    Four caps once lived in this file -- huggingface_hub<1, pydantic<2.11, starlette<1,
+    transformers<5 -- and each one fixed a real, measured gradio 4.44.1 deploy failure.
+    Together they froze the stack below its CVE fixes, and no version inside any of them
+    is clean: every fix ships in the major the cap excluded. They came off with the gradio
+    pin that needed them.
+
+    If a future gradio breakage tempts someone to pin one back, this fails and names the
+    trade rather than letting it pass as a compatibility fix.
+    """
+    lines = [ln.strip() for ln in (ROOT / "spaces" / "requirements.txt").read_text().splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    forbidden = {"huggingface-hub": "<1", "pydantic": "<2.11",
+                 "starlette": "<1", "transformers": "<5"}
+    offenders = []
+    for ln in lines:
+        norm = ln.replace(" ", "").replace("_", "-").lower()
+        for name, bad in forbidden.items():
+            if not norm.startswith(name):
+                continue
+            for spec in norm[len(name):].split(","):
+                # "<1" must not match "<1.3.1" or "<2"; compare the bound exactly.
+                if spec == bad:
+                    offenders.append(ln)
+    assert not offenders, (
+        "a compatibility cap is back below a security floor -- every CVE fix for these "
+        f"ships in the major it excludes: {offenders}"
     )
-
-
-def test_huggingface_hub_is_capped_below_1():
-    """Deploy 2 died here.
-
-    gradio 4.44.1 declares `huggingface-hub>=0.19.3` with no upper bound, and its own
-    oauth.py does `from huggingface_hub import HfFolder` -- removed in 1.0. The resolver
-    took 1.30.0 and gradio failed to import. gradio's metadata cannot protect us, so the
-    cap has to live in our file.
-    """
-    assert "<1" in _requirement("huggingface_hub")
-
-
-def test_pydantic_is_capped_below_2_11():
-    """Deploy 3 died here, in the worst possible shape: the Space reported RUNNING while
-    returning 503 to every visitor, because the failure was per-request inside gradio's own
-    route rather than at startup.
-
-    gradio 4.44.1 pins gradio-client==1.3.0, whose json_schema_to_python_type() assumes
-    `additionalProperties` is a dict; pydantic 2.11 began emitting it as a bool. Bisected
-    locally: 2.9.2 OK, 2.10.6 OK, 2.11.0 TypeError, 2.12.0 TypeError.
-    """
-    assert "<2.11" in _requirement("pydantic")
-
-
-def test_transformers_is_capped_to_the_major_this_is_exercised_against():
-    """Not a measured failure -- a bound the file's own rule already asked for.
-
-    The comment says bounds are "the versions the pipeline is actually exercised against
-    ... raise them deliberately, after testing", and `<6` admitted a 5.x nothing here has
-    run. A deploy duly installed transformers 5.16.1.
-    """
-    assert "<5" in _requirement("transformers")
-
-
-def test_starlette_is_capped_below_1():
-    """Deploy 4 died here, and it is the one that taught how to verify this file.
-
-    gradio 4.44.1's routes.py calls `templates.TemplateResponse(name, context)` in the
-    pre-0.29 positional order. starlette 1.0 removed that signature, so it reads the
-    context dict as the template name and jinja2 raises `TypeError: unhashable type:
-    'dict'` -- while RENDERING THE PAGE. gradio declares `fastapi<1.0` and nothing about
-    starlette, so the resolver took 1.6.0.
-
-    It survived a local check that imported app.py and called get_api_info(), because
-    neither renders a template, and it survived an anonymous GET /config, because that is
-    a different route. Only fetching "/" sees it. fastapi 0.141.1 wants starlette>=0.46,
-    and <1 leaves 0.52.1, so the cap costs no downgrade.
-    """
-    req = _requirement("starlette")
-    assert "<1" in req, req
-    assert ">=0.46" in req, f"fastapi needs starlette>=0.46; {req} would downgrade it"
-
-
-def test_every_dependency_a_deploy_broke_on_stays_capped():
-    """One test that fails if any of the four caps is quietly dropped.
-
-    Each of these was learned by a Space that built successfully and then did not work.
-    Raising one is a deliberate act that needs a launch-and-fetch check behind it --
-    see the header of spaces/requirements.txt.
-    """
-    caps = {"huggingface_hub": "<1", "pydantic": "<2.11", "starlette": "<1", "transformers": "<5"}
-    missing = {name: _requirement(name) for name, cap in caps.items()
-               if cap not in _requirement(name)}
-    assert not missing, f"a cap a deploy paid for has been dropped: {missing}"

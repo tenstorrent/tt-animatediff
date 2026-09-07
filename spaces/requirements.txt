@@ -1,67 +1,57 @@
 # Space runtime.
 #
-# gradio is pinned exactly and MUST match sdk_version in README.md — the Hub
-# builds against sdk_version, so a drift between the two means the Space runs a
-# different Gradio than this file claims.
+# gradio is pinned exactly and MUST match sdk_version in README.md — the Hub builds
+# against sdk_version, so a drift between the two means the Space runs a different
+# Gradio than this file claims.
+gradio==6.26.0
 #
-# README.md also pins python_version: "3.12", and that pin belongs to THIS one.
-# gradio 4.44.1 pulls in pydub, which does `import audioop` — removed from the
-# stdlib in Python 3.13 (PEP 594). The Hub's default image is 3.13, so the Space
-# built cleanly and then died on its first `import gradio`, before app.py ran a
-# single line of its own. Measured, not guessed: that is verbatim what the run
-# log showed on the first deploy. Raising gradio instead would be the other fix;
-# it is a larger change than this demo needs.
-gradio==4.44.1
+# THIS FILE USED TO CARRY FOUR COMPATIBILITY CAPS, and they are worth knowing about
+# because re-adding one is the obvious wrong fix for the next gradio breakage.
 #
-# The rest carry upper bounds on purpose. gradio 4.44.1 is a 2024-era pin, and
-# an unbounded resolver is free to pick a future major of diffusers or
-# transformers that no longer works alongside it — which would break the Space
-# build with nothing in this repo having changed. These bounds are the versions
-# the pipeline is actually exercised against (0.32.1 as the floor, 0.39.0 and
-# 0.40.0 verified in CI and locally); raise them deliberately, after testing.
+# Under gradio 4.44.1 the Space needed python_version 3.12 (3.13 dropped stdlib audioop,
+# which gradio's pydub imports), huggingface_hub<1 (gradio's oauth.py imports HfFolder,
+# removed in 1.0), pydantic<2.11 (gradio-client 1.3.0's schema walker assumes
+# additionalProperties is a dict) and starlette<1 (gradio called TemplateResponse in the
+# pre-0.29 positional order). Every one fixed a real deploy failure.
 #
-# `transformers<6` used to sit here, which admitted a 5.x nothing has run this
-# pipeline against — the rule above, not followed. The deploy installed 5.16.1.
-# Tightened to <5, the major everything here IS exercised against (4.52.4 locally),
-# as a precaution rather than a measured failure: raise it after testing, which is
-# exactly what the rule already said.
-torch>=2.0.0
+# Together they also froze the stack below its security floors. Cycode flagged
+# starlette 0.52.1 (CVE-2026-54283, -48818 HIGH; -48710, -48817 MEDIUM) and
+# transformers 4.57.6 (CVE-2026-9856, -5241, -4372 HIGH; -1839 MEDIUM), and there is no
+# CVE-free version inside either cap: every fix ships in starlette 1.x and
+# transformers 5.x. Propping up a 2024-era gradio was buying compatibility with
+# vulnerabilities.
+#
+# gradio 6 wants precisely the fixed versions — it declares starlette>=1.0.1,
+# huggingface-hub>=1.16.0, pydantic>=2.0, and pulls audioop-lts on 3.13 — so the caps
+# left with the pin that needed them. Verified before shipping: page renders and a real
+# generation completes (see the launch-and-fetch note at the bottom).
+#
+# What remains are FLOORS, not caps, and each names what it protects against.
+#
+# starlette's four CVEs are fixed across 1.0.1/1.1.0/1.3.1, so 1.3.1 is the floor that
+# covers all of them. gradio 6 allows >=1.0.1, which would still admit two of them.
+starlette>=1.3.1
+#
+# transformers' highest fix is 5.10.0. <6 keeps the major this is exercised against.
+transformers>=5.10,<6
+#
+# huggingface_hub 1.x is what gradio 6 and diffusers 0.40 both require.
+huggingface_hub>=1.16,<2
+#
+# diffusers keeps its tested range: 0.32.1 as the floor, 0.39.0 and 0.40.0 verified.
 diffusers>=0.32.1,<0.41
-transformers>=4.30.0,<5
 accelerate>=0.20.0,<2
-#
-# huggingface_hub<1 is NOT belt-and-braces; it is the pin that had to be learned by
-# deploying. gradio 4.44.1 declares `huggingface-hub>=0.19.3` with no upper bound, and its
-# own gradio/oauth.py does `from huggingface_hub import HfFolder` -- a name removed in
-# huggingface_hub 1.0. So the resolver installed 1.30.0, gradio failed to import, and the
-# Space reached "Running" and then died before app.py executed a line. gradio's own
-# metadata cannot protect against this, so the bound has to live here.
-huggingface_hub>=0.20.0,<1
-#
-# pydantic<2.11 is measured, not remembered. gradio 4.44.1 pins gradio-client==1.3.0,
-# whose json_schema_to_python_type() walks a schema assuming `additionalProperties` is a
-# dict; pydantic 2.11 began emitting it as a bool, so gradio's own /  route raises
-# `TypeError: argument of type 'bool' is not iterable` on EVERY request. The Space showed
-# "Running" while serving 503s, which is the worst shape this can fail in. Bisected
-# locally against the same component types app.py builds:
-#     2.9.2 OK | 2.10.6 OK | 2.11.0 TypeError | 2.12.0 TypeError
-pydantic>=2.0,<2.11
-#
-# starlette<1 is the fourth of these, and the one that proves a lesson about how these
-# get verified. gradio 4.44.1's routes.py calls `templates.TemplateResponse(name, context)`
-# in the pre-0.29 positional order; starlette 1.0 removed that signature, so it reads the
-# context DICT as the template name and jinja2 raises `TypeError: unhashable type: 'dict'`
-# rendering the page. gradio declares `fastapi<1.0` and nothing about starlette, so the
-# resolver took 1.6.0. fastapi 0.141.1 itself wants starlette>=0.46, and <1 leaves 0.52.1,
-# so nothing downgrades.
-#
-# It slipped through a local check that imported app.py and called get_api_info(), because
-# neither renders a template. Only an HTTP GET of "/" does. Verify this file by launching
-# the app and fetching the page, not by importing it.
-starlette>=0.46,<1
+torch>=2.0.0
 safetensors>=0.4.0
 Pillow>=9.0.0
 numpy>=1.24.0
 #
 # No ttnn / tt-metal: this Space is the CPU path by design — Blackhole is not
 # reachable from Hugging Face infrastructure.
+#
+# HOW TO VERIFY A CHANGE TO THIS FILE. Install it in a clean venv, LAUNCH
+# build/space/app.py, and fetch "/" — then after deploying, fetch "/" anonymously.
+# Importing app.py, calling demo.get_api_info() and fetching /config all pass while the
+# page itself 500s, because none of them renders a template; that combination shipped a
+# Space that reported RUNNING and served nothing to every visitor. Run one real
+# generation too: the page and the generate path fail independently.

@@ -180,25 +180,53 @@ and then 401'd on a visitor's first click (its `from_pretrained(MODEL_REPO, ...)
 authenticate with). If that repo is ever made private again, the Space needs an `HF_TOKEN`
 secret instead. Noted in `spaces/README.md` too.
 
-**The Space's dependency pins are load-bearing, not tidiness.** gradio is pinned at 4.44.1
-to match `sdk_version`, and three more pins exist only because a deploy failed without them:
-`python_version: "3.12"` in the card (3.13 dropped stdlib `audioop`, which gradio's pydub
-imports), `huggingface_hub<1` (gradio's own oauth.py imports `HfFolder`, removed in 1.0) and
-`pydantic<2.11` (gradio-client 1.3.0's schema walker assumes `additionalProperties` is a dict;
-2.11 emits a bool) and `starlette>=0.46,<1` (gradio calls `TemplateResponse(name, context)` in
-the pre-0.29 positional order, which starlette 1.0 removed, so jinja2 gets the context dict as
-a template name).
+**The Space's dependency pins: four caps, then none (2026-09-07).** gradio was pinned at
+4.44.1, and four more pins existed only because a deploy had failed without them —
+`python_version: "3.12"` (3.13 dropped stdlib `audioop`, which gradio's pydub imports),
+`huggingface_hub<1` (gradio's own oauth.py imports `HfFolder`, removed in 1.0),
+`pydantic<2.11` (gradio-client 1.3.0's schema walker assumes `additionalProperties` is a
+dict) and `starlette<1` (gradio calls `TemplateResponse(name, context)` in the pre-0.29
+positional order). Each was real and measured.
 
-**The two failure modes to know.** The last two both present as a **RUNNING Space that serves
-nothing** — the crash is per request inside gradio's own route, not at startup. So "stage:
-RUNNING" is never evidence the Space works.
+**They also froze the stack below its security floors, which is what killed them.** Cycode
+flagged starlette 0.52.1 (CVE-2026-54283, -48818 HIGH; -48710, -48817 MEDIUM) and
+transformers 4.57.6 (CVE-2026-9856, -5241, -4372 HIGH; -1839 MEDIUM), and **no version
+inside either cap is clean** — every fix ships in starlette 1.x and transformers 5.x. So
+the caps were buying gradio-4 compatibility with known vulnerabilities. Moving to
+**gradio 6.26.0** removed all four at once: it *requires* `starlette>=1.0.1` and
+`huggingface-hub>=1.16.0`, accepts `pydantic>=2.0`, and pulls `audioop-lts` on 3.13.
+`tests/test_build_space_artifact.py` now guards the opposite of what it used to — CVE
+floors (`starlette>=1.3.1`, `transformers>=5.10`) plus a test that fails if any of the
+four caps is reintroduced, because re-adding one is the obvious wrong fix for the next
+gradio breakage.
+
+**Two failure modes to remember from the gradio-4 era**, because they generalise: the
+pydantic and starlette breakages both presented as a **RUNNING Space serving nothing** —
+the crash was per request inside gradio's own route, not at startup. "stage: RUNNING" is
+never evidence a Space works.
 
 **And the check has to be the right one.** `import app.py`, `demo.get_api_info()` and a
 `GET /config` all passed while starlette 1.x was breaking every page load, because none of
-them renders a template. Verify a change to `spaces/requirements.txt` by installing it in a
-clean venv, LAUNCHING `build/space/app.py`, and fetching **`/`** — then, after deploying,
-fetch `/` again anonymously. `tests/test_build_space_artifact.py` guards every cap, and
-`spaces/requirements.txt` carries the reasoning per line.
+them renders a template. Verify a change to `spaces/requirements.txt` by installing it in
+a clean venv, LAUNCHING `build/space/app.py`, fetching **`/`**, and running one real
+generation — the page and the generate path fail independently. Then fetch `/`
+anonymously after deploying.
+
+**The CPU pipeline cache is bounded, and that is a memory limit not a style choice.**
+`animatediff_ttnn._cpu_pipe_cache` is keyed on `(use_lightning, lightning_steps)` — a
+value chosen from the Space's dropdown — and used to never evict, so a visitor who tried
+both step counts left two pipelines resident and OOMed the 16 GB box. Measured with no
+mocks: cap=1 gives 7.77 GB resident / 10.98 GB peak; cap=2 gives 14.37 GB / 17.58 GB.
+`ANIMATEDIFF_CPU_PIPE_CACHE` raises it where there is memory to spare. Eviction happens
+*before* the replacement is built, and a test asserts that ordering from inside the
+builder — evicting afterwards still satisfies "the cache holds one" and still dies at the
+peak.
+
+**When measuring that, do not use `unittest.mock.patch` for the stub.** It records
+`call_args_list`, which holds a reference to every argument including the pipeline. Two
+runs reported the fix as not working and one reported a reference leak; all three were the
+probe measuring itself. A plain stub function gave the true answer, and `malloc_trim(0)`
+confirmed there was no allocator-retention problem to solve.
 
 **The Space is published and public** (`episod/tt-animatediff-demo`, 2026-09-04). It got there
 only after PRO was enabled on the account: `create_repo(repo_type="space")` had been returning
