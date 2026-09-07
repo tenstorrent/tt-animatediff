@@ -11,7 +11,7 @@ the Blackhole denoising loop — no distillation required, weights loaded straig
 
 ## Gallery
 
-### Blackhole (P300C) — 8 frames × 25 steps, ~15 s/frame
+### Blackhole (P300C) — 8 frames × 25 steps, ~1.94 s/frame
 
 | *"World of Tomorrow"* | *"Phosphor Horizon"* | *"Mayan Temple"* |
 |---|---|---|
@@ -45,7 +45,7 @@ hf download guoyww/animatediff-motion-adapter-v1-5-2
 # CPU — any machine, no hardware required
 python examples/generate.py --mode cpu --prompt "ocean waves at sunset, cinematic"
 
-# Blackhole hardware (default, ~15 s/frame)
+# Blackhole hardware (default, ~1.94 s/frame at 25 steps)
 source ~/tt-metal/python_env/bin/activate
 python examples/generate.py --prompt "aurora borealis over a frozen lake, cinematic 4K"
 
@@ -254,8 +254,8 @@ for all parameters and usage examples.
 |---|---|---|---|
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
-| `blackhole` | Blackhole P300C | **~12.5 s/frame** (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
-| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (25 steps, Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
+| `blackhole` | Blackhole P300C | **~1.94 s/frame** (25 steps) · **~0.82 s/frame** (8 steps) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P300C | not re-measured since the 2026-09-07 pass | Cross-frame blend (temporal-alpha) |
 | `blackhole --motion-adapter` | Blackhole P300C | **~52 s/frame** (7 injection pts, batched D→H) | Full MotionAdapter Phase 3 ✓ |
 | `blackhole --motion-adapter --motion-adapter-skip up1 up2` | Blackhole P300C | **~7.7 s/frame** (5 injection pts) | Full MotionAdapter Phase 3 ✓ |
 | `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |
@@ -462,7 +462,7 @@ flowchart TD
     LOOP --> BH_UNET["TTNN UNet2D — SD 1.4\nBlackhole P300C · ~0.5 s/call"]
     BH_UNET --> PHASE{"--motion-adapter?"}
 
-    PHASE -->|no — Phase 2.5\n~12.5 s/frame| CFA["cross_frame_attention\nnoise blend α=0.35 — CPU"]
+    PHASE -->|no — Phase 2.5\n~1.94 s/frame| CFA["cross_frame_attention\nnoise blend α=0.35 — CPU"]
     PHASE -->|yes — Phase 3| SKIP{"--motion-adapter-skip?"}
 
     SKIP -->|no — full\n~52 s/frame| MA_FULL["7 × AnimateDiffTransformer3D\nbatched D→H transfer\nCPU · ~4 s each"]
@@ -572,6 +572,9 @@ application plugin, or Python library — see
 - **`--motion-adapter-skip up1 up2` fast path** — skipping the two costliest decoder injection
   points (up1 32×32 C=1280, up2 64×64 C=640) drops wall-clock from ~52 s/frame to **~7.7 s/frame**,
   a 6.75× speedup over full Phase 3 and faster than Phase 2.5 (12.5 s/frame). Measured on QB2.
+  (Phase 2.5 was re-measured at **~1.94 s/frame** on 2026-09-07 — see Modes Reference — so
+  that last comparison no longer holds. The Phase 3 figures here have not been re-measured;
+  the numbers in this entry are what was true when it was written.)
   Lightning + MotionAdapter tested and confirmed no benefit (~50.6 s/frame, ≈ same as 25-step
   PNDM) — CPU bridge calls per step dominate, not step count.
 - **Maya glyph Q3/Q4 tiers** — `generate_mayan_glyphs.py` adds Q3 (full MotionAdapter) and Q4

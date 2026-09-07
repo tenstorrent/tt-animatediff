@@ -20,8 +20,9 @@ frames at 512×512 for free-tier hardware. A 4-frame run takes several minutes o
 free-tier CPU — that wait is expected, not a hang.
 
 Tenstorrent Blackhole is not reachable from Hugging Face infrastructure, so nothing here
-reflects hardware performance: a P300C runs the same model at **~12.5 s/frame**, 25
-steps, 512×512. The gallery in the app shows real Blackhole output.
+reflects hardware performance: a P300C runs the same model at **~1.94 s/frame** at 25
+steps and **~0.82 s/frame** at 8 steps, 512×512 (measured 2026-09-07). The gallery in the
+app shows real Blackhole output.
 
 **What this Space depends on:** [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
 being **public**. A Space gets no implicit credential for a *private* model repo, so if that

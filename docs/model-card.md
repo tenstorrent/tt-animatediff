@@ -103,14 +103,27 @@ this repo's CLI (`--motion-adapter`), not through this pipeline.
 
 ## Measured performance
 
-| Configuration | Hardware | Throughput |
-|---|---|---|
-| `mode="blackhole"`, 25 steps, PNDM | Blackhole P300C | **~12.5 s/frame** |
-| `mode="blackhole"`, 25 steps, Euler, CFG 7.5 | Blackhole P300C | **~12.0 s/frame** |
-| `mode="cpu"` | CPU (any machine) | ~2 min/frame |
-| `mode="cpu"`, Lightning 4-step | CPU (any machine) | ~20 s/frame |
+| Configuration | Hardware | Throughput | Provenance |
+|---|---|---|---|
+| `mode="blackhole"`, 25 steps | Blackhole P300C, 1 chip | **~1.94 s/frame** (15.5 s for 8 frames) | measured 2026-09-07 |
+| `mode="blackhole"`, 8 steps | Blackhole P300C, 1 chip | **~0.82 s/frame** (6.5 s for 8 frames) | measured 2026-09-07 |
+| `mode="cpu"` | CPU (any machine) | ~2 min/frame | earlier estimate, not re-verified |
+| `mode="cpu"`, Lightning 4-step | CPU (any machine) | ~20 s/frame | earlier estimate, not re-verified |
 
-Blackhole figures are 8 frames at 512×512 on a single P300C chip (QB2 board, 4 × P300C), warm model — TTNN JIT already compiled. CPU figures are the reference path, not a target.
+Blackhole figures are 8 frames at 512×512 on a single P300C chip (QB2 board, 4 × P300C),
+warm — TTNN JIT already compiled — median of 3 runs, timed around `generate_animation()`.
+CPU figures are the reference path, not a target.
+
+**These Blackhole numbers replace a claim that was 6.4× too slow.** The table used to say
+~12.5 s/frame at 25 steps, alongside a second row distinguishing a PNDM scheduler from
+Euler. Both were stale: `generate_animation(mode="blackhole")` and the ASGI server call the
+same function (`generate_frames_temporal`), which uses `EulerDiscreteScheduler` with
+`timestep_spacing="trailing"` and takes no scheduler argument, so there is one Blackhole
+configuration and not two. The re-measurement validated itself against a known point
+before being trusted: 8 frames at 8 steps came in at 6.54 s here against the 7.363 s
+median committed in [`docs/measurements/serving-benchmark.json`](https://github.com/tenstorrent/tt-animatediff/blob/main/docs/measurements/serving-benchmark.json),
+and that ~0.8 s gap is the HTTP and base64-GIF overhead the benchmark's own limitations
+section attributes it to — so the two agree once measured at the same layer.
 
 ## Limitations
 
