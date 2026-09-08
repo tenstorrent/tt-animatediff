@@ -16,9 +16,11 @@ Every assertion here is one that a wrong answer makes expensive on hardware:
 The lifespan is deliberately never entered: ``TestClient(app)`` as a plain object does not
 run it, and entering it would open a device.
 """
+import asyncio
 import subprocess
 import sys
 import textwrap
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -465,3 +467,90 @@ def test_the_server_request_default_matches_the_librarys_calibrated_one():
         f"server default temporal_alpha={served} but the library calibrated {library}; "
         "an HTTP client omitting the field would get different motion"
     )
+
+
+# ---- the shapes the compiled kernel can actually serve -------------------------------
+
+
+@pytest.mark.parametrize("field,value", [
+    ("height", 768), ("width", 768), ("height", 500), ("width", 64), ("height", 1024),
+])
+def test_a_resolution_the_kernel_cannot_serve_is_refused_at_the_edge(field, value):
+    """Refused by validation, not by a TT_FATAL mid-denoise.
+
+    The TTNN UNet is compiled once at a fixed 64x64 latent
+    (generation_helpers.py: `UNet2D(device, parameters, 2, 64, 64)`), so this server can
+    only produce 512x512. height/width were merely bounded 64..1024, which is
+    pydantic-valid and kernel-invalid: the request passed validation, took the device
+    lock, and then raised deep inside the kernel as an uncaught 500 -- having held the
+    one device for the duration.
+    """
+    with pytest.raises(Exception) as exc:
+        VideoGenerationRequest(prompt="a cat", **{field: value})
+    assert "512" in str(exc.value), f"the refusal should name the only supported size: {exc.value}"
+
+
+def test_the_supported_resolution_is_still_accepted():
+    r = VideoGenerationRequest(prompt="a cat", height=512, width=512)
+    assert (r.height, r.width) == (512, 512)
+
+
+def test_the_gif_encode_does_not_run_on_the_event_loop():
+    """The probes are only lock-free if nothing else blocks the loop.
+
+    _frames_to_gif_b64 does PIL GIF palette quantization plus base64 of a multi-MB
+    payload. It ran inline in the endpoint coroutine -- outside the device lock, but ON
+    the event loop -- so for its duration no coroutine could run, including /health and
+    /tt-liveness. That contradicts this module's own docstring and is exactly the failure
+    the lock-free probes exist to prevent: an orchestrator with a 1-2 s liveness timeout
+    restarts a server that is merely busy encoding.
+
+    Asserted by recording which thread the encode runs on: awaited through to_thread it
+    lands on an anyio worker; called inline it would run on the loop's own thread, the
+    same one serving every other request.
+    """
+    import threading
+
+    from animatediff_ttnn.server import app as mod
+
+    seen = {}
+
+    def fake_encode(frames):
+        seen["encode_thread"] = threading.current_thread().name
+        seen["encode_ident"] = threading.get_ident()
+        return "Zm9v"
+
+    class _ClockOnTheLoop:
+        """time.time() is called in the response construction, i.e. ON the event loop
+        after both awaits -- so it is a reliable way to capture the loop's own thread
+        from inside the endpoint, which is what the encode must NOT share."""
+
+        @staticmethod
+        def time():
+            seen["loop_ident"] = threading.get_ident()
+            return 1234.0
+
+    # Plain TestClient(app), per this module's convention -- entering it as a context
+    # manager would run the real lifespan and try to open a device. The lifespan is also
+    # where device_lock is created, so this test supplies one.
+    app.state.engine = {"device": object(), "models": object(), "ready": True,
+                        "model": "guoyww/animatediff", "mesh_device": "P150",
+                        "mesh_shape": "1x1"}
+    app.state.device_lock = asyncio.Lock()
+    try:
+        with patch.object(mod, "_frames_to_gif_b64", fake_encode), \
+             patch.object(mod, "time", _ClockOnTheLoop), \
+             patch.object(mod, "_generate", return_value=[object()]):
+            r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat"})
+        assert r.status_code == 200, r.text
+        assert seen.get("encode_ident"), "the encode never ran"
+        assert seen.get("loop_ident"), "never captured the loop thread"
+        assert seen["encode_ident"] != seen["loop_ident"], (
+            f"the encode ran on the event loop's own thread ({seen['encode_thread']!r}), "
+            "so /health and /tt-liveness were blocked for its duration"
+        )
+        assert seen["encode_ident"] != threading.get_ident(), (
+            "the encode ran on the thread that issued the request"
+        )
+    finally:
+        del app.state.engine

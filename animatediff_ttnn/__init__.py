@@ -66,7 +66,30 @@ from .pipeline import create_animatediff_pipeline, generate, export_gif
 #
 # Default 1, so switching step counts costs a ~60 s reload instead of a crash. Raise it
 # via ANIMATEDIFF_CPU_PIPE_CACHE on a machine with the memory to spare.
-_CPU_PIPE_CACHE_MAX = max(1, int(os.environ.get("ANIMATEDIFF_CPU_PIPE_CACHE", "1")))
+
+
+def _cpu_pipe_cache_max(env=None) -> int:
+    """How many CPU pipelines the cache may hold, from ANIMATEDIFF_CPU_PIPE_CACHE.
+
+    Parsed through a function, and tolerant of junk, because this used to be a bare
+    `int(os.environ.get(...))` at module scope -- so an empty or non-numeric value made
+    `import animatediff_ttnn` ITSELF raise ValueError. That surfaces nowhere near the
+    cache it configures: tt-model-manager's verify step imports the ASGI app at image
+    BUILD time, hf/pipeline.py's resolve_package catches ImportError and would see a
+    ValueError, and the CLI dies on import. A Dockerfile or a Space settings panel
+    exporting an empty string is enough to do it.
+
+    A bad value falls back to the documented default rather than raising: the variable is
+    a memory tuning knob, and refusing to start over it would be a worse trade than
+    quietly using 1. The floor stays 1 so a caller cannot disable the cache entirely.
+    """
+    raw = (os.environ if env is None else env).get("ANIMATEDIFF_CPU_PIPE_CACHE", "1")
+    try:
+        return max(1, int(str(raw).strip()))
+    except (TypeError, ValueError):
+        return 1
+
+
 _cpu_pipe_cache: dict = {}
 _cpu_cache_lock = threading.Lock()
 
@@ -258,8 +281,26 @@ def export_mp4(
 
 # ── private helpers ────────────────────────────────────────────────────────────
 
+#: Every mode generate_animation() accepts. "auto" resolves to one of the others.
+VALID_MODES = ("auto", "cpu", "blackhole", "sim")
+
+
 def _resolve_mode(mode: str) -> str:
-    """Map "auto" to "blackhole" or "cpu" based on TTNN availability."""
+    """Map "auto" to "blackhole" or "cpu" based on TTNN availability.
+
+    Anything not in VALID_MODES raises. It used to pass through unchanged, and the effect
+    was worse than a confusing error later: generate_animation only special-cases "cpu"
+    and session.ensure_blackhole only "sim", so mode="CPU" (wrong case), "cuda" or "" fell
+    through to the Blackhole branch -- inserting ~/tt-metal on sys.path, claiming chip 0
+    and starting a multi-minute run nobody asked for. On a shared box that takes a chip
+    out of circulation. hf/pipeline.py validated its own copy of this list precisely
+    because the library did not.
+    """
+    if mode not in VALID_MODES:
+        raise ValueError(
+            f"mode {mode!r} is not one of {', '.join(VALID_MODES)} "
+            f"(note these are case-sensitive: use 'cpu', not 'CPU')"
+        )
     if mode != "auto":
         return mode
     return "blackhole" if _ttnn_available() else "cpu"
@@ -306,7 +347,7 @@ def _generate_cpu(
             # earlier choice to build outside it: letting two threads build different
             # keys concurrently avoided serialising them, and put two pipelines in memory
             # to do it. On the machines this path is for, serialising is the cheaper side.
-            while len(_cpu_pipe_cache) >= _CPU_PIPE_CACHE_MAX:
+            while len(_cpu_pipe_cache) >= _cpu_pipe_cache_max():
                 del _cpu_pipe_cache[next(iter(_cpu_pipe_cache))]
                 gc.collect()
             pipe = (

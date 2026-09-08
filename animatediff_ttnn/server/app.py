@@ -61,6 +61,12 @@ MESH_SHAPE_ENV = "ANIMATEDIFF_MESH_SHAPE"
 DEFAULT_FPS = 8
 
 
+#: The only image size this server can produce. The TTNN UNet is compiled at a fixed
+#: 64x64 latent, and 64 * 8 = 512. Named rather than repeated so the request model, the
+#: error message and any future widening all move together.
+SERVABLE_SIZE = 512
+
+
 class VideoGenerationRequest(BaseModel):
     """OpenAI-shaped video request.
 
@@ -83,8 +89,20 @@ class VideoGenerationRequest(BaseModel):
     # test_the_server_request_default_matches_the_librarys_calibrated_one asserts it
     # against the library rather than against a literal, so it cannot drift again.
     temporal_alpha: float = Field(default=0.35, ge=0.0, le=1.0)
-    height: int = Field(default=512, ge=64, le=1024)
-    width: int = Field(default=512, ge=64, le=1024)
+    # 512 exactly, and not as a conservative default: the TTNN UNet is compiled ONCE at a
+    # fixed 64x64 latent (generation_helpers.py: `UNet2D(device, parameters, 2, 64, 64)`),
+    # so 512x512 is the only thing this server can produce. These were bounded 64..1024,
+    # which is pydantic-valid and kernel-invalid -- the request passed validation, took the
+    # device lock, and then raised a TT_FATAL deep in the denoise loop as an uncaught 500,
+    # having held the one device to do it. Refuse at the edge instead, with a message that
+    # says why. Widening this means compiling the UNet per requested shape, which is a
+    # ~2-3 minute cost per shape and a different design.
+    height: int = Field(default=SERVABLE_SIZE, ge=SERVABLE_SIZE, le=SERVABLE_SIZE,
+                        description=f"only {SERVABLE_SIZE} is supported: the UNet is "
+                                    "compiled at a fixed 64x64 latent")
+    width: int = Field(default=SERVABLE_SIZE, ge=SERVABLE_SIZE, le=SERVABLE_SIZE,
+                       description=f"only {SERVABLE_SIZE} is supported: the UNet is "
+                                   "compiled at a fixed 64x64 latent")
     #: Only b64_json is offered. A URL response would need the server to host files it has
     #: no store for, and a bundle that returns links to a path the consumer cannot read is
     #: worse than one that returns bytes.
@@ -275,7 +293,14 @@ async def videos_generations(req: VideoGenerationRequest) -> VideoGenerationResp
     # One denoise loop at a time: the pipeline owns the device.
     async with app.state.device_lock:
         frames = await asyncio.to_thread(_generate, engine, req)
+    # Off the loop as well, and NOT because it is slow in absolute terms: PIL's GIF
+    # palette quantization plus base64 of a multi-MB payload is seconds of pure CPU, and
+    # run inline here it blocks every coroutine -- including /health and /tt-liveness,
+    # whose whole purpose is to answer while this endpoint is busy. An orchestrator with a
+    # 1-2 s liveness timeout would restart a server that is merely encoding. Outside the
+    # device lock, because the device is free once the frames are in host memory.
+    b64 = await asyncio.to_thread(_frames_to_gif_b64, frames)
     return VideoGenerationResponse(
         created=int(time.time()),
-        data=[VideoData(b64_json=_frames_to_gif_b64(frames))],
+        data=[VideoData(b64_json=b64)],
     )

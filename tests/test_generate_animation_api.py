@@ -314,8 +314,14 @@ def test_the_old_pipeline_is_dropped_BEFORE_the_new_one_is_built(clean_cpu_cache
 
 
 def test_the_cap_is_raisable_for_machines_with_the_memory(clean_cpu_cache, monkeypatch):
-    """A 16 GB Space is not every caller. The bound is a default, not a ceiling."""
-    monkeypatch.setattr(animatediff_ttnn, "_CPU_PIPE_CACHE_MAX", 2)
+    """A 16 GB Space is not every caller. The bound is a default, not a ceiling.
+
+    Set through the environment variable a caller actually uses, rather than by patching
+    an internal constant. The cap used to be bound at import, so a test could only reach
+    it by monkeypatching the module attribute -- which meant nothing verified that the
+    documented env var worked. It is read per call now, so this exercises the real path.
+    """
+    monkeypatch.setenv("ANIMATEDIFF_CPU_PIPE_CACHE", "2")
     with patch("animatediff_ttnn.pipeline.create_lightning_pipeline") as create, \
          patch("animatediff_ttnn.pipeline.generate", return_value=[]):
         create.side_effect = lambda step: MagicMock(name=f"pipe{step}")

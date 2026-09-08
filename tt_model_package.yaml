@@ -52,13 +52,17 @@ source:
         # kind's verify step imports that attribute, so the failure would have landed in
         # their image build.
         #
+        # This lags the branch by one commit BY CONSTRUCTION: a pin can only name a commit
+        # that already exists, so a change to animatediff_ttnn/ and the repin of this line
+        # are always two commits. That is not a wrinkle to tidy up -- it is why the guard
+        # below exists, and why it must be run after committing rather than before.
         # Tags here are cut on main after merge, so this moves to v0.11.0 then -- step 5 of
         # docs/RELEASING.md. What actually matters is not whether this is a tag or a sha but
         # that the tree it names IS the animatediff_ttnn/ being shipped; a sha is immutable,
         # so it is the safer placeholder in the meantime. test_server_app.py's
         # ..._ships_the_package_we_are_developing compares the two trees and fails when they
         # diverge (it skips on a shallow clone, so run the suite locally after repinning).
-        ref: b6966d476bc6727f44dd6877943f9d2e91bf7d9d
+        ref: 0d9ecfd3631e49ec003824cc5ffcd988fca68cac
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
