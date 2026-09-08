@@ -315,3 +315,37 @@ def test_concurrent_first_call_never_sees_a_half_initialized_singleton(fake_back
     )
     assert fake_backend["setup"].call_count == 1, "device must be opened exactly once"
     assert fake_backend["load"].call_count == 1, "weights must be loaded exactly once"
+
+
+def test_a_failed_load_closes_the_device_it_opened(fake_backend):
+    """A leaked device turns a transient failure into a permanent one.
+
+    TTNN cannot open the same device twice in one process. If the weights fail to load
+    after the chip is open and nobody closes it, the retry does not fail at the load --
+    it fails earlier, at setup_blackhole, for the lifetime of the process. Worse, the
+    chip stays claimed, so on a shared box the next tenant is blocked by a workload that
+    has already given up.
+
+    The mocked retry test above cannot see this: a MagicMock device reopens happily.
+    """
+    fake_backend["load"].side_effect = RuntimeError("L1 allocation failed")
+    ttnn_mock = MagicMock()
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        with pytest.raises(RuntimeError, match="L1 allocation failed"):
+            session.ensure_blackhole(mode="blackhole")
+
+    ttnn_mock.close_mesh_device.assert_called_once_with(fake_backend["device"])
+    assert session._device is None
+    assert session._models is None
+
+
+def test_a_failing_close_does_not_mask_the_load_error(fake_backend):
+    """The caller needs to know why the LOAD failed, not why the cleanup did."""
+    fake_backend["load"].side_effect = RuntimeError("L1 allocation failed")
+    ttnn_mock = MagicMock()
+    ttnn_mock.close_mesh_device.side_effect = RuntimeError("device already gone")
+
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}):
+        with pytest.raises(RuntimeError, match="L1 allocation failed"):
+            session.ensure_blackhole(mode="blackhole")

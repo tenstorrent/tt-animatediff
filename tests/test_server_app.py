@@ -88,8 +88,32 @@ def test_prompt_is_required_and_may_not_be_empty():
 
 
 def test_defaults_match_the_pipeline_rather_than_being_invented():
+    """Derived from the library, not retyped as literals.
+
+    This test used to assert `(16, 25, 7.5, 42)` as bare numbers while its name claimed
+    they matched the pipeline. They partly did not -- temporal_alpha was 0.5 against the
+    library's 0.35 -- and a literal cannot notice that, so the name was a claim the body
+    never checked. Now the shared ones are read from generate_animation's own signature.
+    """
+    import inspect
+
+    from animatediff_ttnn import generate_animation
+
+    lib = inspect.signature(generate_animation).parameters
     r = VideoGenerationRequest(prompt="a cat")
-    assert (r.num_frames, r.num_inference_steps, r.guidance_scale, r.seed) == (16, 25, 7.5, 42)
+
+    assert r.num_inference_steps == lib["num_steps"].default
+    assert r.guidance_scale == lib["guidance_scale"].default
+    assert r.seed == lib["seed"].default
+    assert r.temporal_alpha == lib["temporal_alpha"].default
+    assert (r.height, r.width) == (lib["height"].default, lib["width"].default)
+
+    # num_frames is the one that deliberately does NOT track the library: 16 here against
+    # generate_animation's 8. It is a serving choice about clip length rather than a
+    # calibrated constant, so it is pinned as a literal on purpose -- and pinned, so that
+    # changing the API default for every HTTP client stays a deliberate edit.
+    assert r.num_frames == 16
+    assert lib["num_frames"].default == 8
 
 
 @pytest.mark.parametrize("field,value", [
@@ -411,3 +435,33 @@ def test_the_pinned_extra_code_ref_ships_the_package_we_are_developing():
                 f"HEAD has {head}. The pin must move whenever {rel} changes, or consumers "
                 "stage an older package than this manifest claims."
             )
+
+
+def test_the_server_request_default_matches_the_librarys_calibrated_one():
+    """One default, three places, and the server had picked its own number.
+
+    `temporal_alpha` is the cross-frame blend weight. generate_animation() and
+    hf/pipeline.py both default it to 0.35, and so does generate_frames_temporal --
+    the function this server actually calls. The server's request model said 0.5, which
+    matched none of them, so an HTTP client omitting the field got quietly different
+    motion from every other entry point into the same code.
+
+    Asserted against the library rather than against a literal, so the two cannot drift
+    apart again in either direction.
+    """
+    import inspect
+
+    from animatediff_ttnn import generate_animation
+    from animatediff_ttnn.temporal_attention import generate_frames_temporal
+
+    library = inspect.signature(generate_animation).parameters["temporal_alpha"].default
+    called = inspect.signature(generate_frames_temporal).parameters["temporal_alpha"].default
+    served = VideoGenerationRequest.model_fields["temporal_alpha"].default
+
+    assert library == called, (
+        f"the library API ({library}) and the function it calls ({called}) already disagree"
+    )
+    assert served == library, (
+        f"server default temporal_alpha={served} but the library calibrated {library}; "
+        "an HTTP client omitting the field would get different motion"
+    )

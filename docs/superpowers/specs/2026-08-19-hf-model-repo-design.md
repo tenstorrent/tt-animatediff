@@ -209,7 +209,7 @@ tt-metal, stable-diffusion, video-generation]`, and `base_model` relations to
   `docs.tenstorrent.com/tt-animatediff/`, and the writeup
   `tsingletarytt.github.io/writing/2026/06/23/animatediff-on-tt-hardware-the-full-story/`.
 
-Version reported as `0.9.0`, matching `VERSION`.
+Version reported in the card must match `VERSION` — not restated here, because a number written into a design doc drifts silently the first time the version is bumped, which is exactly what happened to the card itself (it said `0.9.0` while `VERSION` had moved to `0.11.0`). `tests/test_build_hf_artifact.py::test_the_model_card_version_matches_VERSION` is the guard: the build copies both files into the same artifact, so a disagreement publishes two answers.
 
 ## Testing
 

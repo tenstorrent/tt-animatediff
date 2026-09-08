@@ -133,3 +133,27 @@ def test_load_check_reports_through_the_callback_not_stdout(tmp_path, capsys):
     assert "load check OK" not in captured.out, (
         "build_artifact printed the load check itself; that belongs to the caller"
     )
+
+
+def test_the_model_card_version_matches_VERSION():
+    """Two files in one artifact, each claiming a version.
+
+    build_hf_artifact copies docs/model-card.md to README.md AND VERSION to VERSION, so a
+    stale number in the card is not a local doc nit -- it publishes a repo whose card and
+    whose VERSION file disagree, to the people least able to tell which is right.
+
+    It had already happened: the card said 0.9.0 while VERSION had moved to 0.11.0.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    version = (root / "VERSION").read_text().strip()
+    card = (root / "docs" / "model-card.md").read_text()
+
+    found = re.findall(r"Version\s+(\d+\.\d+\.\d+)", card)
+    assert found, "the model card no longer states a version; this guard needs updating"
+    assert set(found) == {version}, (
+        f"model card says {sorted(set(found))} but VERSION is {version!r} -- the published "
+        "artifact would carry both"
+    )

@@ -88,7 +88,16 @@ def ensure_blackhole(
             device = setup_blackhole(device_ids=[0])
 
         from animatediff_ttnn.generation_helpers import load_sd14_ttnn
-        models = load_sd14_ttnn(device)
+        try:
+            models = load_sd14_ttnn(device)
+        except Exception:
+            # Close the chip before re-raising. TTNN cannot open the same device twice in
+            # one process, so a leaked handle turns a transient load failure into a
+            # permanent one: the retry fails EARLIER than the load, at setup_blackhole,
+            # for the life of the process. On a shared box it is worse than that -- the
+            # chip stays claimed by a workload that has already given up.
+            _close_device(device)
+            raise
 
         # _device last: it is the gate the fast path reads first, so publishing
         # it after _models means seeing it set implies the models are there too.
@@ -109,13 +118,23 @@ def close() -> None:
     with _lock:
         if _device is None:
             return
-        try:
-            import ttnn
-            ttnn.close_mesh_device(_device)
-        except Exception:
-            pass
+        _close_device(_device)
         _device = None
         _models = None
+
+
+def _close_device(device) -> None:
+    """Release a TTNN device, swallowing any error.
+
+    Shared by close() and the failed-load path so the two cannot drift. Errors are
+    swallowed deliberately in both: a failing close must not strand the globals, and on
+    the failure path it must not mask the load error the caller actually needs to see.
+    """
+    try:
+        import ttnn
+        ttnn.close_mesh_device(device)
+    except Exception:
+        pass
 
 
 # ── private helpers ────────────────────────────────────────────────────────────

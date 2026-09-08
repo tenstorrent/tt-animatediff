@@ -76,7 +76,13 @@ class VideoGenerationRequest(BaseModel):
     num_inference_steps: int = Field(default=25, ge=1, le=100)
     guidance_scale: float = Field(default=7.5, ge=0.0, le=20.0)
     seed: int = 42
-    temporal_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    # 0.35, because that is what the rest of the project calibrated: generate_animation(),
+    # hf/pipeline.py AND generate_frames_temporal -- the function this server calls -- all
+    # use it. This said 0.5, which matched none of them, so an HTTP client omitting the
+    # field got quietly different motion from every other entry point into the same code.
+    # test_the_server_request_default_matches_the_librarys_calibrated_one asserts it
+    # against the library rather than against a literal, so it cannot drift again.
+    temporal_alpha: float = Field(default=0.35, ge=0.0, le=1.0)
     height: int = Field(default=512, ge=64, le=1024)
     width: int = Field(default=512, ge=64, le=1024)
     #: Only b64_json is offered. A URL response would need the server to host files it has
