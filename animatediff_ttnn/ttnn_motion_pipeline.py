@@ -201,7 +201,12 @@ def forward_unet_staged(
                                (NCHW, same format as the single-frame UNet input).
         timestep:              Shared timestep embedding tensor (already passed through
                                time_proj / time_embedding — same object for all frames).
-        encoder_hidden_states: Text conditioning tensor, shared across all frames.
+        encoder_hidden_states: Text conditioning. Either a single tensor shared across
+                               all frames (default single-prompt behaviour), OR a list
+                               of num_frames tensors for "prompt travel" — frame i is
+                               then conditioned on encoder_hidden_states[i]. Both cases
+                               use the identical per-frame block calls; the list case is
+                               a clean tensor swap with no shape change.
         config:                SD config object (center_input_sample, etc.).
         temporal_kernels:      Dict mapping injection-point keys to lists of
                                AnimateDiffTransformer3D modules.  Expected keys:
@@ -248,6 +253,25 @@ def forward_unet_staged(
             f"num_frames ({num_frames}) must be divisible by num_chips ({_num_chips}). "
             f"Valid counts for {_num_chips} chips: {[_num_chips * k for k in range(1, 9)]}"
         )
+
+    # Prompt travel: encoder_hidden_states may be a per-frame list. _enc_for(i)
+    # selects frame i's conditioning, or the shared tensor in the single-prompt
+    # case. Same shape either way — this is only a tensor selection.
+    _per_frame_text = isinstance(encoder_hidden_states, (list, tuple))
+    if _per_frame_text and len(encoder_hidden_states) != num_frames:
+        # Checked here, beside the divisibility guard above, because _enc_for(i)
+        # is called deep inside the per-frame block loop: a short list would
+        # IndexError part-way through a UNet pass, with the device open and the
+        # model already compiled. Deterministic failure beats a late one.
+        raise ValueError(
+            f"encoder_hidden_states is a per-frame sequence of "
+            f"{len(encoder_hidden_states)} entries but num_frames is "
+            f"{num_frames}; prompt-travel conditioning needs exactly one "
+            f"embedding per frame"
+        )
+
+    def _enc_for(i):
+        return encoder_hidden_states[i] if _per_frame_text else encoder_hidden_states
 
     # ------------------------------------------------------------------ imports
     # Deferred inside the function body to avoid ImportError when ttnn is absent
@@ -390,7 +414,7 @@ def forward_unet_staged(
                 s, res_samples = down_block(
                     hidden_states=hs_in,
                     temb=emb,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=_enc_for(i),
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                     num_layers=layers_per_block,
@@ -475,7 +499,7 @@ def forward_unet_staged(
         s = ttnn_model.mid_block(
             hidden_states=hidden_samples[i],
             temb=emb,
-            encoder_hidden_states=encoder_hidden_states,
+            encoder_hidden_states=_enc_for(i),
             attention_mask=attention_mask,
             cross_attention_kwargs=cross_attention_kwargs,
             in_channels=block_out_channels[-1],
@@ -551,7 +575,7 @@ def forward_unet_staged(
                     hidden_states=hidden_samples[i],
                     temb=emb,
                     res_hidden_states_tuple=res_tuples[i],
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=_enc_for(i),
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,

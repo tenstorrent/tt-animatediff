@@ -1,0 +1,54 @@
+# Every line carries an UPPER bound, and that is not tidiness -- it is the lesson this
+# branch paid for four times over. The demo Space had unbounded pins and failed four
+# consecutive deploys on resolution alone: Python 3.13 dropping stdlib audioop,
+# huggingface_hub 1.0 removing HfFolder, pydantic 2.11 changing JSON-schema output, and
+# starlette 1.0 removing a TemplateResponse signature. Every one of those was a new major
+# arriving under an unbounded floor, and this is the file a CONSUMER pip-installs -- so
+# the same failure would land on their machine, with nothing in this repo having changed.
+#
+# The bounds stop at the next major. They prevent the catastrophic case; they do NOT claim
+# every version inside the range is verified. The model card records what actually was
+# (diffusers 0.39.0/0.40.0, transformers 4.x). Pinning to exactly the tested set is a lock
+# file's job, not a range's.
+# Runtime deps for the episod/tt-animatediff artifact.
+# ttnn / tt-metal are deliberately absent: they are not on PyPI and the CPU
+# path must install cleanly without them. See the model card for the TTNN path.
+#
+# gradio is deliberately NOT listed here either. The artifact bundles app.py
+# (the local Blackhole/CPU UI) verbatim as a usage example, and app.py does
+# `import gradio` — but making gradio a hard pipeline dependency would mean
+# nobody can `pip install` this artifact for the pipeline alone without also
+# installing gradio. If you want to run the bundled app.py, install it
+# yourself: `pip install gradio`.
+torch>=2.0.0,<3
+numpy>=1.24.0,<3
+#
+# Pillow's FLOOR is the security-relevant end here, and this line is a correction: the
+# first pass capped it `<12`, which resolved 11.3.0 and pinned 11 advisories in place
+# (8 HIGH, e.g. CVE-2026-59197 / CVE-2026-54058), all fixed in 12.2.0/12.3.0. Capping
+# below a published fix makes an unbounded floor WORSE, which is the same mistake as an
+# earlier `transformers<5` here. 12.3.0 requires Python >=3.10, which is exactly this
+# package's python_requires, and the image's lock already ships it alongside
+# diffusers 0.40.0 -- so the floor costs no compatibility.
+Pillow>=12.3.0,<13
+diffusers>=0.32.1,<0.41
+transformers>=4.30.0,<6
+#
+# accelerate carries an ACCEPTED, unpatched advisory (2026-09-08).
+# GHSA-4j2p-28q2-5m79 / CVE-2026-69112 (MEDIUM): path traversal and DoS via weight_map
+# entries in a sharded checkpoint. Vulnerable range is `<= 1.14.0` with no patched
+# version published, so there is nothing to bump to -- the dependency stays or it goes.
+#
+# Kept, deliberately. Nothing in this project imports accelerate; diffusers uses it for
+# low_cpu_mem_usage and degrades to False with a warning without it, which costs peak
+# memory at load rather than correctness -- on a 16 GB free-tier Space holding a ~7.8 GB
+# pipeline, that is a worse risk than this advisory. Exploiting it needs an
+# attacker-controlled checkpoint, and every load path here names a pinned upstream repo.
+#
+# REVISIT IF EITHER CHANGES: a patched accelerate is released (bump immediately), or any
+# load path starts accepting a caller-supplied checkpoint id -- the acceptance rests on
+# those ids being pinned, not on the advisory being harmless.
+accelerate>=0.20.0,<2
+huggingface_hub>=0.20.0,<2
+safetensors>=0.4.0,<1
+tqdm>=4.65.0,<5

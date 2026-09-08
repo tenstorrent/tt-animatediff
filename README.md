@@ -11,7 +11,7 @@ the Blackhole denoising loop — no distillation required, weights loaded straig
 
 ## Gallery
 
-### Blackhole (P300C) — 8 frames × 25 steps, ~15 s/frame
+### Blackhole (P300C) — 8 frames × 25 steps, ~1.94 s/frame
 
 | *"World of Tomorrow"* | *"Phosphor Horizon"* | *"Mayan Temple"* |
 |---|---|---|
@@ -45,7 +45,7 @@ hf download guoyww/animatediff-motion-adapter-v1-5-2
 # CPU — any machine, no hardware required
 python examples/generate.py --mode cpu --prompt "ocean waves at sunset, cinematic"
 
-# Blackhole hardware (default, ~15 s/frame)
+# Blackhole hardware (default, ~1.94 s/frame at 25 steps)
 source ~/tt-metal/python_env/bin/activate
 python examples/generate.py --prompt "aurora borealis over a frozen lake, cinematic 4K"
 
@@ -92,6 +92,35 @@ of ≤10 steps, every 2nd step otherwise; the final step always emits).
 - It is a **latent proxy**, not a decoded frame — early steps genuinely look
   like noise, and structure separates out partway through.
 - Works in every mode — `blackhole`, `cpu` and `sim`.
+
+---
+
+## Hugging Face
+
+The pipeline is published as a weights-free diffusers custom pipeline:
+
+```python
+from diffusers import DiffusionPipeline
+
+pipe = DiffusionPipeline.from_pretrained(
+    "episod/tt-animatediff",
+    custom_pipeline="episod/tt-animatediff",
+    trust_remote_code=True,
+)
+frames = pipe("a swirling nebula, teal and gold").frames
+print(pipe.resolved_mode)  # "blackhole" or "cpu"
+```
+
+- Model repo: [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
+  — no weights; SD 1.4 and the MotionAdapter are resolved from upstream at generation time.
+- Demo Space: [`episod/tt-animatediff-demo`](https://huggingface.co/spaces/episod/tt-animatediff-demo)
+  — capped CPU-Lightning reference (4 frames, 2 or 4 steps, 512×512). Not representative
+  of Blackhole performance; a 4-frame run takes several minutes on free-tier CPU.
+
+Rebuild and republish with `scripts/build_hf_artifact.py` (model artifact),
+`scripts/build_space_artifact.py` (Space bundle) and
+`scripts/publish_to_hub.py`; the Hub copy is generated from this checkout, never edited
+on the Hub.
 
 ---
 
@@ -174,14 +203,59 @@ file or add a setup script to download it at startup.
 
 ---
 
+## Python API
+
+The `animatediff_ttnn` package is importable as a Python library. The high-level
+`generate_animation()` entry point manages device lifetime, mode selection, and the
+CPU pipeline cache internally — no setup required.
+
+```python
+from animatediff_ttnn import generate_animation, export_mp4, export_gif
+
+# Auto mode: picks Blackhole if tt-metal is importable, CPU otherwise
+frames = generate_animation(
+    prompt="swirling nebula, teal and gold, cinematic",
+    num_frames=8,
+    num_steps=25,
+    seed=42,
+)
+export_mp4(frames, "output.mp4", fps=8)
+export_gif(frames, "output.gif")
+```
+
+**Key parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `prompt` | (required) | Text description of the animation |
+| `negative_prompt` | `""` | Features to suppress |
+| `num_frames` | `8` | Frame count |
+| `num_steps` | `25` | Denoising steps (use `4` for sim preview) |
+| `guidance_scale` | `7.5` | CFG scale — use `1.0` with CPU Lightning |
+| `seed` | `42` | Random seed |
+| `temporal_alpha` | `0.35` | Cross-frame attention blend (Blackhole/sim only, 0–1) |
+| `mode` | `"auto"` | `"auto"` · `"blackhole"` · `"sim"` · `"cpu"` |
+| `use_lightning` | `False` | Euler scheduler instead of PNDM |
+| `lightning_steps` | `4` | CPU Lightning checkpoint step count (2, 4, or 8) |
+| `chain_from` | `None` | Path to `.pt` latent file from a previous run for visual continuity |
+| `chain_save` | `None` | Save this run's final latents for use as `chain_from` next time |
+| `chain_alpha` | `0.6` | Blend weight for `chain_from` latents |
+| `on_step` | `None` | Callback `(step_idx, num_steps, frame_latents)` per denoising step — Blackhole/sim only |
+
+Returns `list[PIL.Image]`, one per frame. See the
+[full Python API reference](https://tenstorrent.github.io/tt-animatediff/usage.html#api)
+for all parameters and usage examples.
+
+---
+
 ## Modes Reference
 
 | Mode | Hardware | Speed (8 fr, 512²) | Temporal attention |
 |---|---|---|---|
 | `cpu` | None | ~2 min/frame | Full AnimateDiff MotionAdapter ✓ |
 | `cpu --lightning` | None | ~20 s/frame | Full AnimateDiff MotionAdapter ✓ |
-| `blackhole` | Blackhole P300C | **~12.5 s/frame** (25 steps, PNDM) | Cross-frame blend (temporal-alpha) |
-| `blackhole --lightning` | Blackhole P300C | **~12.0 s/frame** (8-step Euler, CFG=7.5) | Cross-frame blend (temporal-alpha) |
+| `blackhole` | Blackhole P300C | **~1.94 s/frame** (25 steps) · **~0.82 s/frame** (8 steps) | Cross-frame blend (temporal-alpha) |
+| `blackhole --lightning` | Blackhole P300C | not re-measured since the 2026-09-07 pass | Cross-frame blend (temporal-alpha) |
 | `blackhole --motion-adapter` | Blackhole P300C | **~52 s/frame** (7 injection pts, batched D→H) | Full MotionAdapter Phase 3 ✓ |
 | `blackhole --motion-adapter --motion-adapter-skip up1 up2` | Blackhole P300C | **~7.7 s/frame** (5 injection pts) | Full MotionAdapter Phase 3 ✓ |
 | `sim` | None (ttsim) | ~10–100× slower than silicon | Cross-frame blend (temporal-alpha) |
@@ -388,7 +462,7 @@ flowchart TD
     LOOP --> BH_UNET["TTNN UNet2D — SD 1.4\nBlackhole P300C · ~0.5 s/call"]
     BH_UNET --> PHASE{"--motion-adapter?"}
 
-    PHASE -->|no — Phase 2.5\n~12.5 s/frame| CFA["cross_frame_attention\nnoise blend α=0.35 — CPU"]
+    PHASE -->|no — Phase 2.5\n~1.94 s/frame| CFA["cross_frame_attention\nnoise blend α=0.35 — CPU"]
     PHASE -->|yes — Phase 3| SKIP{"--motion-adapter-skip?"}
 
     SKIP -->|no — full\n~52 s/frame| MA_FULL["7 × AnimateDiffTransformer3D\nbatched D→H transfer\nCPU · ~4 s each"]
@@ -451,6 +525,31 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.11.0 — unreleased
+- **Servable by tt-model-manager** — new `animatediff_ttnn/server/app.py` (FastAPI/uvicorn)
+  and a `tt_model_package.yaml` manifest for the `tt-dit-server` kind. `POST
+  /v1/videos/generations` mirrors tt-media-server's shape, plus `GET /v1/models` and two
+  probes whose names invert their jobs: `/health` is **readiness** (503 until the model is
+  warm) and `/tt-liveness` is **liveness** (200 while warming, and lock-free so it still
+  answers mid-generation). The device opens and the model warms in the ASGI lifespan,
+  because that is what the supervisor's readiness signal actually waits for.
+- **Installable from the Hugging Face Hub** — [`episod/tt-animatediff`](https://huggingface.co/episod/tt-animatediff)
+  is a weights-free diffusers custom pipeline, built by `scripts/build_hf_artifact.py` and
+  uploaded by `scripts/publish_to_hub.py`. `DiffusionPipeline.from_pretrained(...,
+  trust_remote_code=True)` gets `generate_animation()` with mode resolution and the
+  Lightning/motion-adapter wiring.
+- **`generate_animation()` and a device session** — a top-level callable plus
+  `animatediff_ttnn/session.py`, which holds the open device and compiled weights for the
+  process so repeated calls do not pay the UNet compile again.
+- **Prompt travel** — scheduled and interpolated per-frame conditioning, wired through
+  `examples/generate.py` and `forward_unet_staged()`.
+- **Serving benchmarks** — `docs/measurements/serving-benchmark.json`: latency fits
+  `2.84 s + 0.571 s/step` at 8 frames (residuals ≤ 0.04 s), linear in frames, and three
+  concurrent requests take 1.016× serial, so the device lock holds.
+- **188 new CPU-only tests** across 14 files, no card and no tt-metal required, plus a CI
+  serving-contract job that asserts the manifest and the app agree and that the server
+  module imports with no ttnn.
+
 ### v0.10.0 — 2026-08-26
 - **Per-step latent previews from the CLI runner** — `examples/generate.py` gains
   `--preview-path` / `--preview-every`, streaming a rolling preview GIF during generation in
@@ -473,6 +572,9 @@ application plugin, or Python library — see
 - **`--motion-adapter-skip up1 up2` fast path** — skipping the two costliest decoder injection
   points (up1 32×32 C=1280, up2 64×64 C=640) drops wall-clock from ~52 s/frame to **~7.7 s/frame**,
   a 6.75× speedup over full Phase 3 and faster than Phase 2.5 (12.5 s/frame). Measured on QB2.
+  (Phase 2.5 was re-measured at **~1.94 s/frame** on 2026-09-07 — see Modes Reference — so
+  that last comparison no longer holds. The Phase 3 figures here have not been re-measured;
+  the numbers in this entry are what was true when it was written.)
   Lightning + MotionAdapter tested and confirmed no benefit (~50.6 s/frame, ≈ same as 25-step
   PNDM) — CPU bridge calls per step dominate, not step count.
 - **Maya glyph Q3/Q4 tiers** — `generate_mayan_glyphs.py` adds Q3 (full MotionAdapter) and Q4

@@ -8,8 +8,15 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Test (py${{ matrix.python }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor declared in setup.py's python_requires; 3.12 is what the
+        # development boxes actually run. Testing only the floor let a 3.12-only failure
+        # reach a developer's machine before CI ever saw it.
+        python: ["3.10", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -17,10 +24,52 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # [serve] carries fastapi/uvicorn/pydantic for animatediff_ttnn/server, and [dev]
+        # now carries httpx, which fastapi's TestClient needs. Without them the server
+        # tests fail at IMPORT rather than skipping -- correct for a dependency the suite
+        # genuinely needs, but only if this step installs it.
+        run: pip install -e ".[dev,serve]"
 
       - name: Run CPU/mock tests
-        run: pytest tests/ -v
+        # -rs prints the reason for every skip, so a green run is auditable rather than a
+        # number to scroll past.
+        run: pytest tests/ -v -rs
+
+
+  serve-contract:
+    name: Serving contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,serve]" pyyaml
+
+      - name: The manifest and the ASGI app must agree
+        # These are the couplings that fail LATE and quietly otherwise: a runtime.app
+        # that does not resolve is an image-build error, and a mesh_shape_env that no
+        # longer matches the name the server reads means the server silently falls back
+        # to one chip and returns frames converted against the wrong mesh, with no error
+        # anywhere. Both are cheap to check here and expensive to find on hardware.
+        run: pytest tests/test_server_app.py -v -rs
+
+      - name: The ASGI module must import with no hardware
+        # tt-model-manager's tt-dit-server kind imports the ASGI attribute at IMAGE BUILD
+        # time, on a machine with no card, to prove the code allowlist shipped the server.
+        # A stray module-scope `import ttnn` turns that into a build failure. This runner
+        # has no tt-metal, so it is the honest place to assert it.
+        run: |
+          python - <<'PY'
+          import sys
+          import animatediff_ttnn.server.app as m
+          bad = sorted(x for x in sys.modules if x == "ttnn" or x.startswith("ttnn."))
+          assert not bad, f"importing the server pulled in: {bad}"
+          assert callable(m.app), "runtime.app must name a callable ASGI application"
+          print("ASGI app imports cleanly with no ttnn:", m.app)
+          PY

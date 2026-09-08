@@ -141,19 +141,21 @@ def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
       out[s] = attn @ v[s]               [n_tiles, c_tiles] tile-grid
 
     Stable softmax pattern:
-      1. row_max  = reduce_max(scores, scaler, dims=[1])      → (n_tiles, 1)
-      2. max_bcast= broadcast(row_max, output_hint=scores, dims=[1]) → (n_tiles, n_tiles)
+      1. row_max  = reduce_max(scores, dims=[1], shape=(n_tiles, 1)) → (n_tiles, 1)
+      2. max_bcast= broadcast(row_max, dims=[1], shape=(n_tiles, n_tiles))
       3. exp_s    = exp(scores - max_bcast)                   → (n_tiles, n_tiles)
-      4. row_sum  = reduce_sum(exp_s, scaler, dims=[1])       → (n_tiles, 1)
-      5. sum_bcast= broadcast(row_sum, output_hint=exp_s, dims=[1]) → (n_tiles, n_tiles)
+      4. row_sum  = reduce_sum(exp_s, dims=[1], shape=(n_tiles, 1))  → (n_tiles, 1)
+      5. sum_bcast= broadcast(row_sum, dims=[1], shape=(n_tiles, n_tiles))
       6. attn     = exp_s * recip(sum_bcast)                  → (n_tiles, n_tiles)
 
     K transpose is handled by re-ordering the tile list and transposing each
     tile's backing data.  Tile (r, c) of k becomes tile (c, r) of k^T with
     transposed data, giving the correct (c_tiles, n_tiles) block.
 
-    The scaler block is a single (1, 1) tile of 1.0s, required by reduce_max
-    and reduce_sum — it acts as a multiplicative identity (scale factor = 1).
+    tt-lang's sim.math.reduce_max / reduce_sum take (block, dims, shape) and no
+    longer accept a scaler operand; an explicit result grid `shape` is required
+    instead, and callers scale by multiplying the result. The old one-tile block
+    of 1.0s that acted as a multiplicative identity is therefore gone.
 
     Args:
         q_t, k_t, v_t: Float32 tensors [s_rows*n_tiles*32, c_tiles*32]
@@ -175,6 +177,7 @@ def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
     from sim.dfb import Block
     from sim.ttnnsim import Tensor
     import sim.math as ttl_math
+    import sim.block as ttl_block
     from animatediff_ttnn.ttlang.sim_helpers import tensor_to_block, block_to_tensor
 
     # Scale factor: 1 / sqrt(C) where C = c_tiles * 32.
@@ -188,11 +191,6 @@ def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
     q_blk = tensor_to_block(q_t.float(), shape=(sn_tiles, c_tiles))
     k_blk = tensor_to_block(k_t.float(), shape=(sn_tiles, c_tiles))
     v_blk = tensor_to_block(v_t.float(), shape=(sn_tiles, c_tiles))
-
-    # One-tile scaler block of all 1.0s: required by reduce_max / reduce_sum.
-    # Shape (1, 1) in the tile grid — a single 32×32 tile filled with ones.
-    scaler_tile = Tensor(torch.ones(32, 32, dtype=torch.float32))
-    scaler_blk = Block.from_list([scaler_tile], shape=(1, 1))
 
     out_tiles = []  # accumulates (n_tiles, c_tiles) output tiles per spatial row
 
@@ -245,10 +243,10 @@ def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
         # --- Stage 2: Stable row-wise softmax ---------------------------------
         # Step 2a: per-row max — reduce along cols (dim 1).
         # reduce_max(shape (n_tiles, n_tiles), dims=[1]) → (n_tiles, 1).
-        row_max = ttl_math.reduce_max(scores, scaler_blk, dims=[1])
+        row_max = ttl_math.reduce_max(scores, dims=[1], shape=(n_tiles, 1))
 
         # Step 2b: broadcast (n_tiles, 1) → (n_tiles, n_tiles) along cols.
-        bcast_max = ttl_math.broadcast(row_max, output_hint=scores, dims=[1])
+        bcast_max = ttl_block.broadcast(row_max, dims=[1], shape=(n_tiles, n_tiles))
 
         # Step 2c: shift by max and exponentiate (two copies for sum + normalise).
         shifted = scores - bcast_max
@@ -257,10 +255,10 @@ def _sdpa_kernel_sim(q_t, k_t, v_t, s_rows, n_tiles, c_tiles):
 
         # Step 2d: per-row sum — reduce along cols.
         # reduce_sum(shape (n_tiles, n_tiles), dims=[1]) → (n_tiles, 1).
-        row_sum = ttl_math.reduce_sum(exp_s1, scaler_blk, dims=[1])
+        row_sum = ttl_math.reduce_sum(exp_s1, dims=[1], shape=(n_tiles, 1))
 
         # Step 2e: broadcast (n_tiles, 1) → (n_tiles, n_tiles) along cols.
-        bcast_sum = ttl_math.broadcast(row_sum, output_hint=exp_s2, dims=[1])
+        bcast_sum = ttl_block.broadcast(row_sum, dims=[1], shape=(n_tiles, n_tiles))
 
         # Step 2f: normalise — element-wise multiply by reciprocal of sum.
         # recip(bcast_sum) gives 1/sum; * exp_s2 gives the softmax weights.

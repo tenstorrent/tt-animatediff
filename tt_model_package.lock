@@ -1,0 +1,179 @@
+# Generated: uv pip compile, python 3.12 / x86_64-unknown-linux-gnu, with
+#   --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+# matching how the tt-dit-server kind installs it. Regenerate the same way; do not hand-edit.
+#
+# WHY A LOCK AND NOT JUST RANGES. With runtime.lock set, the kind's install step is ONLY
+# this file -- so it names the whole environment, including the fastapi/uvicorn/pydantic/
+# pillow stack the kind would otherwise add by default and the torch pin it would otherwise
+# inject from tt-metal. Measured reason it earns its place: resolving the manifest's ranges
+# alone pulls torch 2.14.0 (accelerate depends on torch and nothing bounds it) plus the
+# entire CUDA wheel set -- nvidia-*, triton, cuda-toolkit -- into a CPU-only serving image.
+# This lock pins torch==2.11.0+cpu, which is tt-metal v0.77.0's pin and exactly what the
+# kind's verify step asserts, and carries no CUDA wheels at all.
+#
+# NOT YET BUILT. No image has been built from this manifest, so the lock is verified only
+# as far as resolution: it compiles, and it pins the torch the verify step demands. The
+# first `tt-model package` run is what proves it installs.
+#
+# transformers==5.16.1 is what the ranges already resolve to, with or without this lock,
+# and the Blackhole serving path has NOT been exercised against transformers 5.x -- the
+# hardware serves in this branch all ran 4.52.4. The lock makes that visible and
+# reproducible rather than resolving differently on every build; it does not bless it.
+accelerate==1.14.0
+    # via -r lock.in
+annotated-doc==0.0.5
+    # via
+    #   fastapi
+    #   typer
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.15.1
+    # via
+    #   httpx
+    #   starlette
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+charset-normalizer==3.5.1
+    # via requests
+click==8.5.0
+    # via
+    #   huggingface-hub
+    #   uvicorn
+diffusers==0.40.0
+    # via -r lock.in
+fastapi==0.141.1
+    # via -r lock.in
+filelock==3.32.5
+    # via
+    #   diffusers
+    #   huggingface-hub
+    #   torch
+fsspec==2026.7.0
+    # via
+    #   huggingface-hub
+    #   torch
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+hf-xet==1.6.0
+    # via huggingface-hub
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via
+    #   diffusers
+    #   huggingface-hub
+huggingface-hub==1.30.0
+    # via
+    #   accelerate
+    #   diffusers
+    #   tokenizers
+    #   transformers
+idna==3.19
+    # via
+    #   anyio
+    #   httpx
+    #   requests
+importlib-metadata==9.0.1
+    # via diffusers
+jinja2==3.1.6
+    # via torch
+markdown-it-py==4.2.0
+    # via rich
+markupsafe==3.0.3
+    # via jinja2
+mdurl==0.1.2
+    # via markdown-it-py
+mpmath==1.3.0
+    # via sympy
+networkx==3.6.1
+    # via torch
+numpy==2.5.3
+    # via
+    #   accelerate
+    #   diffusers
+    #   transformers
+packaging==26.3
+    # via
+    #   accelerate
+    #   huggingface-hub
+    #   transformers
+pillow==12.3.0
+    # via
+    #   -r lock.in
+    #   diffusers
+psutil==7.2.2
+    # via accelerate
+pydantic==2.13.5
+    # via
+    #   -r lock.in
+    #   fastapi
+pydantic-core==2.46.5
+    # via pydantic
+pygments==2.21.0
+    # via rich
+pyyaml==6.0.3
+    # via
+    #   accelerate
+    #   huggingface-hub
+    #   transformers
+regex==2026.9.3
+    # via
+    #   diffusers
+    #   transformers
+requests==2.34.2
+    # via diffusers
+rich==15.0.0
+    # via typer
+safetensors==0.8.0
+    # via
+    #   -r lock.in
+    #   accelerate
+    #   diffusers
+    #   transformers
+setuptools==81.0.0
+    # via torch
+shellingham==1.5.4
+    # via typer
+starlette==1.6.0
+    # via fastapi
+sympy==1.14.0
+    # via torch
+tokenizers==0.23.2
+    # via transformers
+torch==2.11.0+cpu
+    # via
+    #   -r lock.in
+    #   accelerate
+tqdm==4.70.0
+    # via
+    #   huggingface-hub
+    #   transformers
+transformers==5.16.1
+    # via -r lock.in
+typer==0.27.2
+    # via transformers
+typing-extensions==4.16.0
+    # via
+    #   anyio
+    #   fastapi
+    #   huggingface-hub
+    #   pydantic
+    #   pydantic-core
+    #   starlette
+    #   torch
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   fastapi
+    #   pydantic
+urllib3==2.7.0
+    # via requests
+uvicorn==0.52.4
+    # via -r lock.in
+zipp==4.1.0
+    # via importlib-metadata

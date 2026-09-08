@@ -1,0 +1,88 @@
+{
+ "base_url": "http://127.0.0.1:8000",
+ "rows": [
+  {
+   "frames": 8,
+   "steps": 4,
+   "first_call_at_this_shape_s": 11.452,
+   "n": 3,
+   "median_s": 5.149,
+   "min_s": 4.975,
+   "max_s": 5.312,
+   "mean_s": 5.145,
+   "s_per_step_naive": 1.2873,
+   "frames_per_s": 1.554
+  },
+  {
+   "frames": 8,
+   "steps": 8,
+   "first_call_at_this_shape_s": 7.515,
+   "n": 3,
+   "median_s": 7.363,
+   "min_s": 7.245,
+   "max_s": 7.565,
+   "mean_s": 7.391,
+   "s_per_step_naive": 0.9204,
+   "frames_per_s": 1.087
+  },
+  {
+   "frames": 8,
+   "steps": 16,
+   "first_call_at_this_shape_s": 11.818,
+   "n": 3,
+   "median_s": 11.983,
+   "min_s": 11.722,
+   "max_s": 12.004,
+   "mean_s": 11.903,
+   "s_per_step_naive": 0.7489,
+   "frames_per_s": 0.668
+  },
+  {
+   "frames": 16,
+   "steps": 8,
+   "first_call_at_this_shape_s": 15.034,
+   "n": 3,
+   "median_s": 14.675,
+   "min_s": 14.56,
+   "max_s": 14.839,
+   "mean_s": 14.691,
+   "s_per_step_naive": 1.8344,
+   "frames_per_s": 1.09
+  }
+ ],
+ "concurrency": {
+  "n_concurrent": 3,
+  "single_request_s": 5.005,
+  "wall_clock_s": 15.251,
+  "ratio_to_serial": 1.016,
+  "reading": "serialised as designed"
+ },
+ "hardware": "1x Blackhole p300c chip (mesh 1x1), via gozer lease",
+ "model": "guoyww/animatediff (SD1.4 UNet + motion adapter), 512x512",
+ "fit": {
+  "form": "latency = fixed + slope * steps",
+  "frames": 8,
+  "fixed_s": 2.84,
+  "slope_s_per_step": 0.571,
+  "max_abs_residual_s": 0.04,
+  "note": "s_per_step_naive falls 1.287 -> 0.749 across the sweep only because it divides the fixed cost by the step count; the marginal cost is flat."
+ },
+ "frames_scaling": {
+  "8_frames_s": 7.36,
+  "16_frames_s": 14.68,
+  "ratio": 1.993,
+  "note": "linear in frames at fixed steps"
+ },
+ "cold_start": {
+  "process_first_call_s": 11.45,
+  "warm_median_s": 5.15,
+  "ratio": 2.22,
+  "note": "per-process, not per-shape: the first 8- and 16-step calls matched their warm medians at 1.02x and 0.99x."
+ },
+ "limitations": [
+  "One chip, one model, one host. Nothing here is a multi-chip number: the model is single-device (see tt_model_package.yaml).",
+  "n=3 warm repeats per point; median and full range are reported, never a bare mean.",
+  "Latency is end-to-end HTTP including base64 encoding of a ~2 MB GIF, not device time.",
+  "The step sweep fit is over three points. It is tight (residuals <= 0.04s) but three points cannot distinguish linear from very-nearly-linear."
+ ]
+}

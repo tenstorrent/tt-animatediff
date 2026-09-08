@@ -1,0 +1,5 @@
+name: animatediff
+description: AnimateDiff text-to-video generation demo (Blackhole hardware backend)
+port: 7860
+chips: 1
+launch: .venv/bin/python app.py

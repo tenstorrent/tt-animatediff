@@ -134,3 +134,133 @@ not using the SD demo UNet wrapper).
 ### LCM distillation (closed)
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
+
+## Accepted security finding: accelerate (2026-09-08)
+
+`Cycode: Vulnerable Dependencies` fails on PR #9 and **cannot be made green by a version
+bump**. GHSA-4j2p-28q2-5m79 / CVE-2026-69112 (MEDIUM, published 2026-08-10) covers
+`accelerate <= 1.14.0` — the whole release history — with `first_patched_version: null`.
+
+Accepted rather than fixed, on the user's call. The reasoning, so nobody re-litigates it
+from scratch:
+
+* Nothing here imports accelerate. diffusers uses it for `low_cpu_mem_usage` and falls
+  back to `False` with a warning when it is absent (`if low_cpu_mem_usage and not
+  is_accelerate_available()`), so removing it costs peak memory at load, not correctness.
+* That cost lands exactly where it hurts: the CPU pipeline is ~7.8 GB resident and the
+  free-tier Space has 16 GB, which has already OOMed once. Trading a MEDIUM for a
+  reintroduced OOM is the wrong direction.
+* Exploiting it needs an attacker-controlled **sharded checkpoint**; every load path in
+  this repo names a pinned upstream repo, and a caller who can redirect that is already
+  running `trust_remote_code=True`.
+
+Declared in four places, all equally exposed and none fixable by version:
+`hf/requirements.txt`, `spaces/requirements.txt`, `tt_model_package.yaml`, `setup.py`.
+The first two carry the rationale inline.
+
+**The acceptance is conditional.** Revisit if a patched accelerate ships (bump at once),
+or if any load path starts taking a caller-supplied checkpoint id — the argument rests on
+those ids being pinned, not on the advisory being harmless. There is no in-repo Cycode
+config and the bot offers no ignore command, so the suppression itself has to be recorded
+in the Cycode console by someone with access; the check stays red until it is.
+
+## Hugging Face publishing track (2026-08-19)
+
+`episod/tt-animatediff` is a **weights-free diffusers custom pipeline**; the Space
+`episod/tt-animatediff-demo` is a capped CPU-Lightning demo. Both are built from this
+checkout by `scripts/build_hf_artifact.py` and uploaded by `scripts/publish_to_hub.py`
+(private on create, `--yes` required to write, `--dry-run` inert, `--verify` read-only).
+Never hand-edit either repo on the Hub — the next build overwrites it.
+
+Spec: `docs/superpowers/specs/2026-08-19-hf-model-repo-design.md`.
+Plan: `docs/superpowers/plans/2026-08-19-hf-model-repo.md`.
+Release steps, including the one the tests cannot enforce (repinning
+`tt_model_package.yaml`'s `extra_code` ref to the new tag): `docs/RELEASING.md`.
+
+### Two diffusers traps that make `hf/pipeline.py` look wrong
+
+Both were measured, and both bite silently on the **older** supported diffusers:
+
+1. **Never write `import animatediff_ttnn` in `hf/pipeline.py`** — not even indented
+   inside a method. diffusers' `check_imports` regex-scans the file (`^\s*import`), and
+   on **0.32.1 it raises ImportError at load time** for any module not installed, so
+   every user without the package pip-installed would be unable to load the pipeline at
+   all. 0.39.0 only warns. Use `importlib.import_module(PACKAGE_NAME)`.
+   `tests/test_hf_pipeline.py::test_pipeline_py_never_imports_the_package_literally`
+   guards this.
+2. **`__init__` must take named parameters with defaults and no `**kwargs`.** diffusers
+   derives its expected-component list from the signature, so a `**kwargs`-only
+   `__init__` fails with `ValueError: Pipeline ... expected ['kwargs']`.
+
+Also measured: diffusers executes `pipeline.py` out of
+`~/.cache/huggingface/modules/diffusers_modules/`, so the vendored `animatediff_ttnn/`
+is **not** a sibling of `__file__`. `resolve_package()` finds it via
+`config._name_or_path`, falling back to `snapshot_download(code_repo,
+allow_patterns=["animatediff_ttnn/**"])` — which is why `code_repo` is in
+`model_index.json`.
+
+The Space upload is **staged**, not committed. `scripts/build_space_artifact.py` assembles `build/space/` from `spaces/` plus six gallery GIFs copied out of `docs/assets/` (see `GALLERY_SOURCES` there); `scripts/publish_to_hub.py --space` calls it and uploads the result. `spaces/gallery/` and `build/space/` are git-ignored. The GIFs total ~14 MB and already live in this repo, so committing copies into `spaces/gallery/` would have added them to git history permanently for no benefit. Consequence to remember: a file dropped into `spaces/` by hand reaches the Space, but a new gallery GIF does not unless it is added to `GALLERY_SOURCES`.
+
+**Visibility, and what actually blocks the Space (2026-09-04).** `episod/tt-animatediff` is
+now **public** — verified anonymously (`GET /api/models/...` and a `model_index.json` fetch with
+no token both 200). That closes the private-repo trap: a Space gets no implicit credential for a
+*private* model repo, so while it stayed private the Space would have built, reached "Running",
+and then 401'd on a visitor's first click (its `from_pretrained(MODEL_REPO, ...)` had nothing to
+authenticate with). If that repo is ever made private again, the Space needs an `HF_TOKEN`
+secret instead. Noted in `spaces/README.md` too.
+
+**The Space's dependency pins: four caps, then none (2026-09-07).** gradio was pinned at
+4.44.1, and four more pins existed only because a deploy had failed without them —
+`python_version: "3.12"` (3.13 dropped stdlib `audioop`, which gradio's pydub imports),
+`huggingface_hub<1` (gradio's own oauth.py imports `HfFolder`, removed in 1.0),
+`pydantic<2.11` (gradio-client 1.3.0's schema walker assumes `additionalProperties` is a
+dict) and `starlette<1` (gradio calls `TemplateResponse(name, context)` in the pre-0.29
+positional order). Each was real and measured.
+
+**They also froze the stack below its security floors, which is what killed them.** Cycode
+flagged starlette 0.52.1 (CVE-2026-54283, -48818 HIGH; -48710, -48817 MEDIUM) and
+transformers 4.57.6 (CVE-2026-9856, -5241, -4372 HIGH; -1839 MEDIUM), and **no version
+inside either cap is clean** — every fix ships in starlette 1.x and transformers 5.x. So
+the caps were buying gradio-4 compatibility with known vulnerabilities. Moving to
+**gradio 6.26.0** removed all four at once: it *requires* `starlette>=1.0.1` and
+`huggingface-hub>=1.16.0`, accepts `pydantic>=2.0`, and pulls `audioop-lts` on 3.13.
+`tests/test_build_space_artifact.py` now guards the opposite of what it used to — CVE
+floors (`starlette>=1.3.1`, `transformers>=5.10`) plus a test that fails if any of the
+four caps is reintroduced, because re-adding one is the obvious wrong fix for the next
+gradio breakage.
+
+**Two failure modes to remember from the gradio-4 era**, because they generalise: the
+pydantic and starlette breakages both presented as a **RUNNING Space serving nothing** —
+the crash was per request inside gradio's own route, not at startup. "stage: RUNNING" is
+never evidence a Space works.
+
+**And the check has to be the right one.** `import app.py`, `demo.get_api_info()` and a
+`GET /config` all passed while starlette 1.x was breaking every page load, because none of
+them renders a template. Verify a change to `spaces/requirements.txt` by installing it in
+a clean venv, LAUNCHING `build/space/app.py`, fetching **`/`**, and running one real
+generation — the page and the generate path fail independently. Then fetch `/`
+anonymously after deploying.
+
+**The CPU pipeline cache is bounded, and that is a memory limit not a style choice.**
+`animatediff_ttnn._cpu_pipe_cache` is keyed on `(use_lightning, lightning_steps)` — a
+value chosen from the Space's dropdown — and used to never evict, so a visitor who tried
+both step counts left two pipelines resident and OOMed the 16 GB box. Measured with no
+mocks: cap=1 gives 7.77 GB resident / 10.98 GB peak; cap=2 gives 14.37 GB / 17.58 GB.
+`ANIMATEDIFF_CPU_PIPE_CACHE` raises it where there is memory to spare. Eviction happens
+*before* the replacement is built, and a test asserts that ordering from inside the
+builder — evicting afterwards still satisfies "the cache holds one" and still dies at the
+peak.
+
+**When measuring that, do not use `unittest.mock.patch` for the stub.** It records
+`call_args_list`, which holds a reference to every argument including the pipeline. Two
+runs reported the fix as not working and one reported a reference leak; all three were the
+probe measuring itself. A plain stub function gave the true answer, and `malloc_trim(0)`
+confirmed there was no allocator-retention problem to solve.
+
+**The Space is published and public** (`episod/tt-animatediff-demo`, 2026-09-04). It got there
+only after PRO was enabled on the account: `create_repo(repo_type="space")` had been returning
+**402 Payment Required** — "Static Spaces are free for everyone, but hosting Gradio and Docker
+Spaces on free cpu-basic requires a PRO subscription". Keep that mapping in mind, because the
+402 arrives from `create_repo` and reads like a script bug: if `whoami()["isPro"]` is False,
+`publish_to_hub.py --space --yes` cannot succeed, and the alternatives are an org with the
+entitlement or a **static** gallery-only Space (which is not the demo this repo built).
