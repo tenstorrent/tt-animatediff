@@ -135,6 +135,35 @@ not using the SD demo UNet wrapper).
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
 
+## Accepted security finding: accelerate (2026-09-08)
+
+`Cycode: Vulnerable Dependencies` fails on PR #9 and **cannot be made green by a version
+bump**. GHSA-4j2p-28q2-5m79 / CVE-2026-69112 (MEDIUM, published 2026-08-10) covers
+`accelerate <= 1.14.0` — the whole release history — with `first_patched_version: null`.
+
+Accepted rather than fixed, on the user's call. The reasoning, so nobody re-litigates it
+from scratch:
+
+* Nothing here imports accelerate. diffusers uses it for `low_cpu_mem_usage` and falls
+  back to `False` with a warning when it is absent (`if low_cpu_mem_usage and not
+  is_accelerate_available()`), so removing it costs peak memory at load, not correctness.
+* That cost lands exactly where it hurts: the CPU pipeline is ~7.8 GB resident and the
+  free-tier Space has 16 GB, which has already OOMed once. Trading a MEDIUM for a
+  reintroduced OOM is the wrong direction.
+* Exploiting it needs an attacker-controlled **sharded checkpoint**; every load path in
+  this repo names a pinned upstream repo, and a caller who can redirect that is already
+  running `trust_remote_code=True`.
+
+Declared in four places, all equally exposed and none fixable by version:
+`hf/requirements.txt`, `spaces/requirements.txt`, `tt_model_package.yaml`, `setup.py`.
+The first two carry the rationale inline.
+
+**The acceptance is conditional.** Revisit if a patched accelerate ships (bump at once),
+or if any load path starts taking a caller-supplied checkpoint id — the argument rests on
+those ids being pinned, not on the advisory being harmless. There is no in-repo Cycode
+config and the bot offers no ignore command, so the suppression itself has to be recorded
+in the Cycode console by someone with access; the check stays red until it is.
+
 ## Hugging Face publishing track (2026-08-19)
 
 `episod/tt-animatediff` is a **weights-free diffusers custom pipeline**; the Space
