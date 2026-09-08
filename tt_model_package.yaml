@@ -77,11 +77,24 @@ runtime:
   mesh_shape_env: ANIMATEDIFF_MESH_SHAPE
   # Beyond the kind's own fastapi/uvicorn/pydantic/pillow. torch comes from the image's
   # CPU build (the kind's verify step asserts +cpu and tt-metal's pin), so it is not listed.
+  # The lock IS the dependency set when present -- nothing resolves at build time, so two
+  # builds a week apart produce the same environment. Kept alongside the ranges below
+  # rather than replacing them: the ranges document intent and are what a human reads,
+  # the lock is what the image installs, and `packages` is still what gets re-resolved if
+  # the lock is ever regenerated.
+  lock: tt_model_package.lock
+  # Upper bounds for the same reason hf/requirements.txt has them: unbounded floors are
+  # what broke the demo Space four deploys running, each time on a new major arriving
+  # under a `>=`. In a container the failure is worse than on a Space, because it is
+  # DELAYED and lands elsewhere: the image builds fine, the kind's verify step passes (it
+  # imports the ASGI module, which defers every model import), and it fails in the
+  # lifespan on a consumer's box weeks later. Capping at the next major is the floor of
+  # what this needs; requirements.lock is the ceiling (see runtime.lock below).
   packages:
-    - diffusers>=0.32.1
-    - transformers>=4.30.0
-    - accelerate>=0.20.0
-    - safetensors
+    - diffusers>=0.32.1,<0.41
+    - transformers>=4.30.0,<6
+    - accelerate>=0.20.0,<2
+    - safetensors>=0.4.0,<1
 
 serve:
   # ONE chip, and that is the model's limit rather than a conservative default.

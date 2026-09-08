@@ -580,3 +580,68 @@ def test_the_lifespan_warms_the_text_encoder_too():
         "under the device lock after /health has already returned 200"
     )
     assert device == "dev" and models == ("unet", "vae", "cfg", "proj")
+
+
+# ---- the image's dependency set ------------------------------------------------------
+
+
+def _lock_pins() -> dict:
+    """The lock's `name==version` pins, ignoring uv's `# via` annotations."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    name = _manifest()["runtime"]["lock"]
+    pins = {}
+    for line in (root / name).read_text().splitlines():
+        s = line.strip()
+        if s and not s.startswith("#") and "==" in s:
+            pkg, _, ver = s.partition("==")
+            pins[pkg.strip().lower().replace("_", "-")] = ver.strip()
+    return pins
+
+
+def test_the_manifests_lock_exists_and_is_the_one_it_names():
+    """`stage()` copies `manifest_path.parent / runtime.lock`, and RAISES if it is absent
+    -- so a renamed or deleted lock is a failed package run, not a fallback to ranges."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    name = _manifest()["runtime"]["lock"]
+    assert (root / name).is_file(), f"runtime.lock names {name}, which does not exist"
+    assert _lock_pins(), f"{name} contains no pins"
+
+
+def test_the_lock_pins_the_torch_the_image_verifies():
+    """The kind injects tt-metal's torch pin ONLY when there is no lock; with one, the
+    lock is the whole install. Its verify step then asserts torch is exactly tt-metal's
+    version and a +cpu build, so getting this wrong fails the image build."""
+    torch = _lock_pins().get("torch")
+    assert torch, "the lock does not pin torch at all; the kind will not inject it either"
+    assert torch.endswith("+cpu"), f"torch=={torch} is not a CPU build"
+    assert torch.split("+")[0] == "2.11.0", (
+        f"torch=={torch} but tt-metal v0.77.0 (source.tt_metal.ref) pins 2.11.0, which is "
+        "what the kind's verify step asserts"
+    )
+
+
+def test_the_lock_carries_no_cuda_wheels():
+    """This is a CPU-only serving image; the accelerators are Tenstorrent.
+
+    Measured reason this is a test and not a preference: resolving the manifest's ranges
+    WITHOUT the lock pulls torch 2.14.0 (accelerate depends on torch and nothing bounds
+    it) and 19 CUDA/NVIDIA wheels -- gigabytes of CUDA runtime in an image that will never
+    see an NVIDIA device. Compiling against the PyTorch CPU index is what avoids it.
+    """
+    cuda = sorted(p for p in _lock_pins()
+                  if p.startswith(("nvidia-", "cuda-")) or p == "triton")
+    assert not cuda, f"CUDA wheels in a CPU-only image: {cuda}"
+
+
+def test_the_lock_covers_the_http_stack_the_kind_would_otherwise_add():
+    """With runtime.lock set, the kind's DEFAULT_PACKAGES are never installed -- so
+    anything the server imports has to be in the lock. A missing fastapi is an image that
+    builds and then cannot import its own ASGI app."""
+    pins = _lock_pins()
+    for required in ("fastapi", "uvicorn", "pydantic", "pillow",
+                     "diffusers", "transformers", "safetensors"):
+        assert required in pins, f"{required} is not pinned in the lock"

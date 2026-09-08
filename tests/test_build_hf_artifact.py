@@ -157,3 +157,48 @@ def test_the_model_card_version_matches_VERSION():
         f"model card says {sorted(set(found))} but VERSION is {version!r} -- the published "
         "artifact would carry both"
     )
+
+
+def _requirement_lines(path):
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    return [ln.strip() for ln in (root / path).read_text().splitlines()
+            if ln.strip() and not ln.strip().startswith("#")]
+
+
+def test_every_consumer_facing_requirement_has_an_upper_bound():
+    """The lesson this branch paid for four times, as a guard.
+
+    hf/requirements.txt is what a CONSUMER pip-installs. The demo Space had unbounded
+    floors and failed four consecutive deploys on resolution alone -- Python 3.13 dropping
+    stdlib audioop, huggingface_hub 1.0 removing HfFolder, pydantic 2.11 changing
+    JSON-schema output, starlette 1.0 removing a TemplateResponse signature. Each was a
+    new major arriving under a `>=`, and on a consumer's machine the same break happens
+    with nothing in this repo having changed.
+
+    An upper bound is not a claim that every version in the range is verified; it is a
+    claim that a future major cannot silently arrive. Pinning the tested set is what
+    requirements.lock is for.
+    """
+    missing = [ln for ln in _requirement_lines("hf/requirements.txt")
+               if "<" not in ln and "==" not in ln]
+    assert not missing, f"unbounded requirement(s) a consumer would install: {missing}"
+
+
+def test_the_container_manifest_packages_have_upper_bounds_too():
+    """Same rule for the image, where the failure is delayed and lands further away.
+
+    The image builds, the kind's verify step passes -- it imports the ASGI module, which
+    defers every model import -- and an incompatible major surfaces in the lifespan on a
+    consumer's box.
+    """
+    import yaml
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load((root / "tt_model_package.yaml").read_text())
+    packages = [str(p) for p in manifest["runtime"].get("packages") or []]
+    assert packages, "the manifest declares no runtime packages; this guard needs updating"
+    missing = [p for p in packages if "<" not in p and "==" not in p]
+    assert not missing, f"unbounded package(s) in the image: {missing}"
