@@ -22,7 +22,15 @@
 # yourself: `pip install gradio`.
 torch>=2.0.0,<3
 numpy>=1.24.0,<3
-Pillow>=9.0.0,<12
+#
+# Pillow's FLOOR is the security-relevant end here, and this line is a correction: the
+# first pass capped it `<12`, which resolved 11.3.0 and pinned 11 advisories in place
+# (8 HIGH, e.g. CVE-2026-59197 / CVE-2026-54058), all fixed in 12.2.0/12.3.0. Capping
+# below a published fix makes an unbounded floor WORSE, which is the same mistake as an
+# earlier `transformers<5` here. 12.3.0 requires Python >=3.10, which is exactly this
+# package's python_requires, and the image's lock already ships it alongside
+# diffusers 0.40.0 -- so the floor costs no compatibility.
+Pillow>=12.3.0,<13
 diffusers>=0.32.1,<0.41
 transformers>=4.30.0,<6
 #

@@ -202,3 +202,42 @@ def test_the_container_manifest_packages_have_upper_bounds_too():
     assert packages, "the manifest declares no runtime packages; this guard needs updating"
     missing = [p for p in packages if "<" not in p and "==" not in p]
     assert not missing, f"unbounded package(s) in the image: {missing}"
+
+
+def test_no_consumer_range_excludes_the_version_the_image_ships():
+    """An upper bound must not sit below what we actually ship and test.
+
+    This is the mistake that produced the guard. The first bounding pass wrote
+    `Pillow>=9.0.0,<12`, which resolves 11.3.0 -- and 11.3.0 carries 11 advisories,
+    8 of them HIGH, all fixed in 12.2.0/12.3.0. So the "safety" bound pinned the
+    vulnerable version in place, making an unbounded floor strictly worse. The same
+    shape as an earlier `transformers<5` in this repo: capping below a published fix.
+
+    The image's lock is the reference because it is the set that is actually resolved,
+    installed and (eventually) served. Comparing against it needs no network, so this
+    works in CI, unlike asking PyPI what the latest release is.
+    """
+    from pathlib import Path
+
+    from packaging.requirements import Requirement
+
+    root = Path(__file__).resolve().parents[1]
+    lock = {}
+    for line in (root / "tt_model_package.lock").read_text().splitlines():
+        s = line.strip()
+        if s and not s.startswith("#") and "==" in s:
+            name, _, ver = s.partition("==")
+            lock[name.strip().lower().replace("_", "-")] = ver.strip()
+    assert lock, "the lock parsed empty; this guard would pass vacuously"
+
+    excluded = []
+    for line in _requirement_lines("hf/requirements.txt"):
+        req = Requirement(line)
+        shipped = lock.get(req.name.lower().replace("_", "-"))
+        if shipped and not req.specifier.contains(shipped.split("+")[0], prereleases=True):
+            excluded.append((line, shipped))
+
+    assert not excluded, (
+        "consumer range(s) exclude the version the image ships, so a consumer installs "
+        f"something we never test -- and possibly something we already patched past: {excluded}"
+    )
