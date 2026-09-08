@@ -62,7 +62,7 @@ source:
         # so it is the safer placeholder in the meantime. test_server_app.py's
         # ..._ships_the_package_we_are_developing compares the two trees and fails when they
         # diverge (it skips on a shallow clone, so run the suite locally after repinning).
-        ref: 0d9ecfd3631e49ec003824cc5ffcd988fca68cac
+        ref: d89a90c10ad62927d662e680132682cd4dabc739
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
