@@ -94,6 +94,47 @@ _cpu_pipe_cache: dict = {}
 _cpu_cache_lock = threading.Lock()
 
 
+def cpu_pipeline(*, use_lightning: bool = False, lightning_steps: int = 4):
+    """Return a CPU pipeline from the bounded, locked cache, building it if needed.
+
+    THE only place a CPU pipeline is constructed. It is public because app.py needs the
+    pipeline object itself -- it drives `pipeline.generate(pipe, ..., on_step=...)` for
+    the UI's per-step previews, so it cannot go through generate_animation() -- and it
+    used to keep its own unbounded dict instead. Six keys of ~7.8 GB each is how the local
+    UI OOMed a 16 GB box, which is the same failure this cache was added to fix for the
+    Space. One cache, one bound, one lock.
+
+    The key ignores lightning_steps when use_lightning is False, because a non-Lightning
+    pipeline does not depend on it: keying on it made (False, 2), (False, 4) and (False, 8)
+    three separate keys for three identical pipelines, so a caller toggling step counts
+    paid a ~60 s rebuild (or, in app.py's unbounded copy, held three at once).
+    """
+    from .pipeline import create_animatediff_pipeline, create_lightning_pipeline
+
+    key = (True, lightning_steps) if use_lightning else (False, None)
+    with _cpu_cache_lock:
+        pipe = _cpu_pipe_cache.get(key)
+        if pipe is None:
+            # Evict BEFORE building, not after. Freeing afterwards would hold both
+            # pipelines at once, which is the 17.8 GB peak that kills a 16 GB box —
+            # the exact thing the bound exists to prevent.
+            #
+            # Building under the lock is deliberate for the same reason, and reverses an
+            # earlier choice to build outside it: letting two threads build different
+            # keys concurrently avoided serialising them, and put two pipelines in memory
+            # to do it. On the machines this path is for, serialising is the cheaper side.
+            while len(_cpu_pipe_cache) >= _cpu_pipe_cache_max():
+                del _cpu_pipe_cache[next(iter(_cpu_pipe_cache))]
+                gc.collect()
+            pipe = (
+                create_lightning_pipeline(step=lightning_steps)
+                if use_lightning
+                else create_animatediff_pipeline()
+            )
+            _cpu_pipe_cache[key] = pipe
+    return pipe
+
+
 def generate_animation(
     prompt: str,
     negative_prompt: str = "",
@@ -333,29 +374,9 @@ def _generate_cpu(
     use_lightning: bool,
     lightning_steps: int,
 ) -> List:
-    from .pipeline import create_animatediff_pipeline, create_lightning_pipeline, generate as _gen
+    from .pipeline import generate as _gen
 
-    key = (use_lightning, lightning_steps)
-    with _cpu_cache_lock:
-        pipe = _cpu_pipe_cache.get(key)
-        if pipe is None:
-            # Evict BEFORE building, not after. Freeing afterwards would hold both
-            # pipelines at once, which is the 17.8 GB peak that kills a 16 GB box —
-            # the exact thing the bound exists to prevent.
-            #
-            # Building under the lock is deliberate for the same reason, and reverses an
-            # earlier choice to build outside it: letting two threads build different
-            # keys concurrently avoided serialising them, and put two pipelines in memory
-            # to do it. On the machines this path is for, serialising is the cheaper side.
-            while len(_cpu_pipe_cache) >= _cpu_pipe_cache_max():
-                del _cpu_pipe_cache[next(iter(_cpu_pipe_cache))]
-                gc.collect()
-            pipe = (
-                create_lightning_pipeline(step=lightning_steps)
-                if use_lightning
-                else create_animatediff_pipeline()
-            )
-            _cpu_pipe_cache[key] = pipe
+    pipe = cpu_pipeline(use_lightning=use_lightning, lightning_steps=lightning_steps)
     # NOTE: this bounds the CACHE, not concurrent in-flight use. A caller that runs two
     # generations with different keys at once still holds two pipelines until the first
     # returns, because eviction only drops the cache's reference. The demo Space sets

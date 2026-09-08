@@ -145,12 +145,31 @@ def _open_device_and_models(shape: tuple) -> tuple:
     from animatediff_ttnn.generation_helpers import load_sd14_ttnn
     from animatediff_ttnn.ttnn_pipeline import setup_blackhole
 
+    from animatediff_ttnn.generation_helpers import encode_prompt
+
     rows, cols = shape
     # setup_blackhole(device_ids=None) opens every available chip as a 1xN mesh, which is
     # what a (1, N) shape means. An explicit id list is passed only for a single chip so a
     # 1x1 run cannot accidentally claim a neighbour someone else is using.
     device = setup_blackhole(device_ids=[0] if rows * cols == 1 else None)
-    return device, load_sd14_ttnn(device)
+    models = load_sd14_ttnn(device)
+
+    # Warm the TEXT encoder too, and not as an optimisation. load_sd14_ttnn brings up the
+    # UNet and the VAE; CLIP's tokenizer and text encoder were left to be downloaded
+    # lazily by the first encode_prompt() call -- which happens inside _generate, under
+    # the device lock, AFTER /health has already answered 200. So the readiness contract
+    # this module is built on ("the device open and the model warm happen in the lifespan
+    # and nowhere else") was false for one of the three models, and in a container with
+    # only unet/vae cached and no egress, the server reported ready and then failed every
+    # request. Downloading here means a missing weight fails startup, which is what a
+    # readiness probe is for.
+    #
+    # NOT a full denoise pass: that would also pay TTNN kernel compilation here, which is
+    # minutes on a cold cache and would delay readiness for every boot. The first request
+    # is therefore still slower than the rest -- slow, but correct, and measured in
+    # docs/measurements/serving-benchmark.json rather than hidden.
+    encode_prompt("warmup", "")
+    return device, models
 
 
 def _frames_to_gif_b64(frames: List[Any], fps: int = DEFAULT_FPS) -> str:

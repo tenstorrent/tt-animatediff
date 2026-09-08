@@ -15,6 +15,7 @@ stubbed rather than imported — nothing here needs the real thing.
 import sys
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -176,3 +177,51 @@ def test_blackhole_branch_resolves_every_name_it_uses(app_mod, monkeypatch):
     # preview size, which the preview module chooses for itself.
     assert seen["height"] == 512 and seen["width"] == 512
     assert seen["on_step"] is not None
+
+
+# ---------------------------------------------------------------------------
+# The UI must not keep its own copies of library state
+# ---------------------------------------------------------------------------
+
+def test_the_ui_keeps_no_device_or_pipeline_state_of_its_own():
+    """Parallel copies of library state carried bugs that were fixed only in the library.
+
+    app.py used to hold an unbounded, unlocked `_cpu_pipes` dict and its own
+    `_bh_device`/`_bh_models` pair. The device pair published the device before the models
+    with no rollback and never closed it on a failed load -- the exact race and leak fixed
+    in session.ensure_blackhole (89d61ff, 0d9ecfd) and left in this copy. The CPU dict
+    could hold six ~7.8 GB pipelines, which is the OOM the bounded cache in
+    animatediff_ttnn/__init__.py exists to prevent.
+
+    Asserted as absence of the globals, because that is what stops them coming back: a
+    reviewer adding a cache here has to notice this test.
+    """
+    import app as app_mod
+
+    for name in ("_cpu_pipes", "_bh_device", "_bh_models", "_bh_lock"):
+        assert not hasattr(app_mod, name), (
+            f"app.py has re-grown {name}; CPU pipelines belong in "
+            "animatediff_ttnn.cpu_pipeline and the device in animatediff_ttnn.session"
+        )
+
+
+def test_the_ui_cpu_path_uses_the_librarys_bounded_cache():
+    import app as app_mod
+
+    with patch("animatediff_ttnn.cpu_pipeline") as cached:
+        cached.return_value = object()
+        got = app_mod._ensure_cpu_pipeline(lightning=True, lightning_steps=2)
+
+    cached.assert_called_once_with(use_lightning=True, lightning_steps=2)
+    assert got is cached.return_value
+
+
+def test_the_ui_device_path_uses_the_session_singleton():
+    import app as app_mod
+
+    with patch("animatediff_ttnn.session.ensure_blackhole") as ensure:
+        ensure.return_value = ("dev", ("m",))
+        got = app_mod._ensure_bh_device("blackhole", "")
+
+    ensure.assert_called_once_with(mode="blackhole")
+    assert got == ("dev", ("m",))

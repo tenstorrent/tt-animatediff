@@ -249,7 +249,10 @@ def test_cpu_pipeline_is_built_once_and_reused(clean_cpu_cache):
         generate_animation(prompt="p", mode="cpu")
 
     assert create.call_count == 1
-    assert list(clean_cpu_cache) == [(False, 4)]
+    # (False, None): lightning_steps is not part of the key when Lightning is off, because
+    # a non-Lightning pipeline does not depend on it. Keying on it made (False, 2),
+    # (False, 4) and (False, 8) three entries for three identical pipelines.
+    assert list(clean_cpu_cache) == [(False, None)]
 
 
 def test_cpu_cache_separates_lightning_from_standard(clean_cpu_cache):
@@ -411,3 +414,21 @@ def test_auto_mode_falls_back_to_cpu_when_ttnn_import_raises_oserror():
 
     with patch.object(builtins, "__import__", _raise_for_ttnn):
         assert animatediff_ttnn._resolve_mode("auto") == "cpu"
+
+
+def test_step_count_does_not_multiply_non_lightning_pipelines(clean_cpu_cache):
+    """Three step counts, one pipeline: the steps slider is irrelevant without Lightning.
+
+    Each of these is ~7.8 GB. Keyed on lightning_steps they were three cache entries for
+    identical objects -- a ~60 s rebuild per toggle here, and in app.py's unbounded copy
+    of this cache, three of them resident at once on a 16 GB box.
+    """
+    with patch("animatediff_ttnn.pipeline.create_animatediff_pipeline") as create, \
+         patch("animatediff_ttnn.pipeline.generate", return_value=[]):
+        create.return_value = MagicMock(name="pipe")
+        for steps in (2, 4, 8):
+            generate_animation(prompt="p", mode="cpu", use_lightning=False,
+                               lightning_steps=steps)
+
+    assert create.call_count == 1, "the non-Lightning pipeline was rebuilt per step count"
+    assert list(clean_cpu_cache) == [(False, None)]

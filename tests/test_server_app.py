@@ -554,3 +554,29 @@ def test_the_gif_encode_does_not_run_on_the_event_loop():
         )
     finally:
         del app.state.engine
+
+
+def test_the_lifespan_warms_the_text_encoder_too():
+    """Readiness is a claim about ALL the models, not just the ones on the device.
+
+    load_sd14_ttnn brings up the UNet and VAE. CLIP's tokenizer and text encoder were
+    downloaded lazily by the first encode_prompt() -- inside _generate, under the device
+    lock, after /health had answered 200. A container with only unet/vae cached and no
+    egress reported "Application startup complete" and then failed every request, which
+    is precisely the failure the lifespan design exists to prevent.
+    """
+    from animatediff_ttnn.server import app as mod
+
+    with patch("animatediff_ttnn.ttnn_pipeline.setup_blackhole", return_value="dev") as setup, \
+         patch("animatediff_ttnn.generation_helpers.load_sd14_ttnn",
+               return_value=("unet", "vae", "cfg", "proj")) as load, \
+         patch("animatediff_ttnn.generation_helpers.encode_prompt") as encode:
+        device, models = mod._open_device_and_models((1, 1))
+
+    setup.assert_called_once_with(device_ids=[0])
+    load.assert_called_once_with("dev")
+    assert encode.called, (
+        "the text encoder was not warmed in the lifespan, so its first download happens "
+        "under the device lock after /health has already returned 200"
+    )
+    assert device == "dev" and models == ("unet", "vae", "cfg", "proj")

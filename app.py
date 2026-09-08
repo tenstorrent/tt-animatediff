@@ -42,21 +42,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 NEG_DEFAULT = "blurry, low quality, distorted, text, people, faces, modern buildings"
 
-_cpu_pipes: dict = {}  # keyed by (lightning: bool, lightning_steps: int)
-_bh_device = None      # cached Blackhole/sim MeshDevice
-_bh_models = None      # cached (ttnn_model, ttnn_vae, config, torch_time_proj)
-_bh_lock = threading.Lock()
+# No caches of its own. This file used to keep an unbounded, unlocked dict of CPU
+# pipelines and its own Blackhole device/models pair -- parallel copies of state the
+# library owns, and they carried the bugs that were fixed in the library and not here:
+# the CPU dict could hold six ~7.8 GB pipelines (Checkbox x Radio = 6 keys, and the three
+# non-Lightning ones build identical pipelines), which is the OOM the bounded cache in
+# animatediff_ttnn/__init__.py exists to prevent; and the device pair published the device
+# before the models with no rollback, which is the race and the leak fixed in
+# session.ensure_blackhole. Delegating is what keeps them fixed in one place.
 
 
 def _ensure_cpu_pipeline(lightning: bool = False, lightning_steps: int = 4):
-    key = (lightning, lightning_steps)
-    if key not in _cpu_pipes:
-        from animatediff_ttnn.pipeline import create_animatediff_pipeline, create_lightning_pipeline
-        if lightning:
-            _cpu_pipes[key] = create_lightning_pipeline(step=lightning_steps)
-        else:
-            _cpu_pipes[key] = create_animatediff_pipeline()
-    return _cpu_pipes[key]
+    """The library's bounded, locked CPU pipeline cache."""
+    from animatediff_ttnn import cpu_pipeline
+
+    return cpu_pipeline(use_lightning=lightning, lightning_steps=lightning_steps)
 
 
 def _probe_sim(sim_so: Path) -> str | None:
@@ -99,57 +99,47 @@ def _probe_sim(sim_so: Path) -> str | None:
 
 
 def _ensure_bh_device(mode: str, sim_path: str):
-    """Open the Blackhole or ttsim device (once per session)."""
-    global _bh_device, _bh_models
-    if _bh_device is not None:
-        return _bh_device, _bh_models
-    with _bh_lock:
-        if _bh_device is not None:
-            return _bh_device, _bh_models
+    """Open the Blackhole or ttsim device (once per process), via the library.
 
-        if mode == "sim":
-            sim_so = Path(sim_path).expanduser() if sim_path else Path.home() / "sim/libttsim_bh.so"
-            if not sim_so.exists():
-                raise FileNotFoundError(
-                    f"ttsim binary not found at {sim_so}. "
-                    "Download from https://github.com/tenstorrent/ttsim/releases "
-                    "or set the Sim binary path field."
-                )
-            # Probe in a subprocess so an abort() in ttsim doesn't kill Gradio.
-            probe_err = _probe_sim(sim_so)
-            if probe_err is not None:
-                raise RuntimeError(
-                    f"ttsim device open failed: {probe_err}\n\n"
-                    "This usually means the ttsim binary is incompatible with the "
-                    "installed tt-metal version.  Download a matching ttsim release from "
-                    "https://github.com/tenstorrent/ttsim/releases and update the path."
-                )
-            os.environ["TT_METAL_SIMULATOR"] = str(sim_so)
-            os.environ.setdefault("TT_METAL_SLOW_DISPATCH_MODE", "1")
-            os.environ.setdefault("TT_METAL_DISABLE_SFPLOADMACRO", "1")
-            os.environ.setdefault("TT_METAL_ARCH_NAME", "blackhole")
+    The device and the loaded weights live in animatediff_ttnn.session, not here. This
+    file used to keep its own pair behind its own lock, and that copy still had both bugs
+    the library's version has since fixed:
 
-        TT_METAL_PATH = Path.home() / "tt-metal"
-        sys.path.insert(0, str(TT_METAL_PATH))
+    * it published _bh_device before _bh_models with no rollback, so one load failure
+      left the lock-free fast path returning ``(device, None)`` for the life of the
+      process -- every later Generate click unpacked that None -- and
+    * it never closed the device on a failed load, so the chip stayed claimed by a
+      session that had given up, and TTNN could not reopen it.
 
-        from animatediff_ttnn.ttnn_pipeline import setup_blackhole, _ensure_tt_metal_path
-        import ttnn
-        from models.demos.vision.generative.stable_diffusion.wormhole.common import SD_L1_SMALL_SIZE
-
-        if mode == "sim":
-            _ensure_tt_metal_path()
-            _bh_device = ttnn.open_mesh_device(
-                mesh_shape=ttnn.MeshShape(1, 1),
-                physical_device_ids=[0],
-                l1_small_size=SD_L1_SMALL_SIZE,
+    Everything below the sim probe is now session.ensure_blackhole's problem. What stays
+    here is the part that is genuinely UI-specific: the subprocess probe, because ttsim
+    calls abort() on unsupported register writes and that would take Gradio down with it,
+    and the two error messages, which point at the field the user can actually edit.
+    """
+    if mode == "sim":
+        sim_so = Path(sim_path).expanduser() if sim_path else Path.home() / "sim/libttsim_bh.so"
+        if not sim_so.exists():
+            raise FileNotFoundError(
+                f"ttsim binary not found at {sim_so}. "
+                "Download from https://github.com/tenstorrent/ttsim/releases "
+                "or set the Sim binary path field."
             )
-        else:
-            _bh_device = setup_blackhole(device_ids=[0])
+        # Probe in a subprocess so an abort() in ttsim doesn't kill Gradio.
+        probe_err = _probe_sim(sim_so)
+        if probe_err is not None:
+            raise RuntimeError(
+                f"ttsim device open failed: {probe_err}\n\n"
+                "This usually means the ttsim binary is incompatible with the "
+                "installed tt-metal version.  Download a matching ttsim release from "
+                "https://github.com/tenstorrent/ttsim/releases and update the path."
+            )
+        from animatediff_ttnn.session import ensure_blackhole
 
-        from animatediff_ttnn.generation_helpers import load_sd14_ttnn
-        _bh_models = load_sd14_ttnn(_bh_device)
-        return _bh_device, _bh_models
+        return ensure_blackhole(mode="sim", sim_so=str(sim_so))
 
+    from animatediff_ttnn.session import ensure_blackhole
+
+    return ensure_blackhole(mode="blackhole")
 
 
 def generate(
