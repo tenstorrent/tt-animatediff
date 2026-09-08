@@ -44,6 +44,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, because two of this job's guards compare the manifest's
+          # `extra_code` pin against git objects: one checks the pinned ref ships the same
+          # animatediff_ttnn/ tree as HEAD, the other that it is reachable from HEAD at all.
+          # At the default fetch-depth 1 neither can resolve the ref, so both SKIPPED and
+          # the job reported green over a pin that was stale on any full clone -- which is
+          # exactly how a stale pin reached the #9 review.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

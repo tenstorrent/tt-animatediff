@@ -20,7 +20,7 @@ import asyncio
 import subprocess
 import sys
 import textwrap
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -69,8 +69,15 @@ def test_mesh_shape_defaults_to_one_chip_when_unset():
     assert mesh_shape_from_env({}) == (1, 1)
 
 
-@pytest.mark.parametrize("raw,expected", [("1x4", (1, 4)), ("2x2", (2, 2)), ("1X1", (1, 1))])
+@pytest.mark.parametrize("raw,expected", [("1x1", (1, 1)), ("1X1", (1, 1))])
 def test_mesh_shape_is_read_from_the_environment(raw, expected):
+    """Parsing, including the case-insensitive separator.
+
+    This used to parametrize ("1x4", (1, 4)) and ("2x2", (2, 2)) as valid, which
+    documented a capability the model does not have -- parsing them was never the
+    question, and accepting them let a stray value claim every chip on the box. The
+    refusal is asserted in test_a_mesh_shape_the_model_cannot_use_is_refused.
+    """
     assert mesh_shape_from_env({MESH_SHAPE_ENV: raw}) == expected
 
 
@@ -645,3 +652,107 @@ def test_the_lock_covers_the_http_stack_the_kind_would_otherwise_add():
     for required in ("fastapi", "uvicorn", "pydantic", "pillow",
                      "diffusers", "transformers", "safetensors"):
         assert required in pins, f"{required} is not pinned in the lock"
+
+
+# ---- follow-ups from the #9 approval -------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["1x4", "2x2", "1x2", "4x1"])
+def test_a_mesh_shape_the_model_cannot_use_is_refused(raw):
+    """Refuse it, rather than claim every chip on the box and fail later.
+
+    `_open_device_and_models` passes `device_ids=None` for any shape whose product is not
+    1, and setup_blackhole(None) opens EVERY available chip as a 1xN mesh. The model
+    cannot shard -- that is why the manifest declares P150, proven by a serve that died
+    with `Can't convert a tensor distributed on MeshShape([1, 4])` -- so a 1x4 value takes
+    four chips out of circulation on a shared box and then fails in the lifespan anyway.
+    """
+    with pytest.raises(ValueError) as exc:
+        mesh_shape_from_env({MESH_SHAPE_ENV: raw})
+    assert "1x1" in str(exc.value)
+    assert "shard" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize("raw,expected", [("", (1, 1)), ("1x1", (1, 1))])
+def test_the_one_shape_the_model_can_use_is_still_accepted(raw, expected):
+    assert mesh_shape_from_env({MESH_SHAPE_ENV: raw} if raw else {}) == expected
+
+
+def test_a_failed_warm_closes_the_device_the_lifespan_opened():
+    """Same leak that was fixed in session.py, in the server's own open path.
+
+    setup_blackhole succeeds, then load_sd14_ttnn or the warm-up encode raises. Nothing
+    closed the chip, so a container that fails to start keeps a Tenstorrent device claimed
+    -- and on a restart loop it claims one per attempt while TTNN refuses to reopen it.
+    """
+    from animatediff_ttnn.server import app as mod
+
+    ttnn_mock = MagicMock()
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), \
+         patch("animatediff_ttnn.ttnn_pipeline.setup_blackhole", return_value="dev"), \
+         patch("animatediff_ttnn.generation_helpers.load_sd14_ttnn",
+               side_effect=RuntimeError("L1 allocation failed")):
+        with pytest.raises(RuntimeError, match="L1 allocation failed"):
+            mod._open_device_and_models((1, 1))
+
+    ttnn_mock.close_mesh_device.assert_called_once_with("dev")
+
+
+def test_the_manifest_declares_the_weights_the_served_path_actually_loads():
+    """HF_MODEL comes from `weights:`, and /v1/models reports it.
+
+    It declared `guoyww/animatediff`, which is a repo of raw mm_sd_v*.ckpt motion modules
+    -- not diffusers format, and not what this server loads. The served path is Phase 2.5
+    (generate_frames_temporal): SD 1.4's UNet, VAE and tokenizer, and NO motion adapter,
+    because the cross-frame motion comes from temporal_alpha. So the declaration was wrong
+    in both directions: a pre-caching deploy would fetch gigabytes it never uses and still
+    miss the repo it needs, and /v1/models named a model that was never loaded.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    declared = _manifest()["weights"]
+    loader = (root / "animatediff_ttnn" / "generation_helpers.py").read_text()
+    assert f'"{declared}"' in loader, (
+        f"weights: {declared!r} is not loaded by generation_helpers.py, which is what the "
+        "served path uses; HF_MODEL and /v1/models would report a model nobody loads"
+    )
+
+
+def test_the_pinned_extra_code_ref_is_reachable_from_head():
+    """A pin can be tree-correct and still unfetchable, which is a total failure.
+
+    #9 was squash-merged, so every commit that was on the branch is now dangling. The pin
+    it merged with (d89a90c) resolved only because the branch had not been pruned yet --
+    and stage() does `git clone --filter=blob:none` then `git checkout <ref>`, so the day
+    someone deletes that branch, every consumer's `tt-model package` fails on a ref the
+    server no longer has.
+
+    The tree-equality guard cannot see this: it passed on main with a pin that was one
+    branch-deletion away from breaking. So this asserts reachability separately, which is
+    what "pin a commit on main, or a tag" actually means.
+    """
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    for extra in _manifest()["source"].get("extra_code", []):
+        root = extra["root"]
+        if not isinstance(root, dict) or "ref" not in root:
+            continue
+        ref = root["ref"]
+        if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet",
+                           f"{ref}^{{commit}}"], capture_output=True).returncode != 0:
+            pytest.skip(
+                f"extra_code ref {ref} is not in this clone (shallow checkout); "
+                "reachability cannot be checked offline"
+            )
+        reachable = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", ref, "HEAD"],
+            capture_output=True,
+        ).returncode == 0
+        assert reachable, (
+            f"extra_code ref {ref} is not an ancestor of HEAD, so it lives only on a "
+            "branch. When that branch is deleted the ref becomes unfetchable and every "
+            "consumer's `tt-model package` fails at the clone. Pin a commit on main, or a tag."
+        )
