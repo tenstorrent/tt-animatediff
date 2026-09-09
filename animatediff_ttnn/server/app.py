@@ -137,6 +137,20 @@ def mesh_shape_from_env(env: Optional[dict] = None) -> tuple:
         ) from exc
     if rows < 1 or cols < 1:
         raise ValueError(f"{MESH_SHAPE_ENV}={raw!r} must be positive")
+    # Only 1x1, and refused here rather than absorbed. _open_device_and_models passes
+    # `device_ids=None` for any other shape, and setup_blackhole(None) opens EVERY chip on
+    # the box as a 1xN mesh -- so on a shared machine a stray 1x4 takes four chips out of
+    # circulation, and then dies in the lifespan anyway, because this model cannot shard:
+    # a real serve at P300x2 failed with `Can't convert a tensor distributed on
+    # MeshShape([1, 4]) mesh to row-major logical tensor`. The manifest declares P150 for
+    # the same reason. Widen this only alongside the mesh frame-sharding work.
+    if rows * cols != 1:
+        raise ValueError(
+            f"{MESH_SHAPE_ENV}={raw!r} requests {rows * cols} chips, but this model cannot "
+            f"shard -- only 1x1 is supported until mesh frame-sharding ships "
+            f"(docs/superpowers/plans/2026-06-15-mesh-frame-sharding.md). A larger shape "
+            f"would claim every chip on the box and still fail in the lifespan."
+        )
     return (rows, cols)
 
 
@@ -152,7 +166,12 @@ def _open_device_and_models(shape: tuple) -> tuple:
     # what a (1, N) shape means. An explicit id list is passed only for a single chip so a
     # 1x1 run cannot accidentally claim a neighbour someone else is using.
     device = setup_blackhole(device_ids=[0] if rows * cols == 1 else None)
-    models = load_sd14_ttnn(device)
+    # Everything after the open is wrapped: a failure here used to leave the chip claimed
+    # by a container that never started, and on a restart loop that is one claimed device
+    # per attempt while TTNN refuses to reopen any of them. Same leak session.py was fixed
+    # for; the server has its own open path, so it needs its own rollback.
+    try:
+        models = load_sd14_ttnn(device)
 
     # Warm the TEXT encoder too, and not as an optimisation. load_sd14_ttnn brings up the
     # UNet and the VAE; CLIP's tokenizer and text encoder were left to be downloaded
@@ -168,8 +187,25 @@ def _open_device_and_models(shape: tuple) -> tuple:
     # minutes on a cold cache and would delay readiness for every boot. The first request
     # is therefore still slower than the rest -- slow, but correct, and measured in
     # docs/measurements/serving-benchmark.json rather than hidden.
-    encode_prompt("warmup", "")
+        encode_prompt("warmup", "")
+    except Exception:
+        _close_device(device)
+        raise
     return device, models
+
+
+def _close_device(device) -> None:
+    """Release the mesh, swallowing any error.
+
+    Swallowed deliberately: on the failure path this must not mask the exception the
+    operator actually needs to read, and a close that fails is not a reason to hold the
+    chip. Mirrors animatediff_ttnn.session._close_device.
+    """
+    try:
+        import ttnn
+        ttnn.close_mesh_device(device)
+    except Exception:
+        pass
 
 
 def _frames_to_gif_b64(frames: List[Any], fps: int = DEFAULT_FPS) -> str:
