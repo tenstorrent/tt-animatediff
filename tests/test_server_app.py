@@ -402,49 +402,49 @@ def test_the_pinned_extra_code_ref_actually_contains_what_it_ships():
 
 
 def test_the_pinned_extra_code_ref_ships_the_package_we_are_developing():
-    """The guard that outlives the nickname.
+    """The pin must match what MAIN ships, not what this branch is proposing.
 
-    Whether the ref is a tag or a commit sha is cosmetic; what matters is that the tree it
-    names is the tree we are shipping. Staging clones the ref, so the moment
-    ``animatediff_ttnn/`` changes in a commit and the pin does not move, the package a
-    consumer builds is silently older than the manifest describing it -- and every other
-    check here still passes, because the paths exist and the app attribute resolves at the
-    old ref too.
+    Compared against main deliberately, and this was wrong once in the other direction.
+    Comparing against HEAD failed every PR that touched animatediff_ttnn/ -- which is most
+    of them -- because a pin can only name a commit that already exists, so it cannot
+    possibly name the tree a PR is still proposing. The consequence was a guard that cried
+    wolf on healthy branches and had to be argued with.
 
-    Compares committed trees rather than the working tree on purpose: mid-edit work is not
-    shipped and should not fail this, but a *commit* that changes the package means the pin
-    is stale and this must go red.
+    Against main it says the thing that actually matters: the ref a CONSUMER stages is the
+    package main released. A PR in flight is not released, so it passes; once it merges and
+    main's tree moves, this goes red until someone repins -- which is exactly the prompt
+    docs/RELEASING.md step 5 describes, arriving at the moment it is actionable.
     """
     import subprocess
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[1]
 
-    def tree_of(rev: str, rel: str) -> str:
-        return subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", f"{rev}:{rel}"],
-            capture_output=True, text=True,
-        ).stdout.strip()
+    def rev(spec):
+        r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", spec],
+                           capture_output=True, text=True)
+        return r.stdout.strip() or None
+
+    main = next((rev(f"{n}^{{commit}}") for n in ("origin/main", "main") if rev(f"{n}^{{commit}}")), None)
+    if not main:
+        pytest.skip("no main ref in this clone; cannot compare the pin against what main ships")
 
     for extra in _manifest()["source"].get("extra_code", []):
         root = extra["root"]
         if not isinstance(root, dict) or "ref" not in root:
-            continue  # a local path root ships the working tree; nothing to compare
+            continue
         ref = root["ref"]
-        if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet",
-                           f"{ref}^{{commit}}"], capture_output=True).returncode != 0:
+        if not rev(f"{ref}^{{commit}}"):
             pytest.skip(
                 f"extra_code ref {ref} is not in this clone (shallow checkout); "
                 "cannot compare its tree offline"
             )
         for rel in extra["paths"]:
-            pinned, head = tree_of(ref, rel), tree_of("HEAD", rel)
-            assert pinned and pinned == head, (
-                f"extra_code ref {ref} ships {rel} at tree {pinned or '<missing>'}, but "
-                f"HEAD has {head}. The pin must move whenever {rel} changes, or consumers "
-                "stage an older package than this manifest claims."
+            pinned, shipped = rev(f"{ref}:{rel}"), rev(f"{main}:{rel}")
+            assert pinned and pinned == shipped, (
+                f"extra_code ref {ref} ships {rel} at tree {pinned or '<missing>'}, but main "
+                f"has {shipped}. Repin -- consumers stage an older package than main released."
             )
-
 
 def test_the_server_request_default_matches_the_librarys_calibrated_one():
     """One default, three places, and the server had picked its own number.
@@ -756,3 +756,38 @@ def test_the_pinned_extra_code_ref_is_reachable_from_head():
             "branch. When that branch is deleted the ref becomes unfetchable and every "
             "consumer's `tt-model package` fails at the clone. Pin a commit on main, or a tag."
         )
+
+
+def test_the_lock_ships_pytest_only_while_tt_metal_needs_it():
+    """A deliberate wart, with its own removal reminder.
+
+    tt-metal v0.77.0's models/common/utility_functions.py has `import pytest` at MODULE
+    scope, and that file ships in this package's allowlist -- the SD demo's common.py does
+    `from models.common.utility_functions import is_blackhole`. So without pytest in the
+    image the container's lifespan dies with ModuleNotFoundError the moment it opens the
+    device. A host serve never sees it: tt-metal's python_env has pytest installed. Same
+    works-on-host, dies-in-image shape as the under-shipped allowlist.
+
+    Fixed upstream in tt-metal fdcb5cf2ec6c (#55079), which moves the import into the one
+    function that uses it -- but no release tag carries it yet (v0.78.0 still has the
+    module-level import), and source.tt_metal.ref points at a tag on purpose.
+
+    This test exists to make the wart visible rather than permanent: when tt_metal.ref
+    moves to a ref that carries the fix, drop pytest from the lock and delete this test.
+    It fails loudly in both directions.
+    """
+    pins = _lock_pins()
+    ref = _manifest()["source"]["tt_metal"]
+    ref = ref if isinstance(ref, str) else ref["ref"]
+
+    assert pins.get("pytest"), (
+        f"the lock does not ship pytest, but source.tt_metal.ref is {ref!r}, whose "
+        "models/common/utility_functions.py imports pytest at module scope -- the "
+        "container lifespan would die with ModuleNotFoundError"
+    )
+    assert ref in ("v0.77.0", "v0.78.0"), (
+        f"source.tt_metal.ref moved to {ref!r}. If that ref carries tt-metal fdcb5cf2ec6c "
+        "(pytest import moved inside its function), drop pytest/pluggy/iniconfig from "
+        "lock.in, regenerate the lock, and delete this test -- the workaround is no longer "
+        "needed. If it does not carry the fix, extend this list."
+    )
