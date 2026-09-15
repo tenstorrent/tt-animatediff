@@ -4,7 +4,7 @@
 # tt-model-manager v5.1 container package for tt-animatediff.
 #
 #   tt-model package tt_model_package.yaml
-#   tt-model serve tenstorrent/tt-animatediff
+#   tt-model serve episod/tt-animatediff
 #
 # This is a DIFFUSION model, so it uses `kind: tt-dit-server` rather than either vLLM
 # kind: there are no tokens, no KV cache and no continuous batching, so the whole engine
@@ -13,7 +13,7 @@
 
 schema: "5.1"
 name: tt-animatediff
-repo: tenstorrent/tt-animatediff
+repo: episod/tt-animatediff
 # The repo the SERVED path actually loads: SD 1.4's UNet, VAE and tokenizer, pulled by
 # generation_helpers.load_sd14_ttnn. It said `guoyww/animatediff`, which is a repo of raw
 # mm_sd_v*.ckpt motion modules -- not diffusers format, and not loaded here at all. That
@@ -82,7 +82,7 @@ source:
         # (..._ships_the_package_we_are_developing and ..._is_reachable_from_head), and both
         # skip on a shallow clone -- which is why the serve-contract job checks out with
         # fetch-depth: 0.
-        ref: 84045fb4481723e4539cf3a3b44ab5eeaf32e4d7
+        ref: 53dcb40e8b0c8c8807023c20de23f522f65d7679
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
