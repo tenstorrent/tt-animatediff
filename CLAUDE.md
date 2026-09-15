@@ -135,6 +135,35 @@ not using the SD demo UNet wrapper).
 All four distillation runs failed (flat LR without warmup on sharp loss landscape).
 Broken weights archived as `weights/*.broken`. Distillation track is closed.
 
+## Container serving: two traps found by an actual image build (2026-09-08)
+
+The image layer was unverified through #9. A colleague's session built and served it for
+real, which turned up two things no host serve can see:
+
+**tt-metal v0.77.0 ships `import pytest` at module scope.** In
+`models/common/utility_functions.py` (line 12), and that file ships in this package's
+allowlist -- the SD demo's `common.py` does
+`from models.common.utility_functions import is_blackhole`. So the container's lifespan dies
+with `ModuleNotFoundError: No module named 'pytest'` the moment it opens the device. A host
+serve never sees it, because tt-metal's `python_env` has pytest installed: the same
+works-on-host, dies-in-image shape as the under-shipped `models/demos` allowlist.
+
+Fixed upstream in tt-metal `fdcb5cf2ec6c` (#55079, merged 2026-09-03), which moves the
+import inside the one function using it -- verified by reading the file at that commit. **No
+release tag carries it**: v0.78.0 still has the module-level import. So the choice was ship
+pytest or move `source.tt_metal.ref` 58 days past a tag onto a bare commit. `pytest` is in
+`tt_model_package.lock` for now, with the reasoning inline and a test
+(`test_the_lock_ships_pytest_only_while_tt_metal_needs_it`) that fails when `tt_metal.ref`
+moves, so the workaround gets removed rather than inherited. The bump itself is verified to
+build and serve (~137 s for a 512x512 GIF) but its effect on the SD demo's numerics is
+unchecked, and every measurement in this repo was taken against v0.77.0.
+
+**`~/.cache/huggingface/hub/` on this box symlinks some models to `/mnt/bonus/models/`.**
+The container bind-mounts only `~/.cache/huggingface`, so a symlinked model resolves to a
+dangling link inside it -- hit through the hardcoded `CompVis/stable-diffusion-v1-4` VAE
+load. For a container serve here, use `HF_HOME=<fresh dir> tt-model serve ...` and let it
+fetch over the network. A box property, not a repo bug, but it will look like one.
+
 ## Accepted security finding: accelerate (2026-09-08)
 
 `Cycode: Vulnerable Dependencies` fails on PR #9 and **cannot be made green by a version

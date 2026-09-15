@@ -15,6 +15,28 @@
 # as far as resolution: it compiles, and it pins the torch the verify step demands. The
 # first `tt-model package` run is what proves it installs.
 #
+#
+# pytest IS IN HERE ON PURPOSE, and it is the one line in this file that should be deleted
+# rather than maintained. tt-metal v0.77.0's models/common/utility_functions.py has
+# `import pytest` at module scope (line 12), and that file ships in this package's code
+# allowlist -- models/demos/.../wormhole/common.py does
+# `from models.common.utility_functions import is_blackhole`. So the container's lifespan
+# dies with ModuleNotFoundError: No module named 'pytest' the moment it opens the device.
+# A host serve never sees it, because tt-metal's python_env has pytest installed: the same
+# works-on-host, dies-in-image shape as the under-shipped allowlist this manifest already
+# carries a comment about. Confirmed in a real container build by a colleague.
+#
+# Fixed upstream by tt-metal fdcb5cf2ec6c ("Remove pytest runtime dependency from model
+# utilities", #55079, merged 2026-09-03), which moves the import inside the one function
+# that needs it -- verified against the file at that commit. No RELEASE TAG carries it yet;
+# v0.78.0 still has the module-level import. So the alternatives were: ship pytest, or jump
+# source.tt_metal.ref 58 days past a tag onto a bare commit. Shipping pytest is the smaller
+# blast radius -- it moves nothing in the runtime, and every hardware measurement and
+# quality claim in this repo was taken against v0.77.0.
+#
+# DELETE pytest, iniconfig and pluggy from lock.in and regenerate the moment a tt-metal tag
+# carries fdcb5cf. tests/test_server_app.py::test_the_lock_ships_pytest_only_while_tt_metal_needs_it
+# is the reminder.
 # transformers==5.16.1 is what the ranges already resolve to, with or without this lock,
 # and the Blackhole serving path has NOT been exercised against transformers 5.x -- the
 # hardware serves in this branch all ran 4.52.4. The lock makes that visible and
@@ -46,7 +68,7 @@ diffusers==0.40.0
     # via -r lock.in
 fastapi==0.141.1
     # via -r lock.in
-filelock==3.32.5
+filelock==3.32.6
     # via
     #   diffusers
     #   huggingface-hub
@@ -80,6 +102,8 @@ idna==3.19
     #   requests
 importlib-metadata==9.0.1
     # via diffusers
+iniconfig==2.3.0
+    # via pytest
 jinja2==3.1.6
     # via torch
 markdown-it-py==4.2.0
@@ -101,11 +125,14 @@ packaging==26.3
     # via
     #   accelerate
     #   huggingface-hub
+    #   pytest
     #   transformers
 pillow==12.3.0
     # via
     #   -r lock.in
     #   diffusers
+pluggy==1.6.0
+    # via pytest
 psutil==7.2.2
     # via accelerate
 pydantic==2.13.5
@@ -115,7 +142,11 @@ pydantic==2.13.5
 pydantic-core==2.46.5
     # via pydantic
 pygments==2.21.0
-    # via rich
+    # via
+    #   pytest
+    #   rich
+pytest==9.1.1
+    # via -r lock.in
 pyyaml==6.0.3
     # via
     #   accelerate

@@ -14,7 +14,17 @@
 schema: "5.1"
 name: tt-animatediff
 repo: tenstorrent/tt-animatediff
-weights: guoyww/animatediff
+# The repo the SERVED path actually loads: SD 1.4's UNet, VAE and tokenizer, pulled by
+# generation_helpers.load_sd14_ttnn. It said `guoyww/animatediff`, which is a repo of raw
+# mm_sd_v*.ckpt motion modules -- not diffusers format, and not loaded here at all. That
+# was wrong in both directions: a pre-caching deploy fetched gigabytes it never uses and
+# still missed the repo it needs, so a restricted-egress start would fail; and HF_MODEL
+# comes from this field, so /v1/models named a model nobody had loaded.
+#
+# No motion adapter is declared because the served path (Phase 2.5, generate_frames_temporal)
+# does not use one -- its cross-frame motion comes from temporal_alpha. The adapter in
+# motion_weights.py belongs to the Phase 3 CLI path, which this server does not run.
+weights: CompVis/stable-diffusion-v1-4
 kind: tt-dit-server
 arch: blackhole
 
@@ -56,13 +66,23 @@ source:
         # that already exists, so a change to animatediff_ttnn/ and the repin of this line
         # are always two commits. That is not a wrinkle to tidy up -- it is why the guard
         # below exists, and why it must be run after committing rather than before.
-        # Tags here are cut on main after merge, so this moves to v0.11.0 then -- step 5 of
-        # docs/RELEASING.md. What actually matters is not whether this is a tag or a sha but
-        # that the tree it names IS the animatediff_ttnn/ being shipped; a sha is immutable,
-        # so it is the safer placeholder in the meantime. test_server_app.py's
-        # ..._ships_the_package_we_are_developing compares the two trees and fails when they
-        # diverge (it skips on a shallow clone, so run the suite locally after repinning).
-        ref: d89a90c10ad62927d662e680132682cd4dabc739
+        #
+        # It must also name a commit REACHABLE FROM MAIN, which is a separate trap and a
+        # sharper one. #9 was squash-merged, so every commit on the branch is now dangling;
+        # the previous pin (d89a90c) survived only because origin/feat/asgi-server had not
+        # been deleted yet. stage() runs "git clone --filter=blob:none" and then
+        # "git checkout <ref>", so the moment that branch is pruned, EVERY consumer's
+        # "tt-model package" fails on a ref the server no longer has. Pinned to the squash
+        # commit on main instead, which cannot be pruned.
+        #
+        # A release tag is the nicer end state -- docs/RELEASING.md step 5 -- and moving to
+        # v0.11.0 is a one-line change once it is cut. What actually matters is not tag
+        # versus sha but that the ref is reachable and names the animatediff_ttnn/ tree
+        # being shipped. Both are now asserted in test_server_app.py
+        # (..._ships_the_package_we_are_developing and ..._is_reachable_from_head), and both
+        # skip on a shallow clone -- which is why the serve-contract job checks out with
+        # fetch-depth: 0.
+        ref: 84045fb4481723e4539cf3a3b44ab5eeaf32e4d7
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
