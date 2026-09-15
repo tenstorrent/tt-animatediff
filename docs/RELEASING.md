@@ -37,6 +37,13 @@ from `main` at all if the PR is squash-merged, and nothing in CI would tell you.
    ```
    Two things about this pin are easy to get wrong:
 
+   - **It must be reachable from `main`.** A squash merge makes every commit that was on
+     the feature branch dangling, so a pin taken from the branch resolves only until
+     someone prunes it — and `stage()` does `git clone --filter=blob:none` then
+     `git checkout <ref>`, so the day it goes, every consumer's `tt-model package` fails
+     at the clone. This is not hypothetical: #9 merged with a branch-only pin, saved from
+     breaking only because the branch had not been deleted yet. A tag, or the squash
+     commit on `main`. `..._is_reachable_from_head` asserts it.
    - It can never name the tag that contains itself — the manifest is *inside* the release
      it would be pinning — so it will always name the previous tag until the next release
      moves it. That is expected, and harmless, because the pin only has to be correct about
