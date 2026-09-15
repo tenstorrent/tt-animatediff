@@ -10,6 +10,10 @@ tags:
   - tt-metal
   - stable-diffusion
   - video-generation
+  - tt-model-cache
+  - tt-model-container
+  - tt-dit-server
+  - p150
 base_model:
   - CompVis/stable-diffusion-v1-4
   - guoyww/animatediff-motion-adapter-v1-5-2

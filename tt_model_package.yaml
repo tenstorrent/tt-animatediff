@@ -13,7 +13,7 @@
 
 schema: "5.1"
 name: tt-animatediff
-repo: tenstorrent/tt-animatediff
+repo: episod/tt-animatediff
 weights: guoyww/animatediff
 kind: tt-dit-server
 arch: blackhole
