@@ -25,9 +25,9 @@ base_model:
 implementation of AnimateDiff that runs the SD 1.4 UNet on **Tenstorrent Blackhole**
 hardware through TTNN, with cross-frame temporal attention for motion coherence. The
 weights it needs — SD 1.4 and the AnimateDiff MotionAdapter — are resolved from their
-upstream repositories the first time you generate.
+upstream repositories, at pinned revisions, the first time you generate.
 
-Version 0.11.0 · [GitHub](https://github.com/tenstorrent/tt-animatediff) ·
+Version 0.11.1 · [GitHub](https://github.com/tenstorrent/tt-animatediff) ·
 [Docs](https://docs.tenstorrent.com/tt-animatediff/) ·
 [How it was built](https://tsingletarytt.github.io/writing/2026/06/23/animatediff-on-tt-hardware-the-full-story/)
 

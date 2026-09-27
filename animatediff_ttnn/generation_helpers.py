@@ -8,6 +8,11 @@ without tt-metal present (imports inside functions are lazy).
 
 import torch
 
+# Every SD 1.4 load below resolves ONE pinned revision (or $TT_MODEL_WEIGHTS_REVISION),
+# so the UNet, VAE, tokenizer and text encoder cannot come from different upstream
+# commits. See animatediff_ttnn/weights_pins.py for the rules.
+from animatediff_ttnn.weights_pins import SD14_REPO, revision_for
+
 
 def load_sd14_ttnn(device):
     """Load SD 1.4 TTNN UNet and TTNN VAE onto device.
@@ -29,14 +34,18 @@ def load_sd14_ttnn(device):
     from models.demos.vision.generative.stable_diffusion.wormhole.tt.vae.ttnn_vae import Vae
 
     print("  Loading PyTorch VAE weights...")
-    torch_vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
+    torch_vae = AutoencoderKL.from_pretrained(
+        SD14_REPO, subfolder="vae", revision=revision_for(SD14_REPO)
+    )
     torch_vae.eval()
 
     print("  Initialising TTNN VAE decoder (weights prepared, kernels compiled on first decode)...")
     ttnn_vae = Vae(torch_vae=torch_vae, device=device)
 
     print("  Loading PyTorch UNet (config + time_proj)...")
-    torch_unet = UNet2DConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="unet")
+    torch_unet = UNet2DConditionModel.from_pretrained(
+        SD14_REPO, subfolder="unet", revision=revision_for(SD14_REPO)
+    )
 
     print("  Building TTNN UNet (~2-3 min first run, cached after)...")
     parameters = preprocess_model_parameters(
@@ -68,11 +77,11 @@ def _encode_one(text: str) -> torch.Tensor:
 
     if _clip_tokenizer is None:
         _clip_tokenizer = CLIPTokenizer.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", subfolder="tokenizer"
+            SD14_REPO, subfolder="tokenizer", revision=revision_for(SD14_REPO)
         )
     if _clip_text_encoder is None:
         _clip_text_encoder = CLIPTextModel.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", subfolder="text_encoder"
+            SD14_REPO, subfolder="text_encoder", revision=revision_for(SD14_REPO)
         )
         _clip_text_encoder.eval()
 

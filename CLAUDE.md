@@ -293,3 +293,62 @@ Spaces on free cpu-basic requires a PRO subscription". Keep that mapping in mind
 402 arrives from `create_repo` and reads like a script bug: if `whoami()["isPro"]` is False,
 `publish_to_hub.py --space --yes` cannot succeed, and the alternatives are an org with the
 entitlement or a **static** gallery-only Space (which is not the demo this repo built).
+
+## Pinned upstream weights revisions (2026-09-27, v0.11.1)
+
+**Prompt.** A packaging-hygiene pass ahead of repackaging the v6 thin bundle with pinned
+weights. No hardware. Add pinned revisions for SD 1.4 and for the motion adapter where it
+is loaded, and record the HF repo collision described below.
+
+**What changed.**
+- New `animatediff_ttnn/weights_pins.py` holds one sha per upstream repo (HF API `sha`
+  on 2026-09-27; all three repos were last modified in 2023 or early 2024).
+- `revision_for(repo_id)` decides the revision for each load:
+  - SD 1.4 gets `$TT_MODEL_WEIGHTS_REVISION` or the pin. tt-model-manager's v6 `run.sh`
+    exports that variable from the manifest.
+  - The adapter and Lightning get their own fixed pins. The env var is deliberately
+    ignored for them, because it names SD 1.4's revision and would not resolve in
+    another repo.
+  - A local directory or an unknown repo id gets `None`, as before.
+- Every hub load in the package now passes `revision=`. That is 10 calls: 4 in
+  `generation_helpers.py` (the served path), 5 in `pipeline.py` and 1 in
+  `motion_weights.py`.
+
+**Why the code, not just the manifest.** `tt-model package-thin --weights-revision` only
+changes what `tt-model pull` pre-fetches. The server calls `from_pretrained` by repo id
+and would still resolve `main`, so a manifest-only pin is ineffective.
+
+**Guard.** `tests/test_weights_pins.py` checks three things:
+- the rules;
+- the runtime wiring of the CPU-runnable loaders, with stubs;
+- an AST sweep over `animatediff_ttnn/` that fails on any `from_pretrained` /
+  `hf_hub_download` / `snapshot_download` without `revision=`.
+
+I watched it fail against the pre-change `generation_helpers.py` and `motion_weights.py`
+(5 unpinned loads listed by file:line), then pass once they were restored. I also
+updated `test_the_manifest_declares_the_weights_the_served_path_actually_loads`, which
+grepped for the repo as a string literal: it now checks the declaration against
+`weights_pins.SD14_REPO`.
+
+I ran the full CPU suite with `ttnn` blocked at import: 359 passed. The 7
+`test_ttnn_motion_pipeline.py` failures are the block itself (those tests import ttnn),
+not this change.
+
+**Not pinned here.** The `scripts/` utilities (`distill_lcm.py` and others) still load
+SD 1.4 by id alone. They are dev tools, not shipped in the wheel.
+
+**Open issue, recorded and not acted on: one HF repo, two package formats.**
+`tt_model_package.yaml` on `main` (the v5.1 container manifest) has
+`repo: episod/tt-animatediff`, the same HF repo that now holds the v6 thin bundle
+(`tt_kernel_manifest.json`, `run.sh`, `wheels/`) alongside the diffusers custom pipeline.
+A `tt-model package` / push from the yaml would write a container manifest over the thin
+bundle. Proposal: retarget the yaml's `repo:` to `episod/tt-animatediff-container` (or
+retire the yaml) and drop the stale `tt-model-container` tag from the card. That is left
+for a maintainer decision, not changed in this branch.
+
+**Repackage needs:**
+- a new `animatediff_ttnn-0.11.1` wheel;
+- `package-thin --weights-revision 133a221b8aa7292a167afc5127cb63fb5005638b`;
+- ideally allow-patterns limited to the SD 1.4 subfolders the server reads
+  (`unet/`, `vae/`, `tokenizer/`, `text_encoder/`, plus `model_index.json`). A pull of
+  the whole SD 1.4 repo is ~22 GB.

@@ -525,6 +525,20 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.11.1 — unreleased
+- **Pinned upstream weights revisions.** Every `from_pretrained` / `hf_hub_download` in
+  `animatediff_ttnn` now passes an explicit `revision=`, from the new
+  `animatediff_ttnn/weights_pins.py`:
+  - `CompVis/stable-diffusion-v1-4` at `133a221b8aa7292a167afc5127cb63fb5005638b`. This is
+    the served model; `TT_MODEL_WEIGHTS_REVISION` overrides it when set.
+  - `guoyww/animatediff-motion-adapter-v1-5-2` at `6167b88ffe39b4441fdf2113e77b99a6f56b7906`.
+  - `ByteDance/AnimateDiff-Lightning` at `027c893eec01df7330f5d4b733bc9485ee02e8b2`.
+
+  Previously each load resolved the repo's default branch at load time. The bundle
+  manifest's `weights.revision` only affects `tt-model pull`, so it could not pin what the
+  server loaded. `tests/test_weights_pins.py` sweeps the package source and fails on any
+  hub load without a `revision=`.
+
 ### v0.11.0 — unreleased
 - **Servable by tt-model-manager** — new `animatediff_ttnn/server/app.py` (FastAPI/uvicorn)
   and a `tt_model_package.yaml` manifest for the `tt-dit-server` kind. `POST

@@ -707,16 +707,27 @@ def test_the_manifest_declares_the_weights_the_served_path_actually_loads():
     because the cross-frame motion comes from temporal_alpha. So the declaration was wrong
     in both directions: a pre-caching deploy would fetch gigabytes it never uses and still
     miss the repo it needs, and /v1/models named a model that was never loaded.
+
+    Since the pinned-revision change, generation_helpers.py names the repo through
+    ``weights_pins.SD14_REPO`` instead of a string literal. So this checks both halves:
+    the declaration equals that constant, and every SD 1.4 load in generation_helpers
+    goes through it (no stray literal naming some other repo).
     """
     from pathlib import Path
+
+    from animatediff_ttnn.weights_pins import SD14_REPO
 
     root = Path(__file__).resolve().parents[1]
     declared = _manifest()["weights"]
     loader = (root / "animatediff_ttnn" / "generation_helpers.py").read_text()
-    assert f'"{declared}"' in loader, (
-        f"weights: {declared!r} is not loaded by generation_helpers.py, which is what the "
-        "served path uses; HF_MODEL and /v1/models would report a model nobody loads"
+    assert declared == SD14_REPO, (
+        f"weights: {declared!r} is not SD14_REPO ({SD14_REPO!r}), which is what the "
+        "served path loads; HF_MODEL and /v1/models would report a model nobody loads"
     )
+    # Every load names the constant, and no hardcoded repo literal is left behind.
+    # tests/test_weights_pins.py checks the revision= half.
+    assert loader.count("from_pretrained(") == loader.count("SD14_REPO, subfolder=") == 4
+    assert '"CompVis/' not in loader
 
 
 def test_the_pinned_extra_code_ref_is_reachable_from_head():
