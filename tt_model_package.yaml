@@ -75,14 +75,14 @@ source:
         # "tt-model package" fails on a ref the server no longer has. Pinned to the squash
         # commit on main instead, which cannot be pruned.
         #
-        # A release tag is the nicer end state -- docs/RELEASING.md step 5 -- and moving to
-        # v0.11.0 is a one-line change once it is cut. What actually matters is not tag
+        # Now the v0.11.2 release tag (docs/RELEASING.md step 5); repin it each release.
+        # What actually matters is not tag
         # versus sha but that the ref is reachable and names the animatediff_ttnn/ tree
         # being shipped. Both are now asserted in test_server_app.py
         # (..._ships_the_package_we_are_developing and ..._is_reachable_from_head), and both
         # skip on a shallow clone -- which is why the serve-contract job checks out with
         # fetch-depth: 0.
-        ref: 53dcb40e8b0c8c8807023c20de23f522f65d7679
+        ref: v0.11.2
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
