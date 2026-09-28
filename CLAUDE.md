@@ -365,3 +365,6 @@ file inside it. `docs/model-card.md`'s version line must follow VERSION too
 first push missed it and failed CI, because the suite had been run BEFORE the VERSION bump, not
 after it. Re-run the suite on the exact tree being pushed. Suite on the fixed tree: 367 passed
 with ttnn import-blocked.
+
+**Repackage from here needs the `animatediff_ttnn-0.11.2` wheel**, not 0.11.1 (the 0.11.1 section
+above is the release already published). Everything else in that repackage list is unchanged.
