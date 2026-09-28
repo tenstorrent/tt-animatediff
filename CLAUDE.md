@@ -360,4 +360,8 @@ default behind and `revision_for()` would silently return None (the default bran
 imports the constant. The regression test checks the default expression by name (AST), because
 a value check passes on the old code too: the copy is equal today. It was seen failing on the
 old code. Bumped to 0.11.2, since 0.11.1's wheel is already published on HF and this changes a
-file inside it. Suite: 367 passed with ttnn import-blocked.
+file inside it. `docs/model-card.md`'s version line must follow VERSION too
+(`test_the_model_card_version_matches_VERSION`; the card becomes the artifact's README): the
+first push missed it and failed CI, because the suite had been run BEFORE the VERSION bump, not
+after it. Re-run the suite on the exact tree being pushed. Suite on the fixed tree: 367 passed
+with ttnn import-blocked.
