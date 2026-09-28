@@ -177,28 +177,64 @@ def test_the_phase3_motion_loader_defaults_to_the_pinned_adapter_repo(no_env):
 # ---- 3. source sweep: no unpinned load anywhere in the package ------------------------
 
 
+_HUB_LOADS = {"from_pretrained", "hf_hub_download", "snapshot_download"}
+
+
+def _is_pinned(call):
+    """``revision=revision_for(...)``: the value must come from the pin resolver. A bare
+    ``revision=`` keyword is not enough, since ``revision=None`` or ``"main"`` loads unpinned."""
+    kw = next((k for k in call.keywords if k.arg == "revision"), None)
+    if kw is None or not isinstance(kw.value, ast.Call):
+        return False
+    f = kw.value.func
+    return (f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)) == "revision_for"
+
+
+def _unpinned_hub_calls(tree, where):
+    """(count, [unpinned calls]) for every hub load in ``tree``."""
+    seen, bad = 0, []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name not in _HUB_LOADS:
+            continue
+        seen += 1
+        if not _is_pinned(node):
+            bad.append(f"{where}:{node.lineno} {name}")
+    return seen, bad
+
+
 def _hub_calls_without_revision():
-    """(file, line, call) for every from_pretrained/hf_hub_download/snapshot_download
-    call in animatediff_ttnn/ that has no ``revision=`` keyword."""
-    missing, seen = [], 0
+    """(count, [unpinned calls]) across animatediff_ttnn/."""
+    seen, missing = 0, []
     for path in sorted(PACKAGE_DIR.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name not in {"from_pretrained", "hf_hub_download", "snapshot_download"}:
-                continue
-            seen += 1
-            if not any(kw.arg == "revision" for kw in node.keywords):
-                missing.append(f"{path.relative_to(PACKAGE_DIR.parent)}:{node.lineno} {name}")
+        n, bad = _unpinned_hub_calls(ast.parse(path.read_text(), filename=str(path)),
+                                     path.relative_to(PACKAGE_DIR.parent))
+        seen += n
+        missing += bad
     return seen, missing
 
 
-def test_every_hub_load_in_the_package_passes_a_revision():
+def test_the_sweep_rejects_revision_values_that_do_not_pin():
+    """The checker itself: only a revision_for(...) value counts as pinned."""
+    src = """
+X.from_pretrained("a")
+X.from_pretrained("a", revision=None)
+X.from_pretrained("a", revision="main")
+hf_hub_download("a", "f", revision=some_sha)
+X.from_pretrained("a", revision=revision_for("a"))
+snapshot_download("a", revision=wp.revision_for("a"))
+"""
+    seen, bad = _unpinned_hub_calls(ast.parse(src), "snippet")
+    assert seen == 6
+    assert [b.split()[0] for b in bad] == ["snippet:2", "snippet:3", "snippet:4", "snippet:5"]
+
+
+def test_every_hub_load_in_the_package_is_pinned_via_revision_for():
     seen, missing = _hub_calls_without_revision()
     # Sanity: the sweep really found the loads. A sweep that matches nothing would
     # pass vacuously. The package has 10 today; a lower bound tolerates additions.
     assert seen >= 10, f"sweep found only {seen} hub calls; has the AST match broken?"
-    assert missing == [], "unpinned weights loads:\n  " + "\n  ".join(missing)
+    assert missing == [], "hub loads not pinned via revision_for():\n  " + "\n  ".join(missing)
