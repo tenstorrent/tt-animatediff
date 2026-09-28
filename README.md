@@ -525,7 +525,13 @@ application plugin, or Python library — see
 
 ## Changelog
 
-### v0.11.1 — unreleased
+### v0.11.2 — unreleased
+- `load_motion_modules()` (the Phase 3 CLI path) takes its default adapter repo from
+  `weights_pins.MOTION_ADAPTER_REPO` instead of a copied string, so the default and the pin
+  table cannot drift apart. `tests/test_weights_pins.py` checks the wiring. Served output is
+  unchanged: the served path does not load the motion adapter.
+
+### v0.11.1 — 2026-09-28 (published as the `episod/tt-animatediff` v6 thin bundle)
 - **Pinned upstream weights revisions.** Every `from_pretrained` / `hf_hub_download` in
   `animatediff_ttnn` now passes an explicit `revision=`, from the new
   `animatediff_ttnn/weights_pins.py`:

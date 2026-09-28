@@ -157,6 +157,23 @@ def test_the_lightning_pipeline_pins_the_checkpoint_and_the_base(monkeypatch, no
     ]
 
 
+def test_the_phase3_motion_loader_defaults_to_the_pinned_adapter_repo(no_env):
+    """The default repo id must BE the pin table's key, not a copy of it: a copy can
+    drift, and revision_for() then silently returns None (the default branch)."""
+    import inspect
+
+    from animatediff_ttnn.motion_weights import load_motion_modules
+
+    # Wiring, not value: a copied literal is equal today and passes a value check.
+    fn = next(n for n in ast.walk(ast.parse((PACKAGE_DIR / "motion_weights.py").read_text()))
+              if isinstance(n, ast.FunctionDef) and n.name == "load_motion_modules")
+    default_expr = fn.args.defaults[0]
+    assert isinstance(default_expr, ast.Name) and default_expr.id == "MOTION_ADAPTER_REPO", (
+        "load_motion_modules' default must be weights_pins.MOTION_ADAPTER_REPO, not a copy")
+    default = inspect.signature(load_motion_modules).parameters["model_id"].default
+    assert default == wp.MOTION_ADAPTER_REPO and wp.revision_for(default) is not None
+
+
 # ---- 3. source sweep: no unpinned load anywhere in the package ------------------------
 
 

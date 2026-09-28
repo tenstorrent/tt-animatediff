@@ -352,3 +352,12 @@ for a maintainer decision, not changed in this branch.
 - ideally allow-patterns limited to the SD 1.4 subfolders the server reads
   (`unet/`, `vae/`, `tokenizer/`, `text_encoder/`, plus `model_index.json`). A pull of
   the whole SD 1.4 repo is ~22 GB.
+
+### 2026-09-28 — v0.11.2: review fix on PR #12
+Copilot review: `motion_weights.load_motion_modules` defaulted to a copied adapter repo string
+rather than `weights_pins.MOTION_ADAPTER_REPO`, so a change to the canonical id would leave the
+default behind and `revision_for()` would silently return None (the default branch). It now
+imports the constant. The regression test checks the default expression by name (AST), because
+a value check passes on the old code too: the copy is equal today. It was seen failing on the
+old code. Bumped to 0.11.2, since 0.11.1's wheel is already published on HF and this changes a
+file inside it. Suite: 367 passed with ttnn import-blocked.
