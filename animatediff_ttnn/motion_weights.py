@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from animatediff_ttnn.weights_pins import MOTION_ADAPTER_REPO, revision_for
+
 
 class InjectionPoint(NamedTuple):
     block_prefix: str   # state-dict prefix for this block's motion_modules
@@ -49,7 +51,7 @@ _INJECTION_POINTS: dict[str, InjectionPoint] = {
 
 
 def load_motion_modules(
-    model_id: str = "guoyww/animatediff-motion-adapter-v1-5-2",
+    model_id: str = MOTION_ADAPTER_REPO,
 ) -> dict[str, list]:
     """Load MotionAdapter modules for all 7 injection points.
 
@@ -67,7 +69,9 @@ def load_motion_modules(
     """
     from diffusers import MotionAdapter
 
-    adapter = MotionAdapter.from_pretrained(model_id)
+    # Pinned for the canonical adapter repo; None (default branch) for a local path
+    # or any other repo id. See weights_pins.py.
+    adapter = MotionAdapter.from_pretrained(model_id, revision=revision_for(model_id))
     adapter.eval()
 
     modules: dict[str, list] = {}

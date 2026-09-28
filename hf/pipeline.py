@@ -208,7 +208,10 @@ class TTAnimateDiffPipeline(DiffusionPipeline):
         different value here (e.g. ``base_model="other/model"``) is accepted,
         persists in ``self.config``, and changes no generation behaviour
         whatsoever. Swapping the actual upstream weights requires a code
-        change in ``animatediff_ttnn``, not a config override here.
+        change in ``animatediff_ttnn``, not a config override here. The
+        revision each of those repos resolves to is pinned in
+        ``animatediff_ttnn.weights_pins`` (SD 1.4's can be overridden with
+        ``TT_MODEL_WEIGHTS_REVISION``).
         """
         super().__init__()
         self.register_to_config(

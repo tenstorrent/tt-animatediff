@@ -21,14 +21,21 @@ import torch
 from PIL import Image
 from diffusers import AnimateDiffPipeline, DDIMScheduler, EulerDiscreteScheduler, MotionAdapter
 
-
-LIGHTNING_REPO = "ByteDance/AnimateDiff-Lightning"
+# LIGHTNING_REPO is re-exported from here for existing importers. Every repo this module
+# loads goes through revision_for(), which pins the three known repos and returns None
+# (default branch, as before) for a caller-supplied model_id it has no sha for.
+from animatediff_ttnn.weights_pins import (  # noqa: F401  (re-export)
+    LIGHTNING_REPO,
+    MOTION_ADAPTER_REPO,
+    SD14_REPO,
+    revision_for,
+)
 LIGHTNING_STEPS = (2, 4, 8)  # 1-step is research-only
 
 
 def create_lightning_pipeline(
     step: int = 4,
-    model_id: str = "CompVis/stable-diffusion-v1-4",
+    model_id: str = SD14_REPO,
     torch_dtype: torch.dtype = torch.float32,
 ) -> AnimateDiffPipeline:
     """Create an AnimateDiff-Lightning pipeline for fast CPU generation.
@@ -54,7 +61,7 @@ def create_lightning_pipeline(
     ckpt = f"animatediff_lightning_{step}step_diffusers.safetensors"
     adapter = MotionAdapter()
     adapter.load_state_dict(
-        load_file(hf_hub_download(LIGHTNING_REPO, ckpt)),
+        load_file(hf_hub_download(LIGHTNING_REPO, ckpt, revision=revision_for(LIGHTNING_REPO))),
         strict=True,
     )
     adapter = adapter.to(dtype=torch_dtype)
@@ -63,6 +70,7 @@ def create_lightning_pipeline(
         model_id,
         motion_adapter=adapter,
         torch_dtype=torch_dtype,
+        revision=revision_for(model_id),
     )
     # Lightning requires EulerDiscreteScheduler with these exact settings
     pipe.scheduler = EulerDiscreteScheduler.from_config(
@@ -74,8 +82,8 @@ def create_lightning_pipeline(
 
 
 def create_animatediff_pipeline(
-    model_id: str = "CompVis/stable-diffusion-v1-4",
-    adapter_id: str = "guoyww/animatediff-motion-adapter-v1-5-2",
+    model_id: str = SD14_REPO,
+    adapter_id: str = MOTION_ADAPTER_REPO,
     torch_dtype: torch.dtype = torch.float32,
 ) -> AnimateDiffPipeline:
     """Create a diffusers AnimateDiffPipeline with MotionAdapter.
@@ -87,10 +95,13 @@ def create_animatediff_pipeline(
     Returns:
         diffusers.AnimateDiffPipeline ready for inference
     """
-    adapter = MotionAdapter.from_pretrained(adapter_id, torch_dtype=torch_dtype)
+    adapter = MotionAdapter.from_pretrained(
+        adapter_id, torch_dtype=torch_dtype, revision=revision_for(adapter_id)
+    )
     scheduler = DDIMScheduler.from_pretrained(
         model_id,
         subfolder="scheduler",
+        revision=revision_for(model_id),
         clip_sample=False,
         timestep_spacing="linspace",
         beta_schedule="linear",
@@ -101,6 +112,7 @@ def create_animatediff_pipeline(
         motion_adapter=adapter,
         scheduler=scheduler,
         torch_dtype=torch_dtype,
+        revision=revision_for(model_id),
     )
     return pipe
 
