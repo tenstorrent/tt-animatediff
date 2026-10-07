@@ -7,6 +7,8 @@ UNet. **Phase 3** injects AnimateDiff MotionAdapter temporal attention directly 
 the Blackhole denoising loop — no distillation required, weights loaded straight from
 `guoyww/animatediff-motion-adapter-v1-5-2`.
 
+![tt-animatediff loop generation stages](docs/images/tt-animatediff-loop-generation-stages.svg)
+
 ---
 
 ## Gallery
