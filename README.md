@@ -124,6 +124,21 @@ on the Hub.
 
 ---
 
+## LoRA styles
+
+Merge a Stable Diffusion style LoRA into the model at load time, with no per-frame cost:
+
+```bash
+python examples/generate.py \
+  --prompt "storybook anime illustration, a moonlit crypt beneath a drowned chapel, ghostly mist" \
+  --lora "neonforestmist/sd15-storybook-anime-lora:storybook_anime_lora.safetensors@0.85"
+```
+
+![Crypt: no LoRA, pixel art, storybook anime, both stacked](docs/assets/lora/crypt-base-pixel-anime-stacked.jpg)
+
+Rows: no LoRA, pixel art, storybook anime, both stacked. Same prompt and seed throughout.
+What loads, what does not, and the measurements are in [docs/LORA.md](docs/LORA.md).
+
 ## Lightning Mode
 
 On **Blackhole/sim**: `--lightning` switches to `EulerDiscreteScheduler` (trailing, linear)
@@ -524,6 +539,14 @@ application plugin, or Python library — see
 ---
 
 ## Changelog
+
+### v0.12.0 — unreleased
+- **Style LoRA support** (`--lora SOURCE[:FILE][@SCALE]`). Stable Diffusion 1.x kohya-format LoRAs
+  are merged into the CPU UNet and CLIP text encoder before TTNN preprocessing, so the device runs
+  ordinary weights: under a second at load, nothing per frame (2.3 s/frame warm, with and without).
+  Run on Blackhole with a pixel-art LoRA, a storybook-anime LoRA and both stacked.
+  LoRAs for other base models raise `ValueError`; the guoyww motion LoRAs are not supported.
+  See [docs/LORA.md](docs/LORA.md). Adds `peft` to the requirements.
 
 ### v0.11.2 — unreleased
 - `load_motion_modules()` (the Phase 3 CLI path) takes its default adapter repo from

@@ -368,3 +368,29 @@ with ttnn import-blocked.
 
 **Repackage from here needs the `animatediff_ttnn-0.11.2` wheel**, not 0.11.1 (the 0.11.1 section
 above is the release already published). Everything else in that repackage list is unchanged.
+
+## LoRA support (2026-10-07, v0.12.0)
+
+**Prompt.** "Commit the LoRA changes into a new branch, open a PR, then test the LoRAs on TT
+hardware and put the results in the docs. Use extra spooky and mysterious prompts." Then, mid-run:
+"do a code review too".
+
+**What changed my mind.** The first commit (PR #15, draft) was a PEFT-on-MotionAdapter design and
+its notes marked three LoRAs "Verified". Looking at the repos showed none is a PEFT adapter: all are
+single kohya-format `.safetensors` UNet LoRAs for SD 1.5, and one (Krea-2) targets another base model.
+That design could not load any of them. The PR was reworked on the same branch rather than closed.
+
+**Design.** `animatediff_ttnn/lora.py` merges into the CPU UNet before `preprocess_model_parameters`.
+UNet half: diffusers `load_lora_into_unet` + `fuse_lora` + `unload_lora`. Text-encoder half: merged by
+hand, since diffusers' text-encoder loader finds no modules on the transformers 5.x CLIP layout
+(IndexError on an empty rank map). `merge_loras` raises if a LoRA changes no UNet weight.
+
+**Environment trap.** `~/.tenstorrent-venv` has diffusers 0.32.1 with transformers 5.x and cannot import
+`diffusers.loaders`. Use the repo's `.venv` (diffusers 0.39, peft 0.21, ttnn).
+
+**Hardware trap.** Opening three devices at once (three processes, `--device-id 0/1/2`) failed in
+`risc_firmware_initializer` and left the chips unable to open even singly. `gozer release` reset them.
+Run one device-opening process at a time. Also: `pkill -f` killed my own shell.
+
+**Review fixes.** `hf_hub_download` without `revision=` failed `tests/test_weights_pins.py`; the module-level
+CLIP cache would carry a merged LoRA into later loads (now reset in `load_sd14_ttnn`); `peft` was undeclared.

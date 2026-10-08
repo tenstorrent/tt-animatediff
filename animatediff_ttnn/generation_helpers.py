@@ -14,8 +14,12 @@ import torch
 from animatediff_ttnn.weights_pins import SD14_REPO, revision_for
 
 
-def load_sd14_ttnn(device):
+def load_sd14_ttnn(device, loras=()):
     """Load SD 1.4 TTNN UNet and TTNN VAE onto device.
+
+    ``loras`` is an iterable of ``animatediff_ttnn.lora.LoraSpec``. They are merged into
+    the CPU UNet before TTNN preprocessing and into the cached CLIP text encoder, so the
+    device runs ordinary SD weights and inference cost is unchanged. See lora.py.
 
     Returns (ttnn_model, ttnn_vae, config, time_proj).
 
@@ -47,6 +51,20 @@ def load_sd14_ttnn(device):
         SD14_REPO, subfolder="unet", revision=revision_for(SD14_REPO)
     )
 
+    loras = list(loras)
+    # The CLIP encoder is a process-wide cache. Reload it when a LoRA is about to be
+    # merged (so the delta is not applied twice) or when it still carries one (so it
+    # cannot leak into a plain load). A plain load after a plain load keeps the warm cache.
+    global _clip_text_encoder, _clip_has_lora
+    if loras or _clip_has_lora:
+        _clip_text_encoder = None
+    _clip_has_lora = bool(loras)
+    if loras:
+        from animatediff_ttnn.lora import merge_loras
+
+        for spec, n_unet, n_te in merge_loras(torch_unet, _get_clip()[1], loras):
+            print(f"  LoRA {spec.source} @ {spec.scale}: {n_unet} UNet + {n_te} text-encoder tensors merged")
+
     print("  Building TTNN UNet (~2-3 min first run, cached after)...")
     parameters = preprocess_model_parameters(
         initialize_model=lambda: torch_unet,
@@ -59,6 +77,7 @@ def load_sd14_ttnn(device):
 
 _clip_tokenizer = None
 _clip_text_encoder = None
+_clip_has_lora = False  # True while the cached encoder carries a merged LoRA
 
 
 def _encode_one(text: str) -> torch.Tensor:
@@ -72,6 +91,18 @@ def _encode_one(text: str) -> torch.Tensor:
     prompt-schedule path so keyframe prompts are encoded identically to the
     single prompt (guaranteeing endpoints match the non-scheduled result).
     """
+    tokenizer, text_encoder = _get_clip()
+    tokens = tokenizer(
+        text, padding="max_length", max_length=tokenizer.model_max_length,
+        truncation=True, return_tensors="pt",
+    )
+    with torch.no_grad():
+        embeds = text_encoder(tokens.input_ids)[0]
+    return torch.nn.functional.pad(embeds, (0, 0, 0, 19))  # 77 → 96 tokens
+
+
+def _get_clip():
+    """Return the cached (tokenizer, text_encoder), loading them on first use."""
     global _clip_tokenizer, _clip_text_encoder
     from transformers import CLIPTokenizer, CLIPTextModel
 
@@ -84,14 +115,7 @@ def _encode_one(text: str) -> torch.Tensor:
             SD14_REPO, subfolder="text_encoder", revision=revision_for(SD14_REPO)
         )
         _clip_text_encoder.eval()
-
-    tokens = _clip_tokenizer(
-        text, padding="max_length", max_length=_clip_tokenizer.model_max_length,
-        truncation=True, return_tensors="pt",
-    )
-    with torch.no_grad():
-        embeds = _clip_text_encoder(tokens.input_ids)[0]
-    return torch.nn.functional.pad(embeds, (0, 0, 0, 19))  # 77 → 96 tokens
+    return _clip_tokenizer, _clip_text_encoder
 
 
 def encode_prompt(
