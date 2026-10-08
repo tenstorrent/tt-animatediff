@@ -1,295 +1,176 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 
-"""LoRA (Low-Rank Adaptation) support for tt-animatediff.
+"""Style LoRA support: merge Stable Diffusion LoRAs into the weights the TTNN UNet is built from.
 
-This module enables loading and merging LoRA adapters with the MotionAdapter,
-allowing for style-specific video generation without retraining the full model.
+Why merge on the CPU, before the device sees anything
+-----------------------------------------------------
+The TTNN UNet is built by ``preprocess_model_parameters`` from a CPU
+``UNet2DConditionModel``. A LoRA is a low-rank delta on selected weight matrices,
+``W' = W + scale * (alpha / rank) * (up @ down)``. Folding that into the CPU weights
+*before* preprocessing means the device runs the ordinary SD UNet with different numbers
+in it. There is no extra kernel, no extra op and no per-step cost. A merge takes seconds
+and happens once per process, at model load.
 
-Usage:
-    from animatediff_ttnn import generate_animation
-    from animatediff_ttnn.lora import load_lora_adapter
+What this module does and does not load
+---------------------------------------
+* Style LoRAs for SD 1.x in kohya format (``lora_unet_*`` / ``lora_te_*`` keys), which is
+  what most Civitai / Hub style LoRAs ship. They patch the UNet and, if present, the CLIP
+  text encoder. Diffusers converts the key names; this module does not parse them.
+* It does NOT load LoRAs trained against a different base model (SDXL, Flux, Krea-2...).
+  Those have different layer shapes and fail with a shape or key mismatch.
+* It does NOT load the ``guoyww/animatediff-motion-lora-*`` files. Those patch the motion
+  modules, which live in the MotionAdapter and not in the SD UNet.
 
-    adapter = load_lora_adapter(
-        base_adapter_id="guoyww/animatediff-motion-adapter-v1-5-2",
-        lora_adapter_id="my-org/anime-motion-lora"
-    )
-
-    frames = generate_animation(
-        prompt="a girl running in anime style",
-        motion_adapter=adapter
-    )
+SD 1.4 versus SD 1.5: the LoRAs on the Hub are mostly trained on 1.5, and this repo's
+base is 1.4. The two share one architecture, so the shapes match and the merge succeeds.
+Whether a 1.5 style transfers cleanly onto 1.4 weights is a visual question that tests
+cannot answer; docs/LORA.md records what was observed.
 """
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Optional
+import re
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Tuple
 
-try:
+
+@dataclass(frozen=True)
+class LoraSpec:
+    """One LoRA to merge: where it lives, which file inside it, and how strongly.
+
+    ``source`` is a Hub repo id or a local path (file or directory).
+    ``weight_name`` selects a file when the repo holds several (or a directory is given).
+    ``scale`` multiplies the delta; 1.0 is the strength the author trained for.
+    """
+
+    source: str
+    weight_name: Optional[str] = None
+    scale: float = 1.0
+
+
+# "repo/id[:file.safetensors][@0.8]". The scale is peeled off the right first so a
+# Windows-style or colon-bearing path in the middle cannot be mistaken for it.
+_SCALE_RE = re.compile(r"@(-?\d+(?:\.\d+)?)$")
+
+
+def parse_lora_spec(text: str) -> LoraSpec:
+    """Parse the CLI form ``SOURCE[:WEIGHT_NAME][@SCALE]`` into a LoraSpec.
+
+    >>> parse_lora_spec("org/style:style.safetensors@0.8")
+    LoraSpec(source='org/style', weight_name='style.safetensors', scale=0.8)
+    """
+    scale = 1.0
+    m = _SCALE_RE.search(text)
+    if m:
+        scale = float(m.group(1))
+        text = text[: m.start()]
+    source, _, weight_name = text.partition(":")
+    if not source:
+        raise ValueError(f"empty LoRA source in {text!r}")
+    return LoraSpec(source=source, weight_name=weight_name or None, scale=scale)
+
+
+def _resolve_file(spec: LoraSpec) -> str:
+    """Return a local .safetensors path for ``spec`` (downloading from the Hub if needed)."""
+    import os
+
+    if os.path.isfile(spec.source):
+        return spec.source
+    if os.path.isdir(spec.source):
+        if not spec.weight_name:
+            raise ValueError(f"{spec.source!r} is a directory; give a weight file name")
+        return os.path.join(spec.source, spec.weight_name)
+    from huggingface_hub import hf_hub_download
+
+    from animatediff_ttnn.weights_pins import revision_for
+
+    if not spec.weight_name:
+        raise ValueError(
+            f"{spec.source!r} is a Hub repo; name the file, e.g. {spec.source}:file.safetensors"
+        )
+    # revision_for() is None for any repo this package does not pin, which resolves to
+    # the repo's default branch. A user-chosen LoRA is by definition not pinned here;
+    # the call still goes through revision_for so the package-wide pinning guard
+    # (tests/test_weights_pins.py) holds and a future pin takes effect automatically.
+    return hf_hub_download(spec.source, spec.weight_name, revision=revision_for(spec.source))
+
+
+# kohya names a text-encoder layer lora_te_text_model_encoder_layers_<N>_<module with _ for .>
+_TE_KEY = re.compile(r"^lora_te_text_model_encoder_layers_(\d+)_(self_attn|mlp)_(\w+)\.lora_down\.weight$")
+
+
+def _merge_text_encoder(path: str, text_encoder, scale: float) -> int:
+    """Fold the ``lora_te_*`` part of a kohya file into a CLIP text encoder. Returns tensors changed.
+
+    Done by hand because diffusers matches LoRA keys to
+    module names by string, and that match finds nothing on the transformers 5.x
+    CLIPTextModel layout (it raises IndexError on an empty rank map). The format is
+    small: per target, ``W += scale * (alpha / rank) * (up @ down)``.
+    """
     import torch
-    from diffusers import MotionAdapter
-    from peft import PeftModel
-    PEFT_AVAILABLE = True
-except ImportError:
-    PEFT_AVAILABLE = False
-    torch = None
-    MotionAdapter = None
-    PeftModel = None
+    from safetensors import safe_open
 
-# Cache directory for merged adapters
-_DEFAULT_CACHE_DIR = Path.home() / ".cache" / "tt-animatediff" / "lora"
-
-
-def _get_cache_dir() -> Path:
-    """Get the cache directory for merged LoRA adapters.
-    
-    Respects LORA_CACHE_DIR environment variable.
-    """
-    env_cache = os.environ.get("LORA_CACHE_DIR")
-    if env_cache:
-        return Path(env_cache)
-    return _DEFAULT_CACHE_DIR
-
-
-def _ensure_cache_dir() -> Path:
-    """Ensure the cache directory exists."""
-    cache_dir = _get_cache_dir()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
+    modules = dict(text_encoder.named_modules())
+    changed = 0
+    with safe_open(path, "pt") as f:
+        keys = set(f.keys())
+        for k in sorted(keys):
+            m = _TE_KEY.match(k)
+            if not m:
+                continue
+            layer, block, leaf = m.groups()
+            base = k[: -len(".lora_down.weight")]
+            suffix = f"layers.{layer}.{block}.{leaf}"
+            target = next((mod for n, mod in modules.items() if n.endswith(suffix)), None)
+            if target is None:
+                raise ValueError(f"no text-encoder module matches LoRA key {k!r}")
+            down, up = f.get_tensor(k).float(), f.get_tensor(f"{base}.lora_up.weight").float()
+            alpha = f.get_tensor(f"{base}.alpha").item() if f"{base}.alpha" in keys else down.shape[0]
+            delta = scale * (alpha / down.shape[0]) * (up @ down)
+            with torch.no_grad():
+                target.weight += delta.to(target.weight.dtype)
+            changed += 1
+    return changed
 
 
-def load_lora_adapter(
-    base_adapter_id: str,
-    lora_adapter_id: str,
-    lora_alpha: float = 1.0,
-    device: str = "cpu",
-) -> MotionAdapter:
-    """Load a LoRA adapter and merge it into the base adapter.
-    
-    This function loads the base MotionAdapter, applies the LoRA adapter,
-    merges them, and returns the combined adapter ready for use.
-    
-    Args:
-        base_adapter_id: HuggingFace repo ID for the base MotionAdapter
-            (e.g., "guoyww/animatediff-motion-adapter-v1-5-2")
-        lora_adapter_id: HuggingFace repo ID or local path for the LoRA adapter
-            (e.g., "my-org/anime-motion-lora" or "/path/to/lora")
-        lora_alpha: LoRA alpha parameter (scaling factor)
-        device: Device to load adapters on (default: "cpu")
-        
-    Returns:
-        Merged MotionAdapter ready for use with tt-animatediff
-        
+def merge_loras(unet, text_encoder, specs: Iterable[LoraSpec]) -> List[Tuple[LoraSpec, int, int]]:
+    """Fuse each LoRA into ``unet`` and ``text_encoder`` in place.
+
+    The UNet part goes through diffusers' kohya converter and fuse; the adapter layers
+    are removed afterwards, so ``preprocess_model_parameters`` sees a plain SD UNet with
+    modified weights. The text-encoder part is merged by ``_merge_text_encoder``. LoRAs
+    apply in order and their deltas add.
+
+    Returns ``[(spec, n_unet_tensors_changed, n_text_encoder_tensors_changed), ...]``.
+
     Raises:
-        ImportError: If PEFT is not installed
-        FileNotFoundError: If adapter cannot be loaded
-        
-    Example:
-        ```python
-        from animatediff_ttnn import generate_animation
-        from animatediff_ttnn.lora import load_lora_adapter
-        
-        adapter = load_lora_adapter(
-            base_adapter_id="guoyww/animatediff-motion-adapter-v1-5-2",
-            lora_adapter_id="my-org/anime-motion-lora"
-        )
-        
-        frames = generate_animation(
-            prompt="a girl running in anime style",
-            motion_lora=adapter
-        )
-        ```
+        ValueError: a LoRA changed no UNet weight. That is the signature of a LoRA for
+            the wrong base model, and returning quietly would look like success.
     """
-    if not PEFT_AVAILABLE:
-        raise ImportError(
-            "PEFT is required for LoRA support. "
-            "Install with: pip install peft"
-        )
-    
-    cache_dir = _ensure_cache_dir()
-    
-    # Create unique cache path for this adapter combination
-    cache_key = f"{base_adapter_id.replace('/', '--')}+{lora_adapter_id.replace('/', '--')}"
-    cache_path = cache_dir / cache_key
-    
-    # Check if already merged and cached
-    if cache_path.exists():
-        # Load cached merged adapter
-        base = MotionAdapter.from_pretrained(
-            base_adapter_id,
-            torch_dtype=torch.float32,
-        )
-        merged = PeftModel.from_pretrained(
-            base,
-            str(cache_path),
-            torch_dtype=torch.float32,
-        ).merge_and_unload()
-        return merged
-    
-    # Load base adapter
-    base = MotionAdapter.from_pretrained(
-        base_adapter_id,
-        torch_dtype=torch.float32,
-    )
-    
-    # Load LoRA adapter
-    lora_model = PeftModel.from_pretrained(
-        base,
-        lora_adapter_id,
-        torch_dtype=torch.float32,
-        is_trainable=False,
-    )
-    
-    # Merge LoRA into base
-    merged = lora_model.merge_and_unload()
-    
-    # Save merged adapter to cache
-    merged.save_pretrained(str(cache_path))
-    
-    return merged
+    import torch
 
+    results = []
+    from diffusers.loaders import StableDiffusionLoraLoaderMixin as Loader
 
-def merge_and_cache(
-    base_adapter_id: str,
-    lora_adapter_id: str,
-    output_path: Optional[str] = None,
-    lora_alpha: float = 1.0,
-) -> Path:
-    """Merge LoRA into base adapter and save to cache.
-    
-    This function merges a LoRA adapter into a base MotionAdapter and saves
-    the result to the specified output path (or cache directory if not specified).
-    
-    Args:
-        base_adapter_id: HuggingFace repo ID for the base MotionAdapter
-        lora_adapter_id: HuggingFace repo ID or local path for the LoRA adapter
-        output_path: Optional custom output path (defaults to cache directory)
-        lora_alpha: LoRA alpha parameter (scaling factor)
-        
-    Returns:
-        Path to the merged adapter
-        
-    Raises:
-        ImportError: If PEFT is not installed
-        FileNotFoundError: If adapter cannot be loaded
-    """
-    if not PEFT_AVAILABLE:
-        raise ImportError(
-            "PEFT is required for LoRA support. "
-            "Install with: pip install peft"
-        )
-    
-    if output_path is None:
-        output_path = str(_ensure_cache_dir() / 
-                         f"{base_adapter_id.replace('/', '--')}+{lora_adapter_id.replace('/', '--')}")
-    
-    # Load and merge
-    base = MotionAdapter.from_pretrained(
-        base_adapter_id,
-        torch_dtype=torch.float32,
-    )
-    
-    lora_model = PeftModel.from_pretrained(
-        base,
-        lora_adapter_id,
-        torch_dtype=torch.float32,
-        is_trainable=False,
-    )
-    
-    merged = lora_model.merge_and_unload()
-    merged.save_pretrained(output_path)
-    
-    return Path(output_path)
-
-
-def get_cached_adapters() -> list[str]:
-    """List all cached LoRA adapters.
-    
-    Returns:
-        List of adapter names (cache keys)
-    """
-    cache_dir = _get_cache_dir()
-    if not cache_dir.exists():
-        return []
-    
-    adapters = []
-    for item in cache_dir.iterdir():
-        if item.is_dir() and (item / "adapter_config.json").exists():
-            adapters.append(item.name)
-    
-    return sorted(adapters)
-
-
-def clear_cache() -> None:
-    """Clear all cached LoRA adapters.
-    
-    WARNING: This removes all cached merged adapters.
-    """
-    cache_dir = _get_cache_dir()
-    if cache_dir.exists():
-        import shutil
-        shutil.rmtree(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-
-# Expose PEFT for advanced users
-def get_peft_config(
-    r: int = 16,
-    lora_alpha: int = 32,
-    target_modules: Optional[list[str]] = None,
-    lora_dropout: float = 0.0,
-    bias: str = "none",
-) -> "peft.LoraConfig":
-    """Create a PEFT LoraConfig for training custom adapters.
-    
-    This function is provided for users who want to train their own
-    LoRA adapters. It creates a standard configuration suitable for
-    MotionAdapter fine-tuning.
-    
-    Args:
-        r: LoRA rank (lower = smaller adapter, less capacity)
-        lora_alpha: LoRA alpha parameter (scaling factor)
-        target_modules: List of modules to apply LoRA to (default: attention layers)
-        lora_dropout: Dropout probability
-        bias: Bias handling ("none", "all", or "lora_only")
-        
-    Returns:
-        LoraConfig for use with get_peft_model()
-        
-    Raises:
-        ImportError: If PEFT is not installed
-        
-    Example:
-        ```python
-        from animatediff_ttnn.lora import get_peft_config, train_lora_adapter
-        from diffusers import MotionAdapter
-        from peft import get_peft_model
-        
-        config = get_peft_config(r=16, lora_alpha=32)
-        base = MotionAdapter.from_pretrained("guoyww/animatediff-motion-adapter-v1-5-2")
-        lora = get_peft_model(base, config)
-        # Train lora on your dataset...
-        ```
-    """
-    if not PEFT_AVAILABLE:
-        raise ImportError(
-            "PEFT is required for LoRA support. "
-            "Install with: pip install peft"
-        )
-    
-    from peft import LoraConfig
-    
-    if target_modules is None:
-        # Default: apply to attention layers
-        target_modules = ["to_q", "to_k", "to_v", "to_out.0"]
-    
-    return LoraConfig(
-        task_type="CAUSAL_LM",
-        r=r,
-        lora_alpha=lora_alpha,
-        target_modules=target_modules,
-        lora_dropout=lora_dropout,
-        bias=bias,
-    )
+    for i, spec in enumerate(specs):
+        name = f"tt_lora_{i}"
+        path = _resolve_file(spec)
+        before = {k: v.detach().clone() for k, v in unet.state_dict().items()}
+        # UNet half only: the stock loader's text-encoder half cannot see the
+        # transformers 5.x CLIP layout, so that half is _merge_text_encoder's job.
+        state, alphas = Loader.lora_state_dict(path)
+        Loader.load_lora_into_unet(state, alphas, unet, adapter_name=name)
+        unet.set_adapters([name], [spec.scale])
+        unet.fuse_lora()
+        unet.unload_lora()
+        after = unet.state_dict()
+        changed = sum(1 for k, v in before.items() if not torch.equal(v, after[k]))
+        if changed == 0:
+            raise ValueError(
+                f"LoRA {spec.source!r} loaded but changed no UNet weight. It was most "
+                "likely trained for a different base model."
+            )
+        te_changed = _merge_text_encoder(path, text_encoder, spec.scale) if text_encoder is not None else 0
+        results.append((spec, changed, te_changed))
+    return results

@@ -37,6 +37,7 @@ setup(
         "numpy>=1.24.0",
         "Pillow>=9.0.0",
         "diffusers>=0.32.1",
+        "peft>=0.15",
         "transformers>=4.30.0",
         "accelerate>=0.20.0",
         "huggingface_hub>=0.20.0",  # Lightning checkpoint download + VAE weights
