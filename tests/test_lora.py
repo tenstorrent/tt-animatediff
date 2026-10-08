@@ -29,6 +29,15 @@ class TestParse:
     def test_scale_without_file(self):
         assert parse_lora_spec("/tmp/x.safetensors@-0.5") == LoraSpec("/tmp/x.safetensors", None, -0.5)
 
+    @pytest.mark.parametrize("text,scale", [("a/b:f.safetensors@.8", 0.8), ("a/b:f.safetensors@1.", 1.0),
+                                            ("a/b:f.safetensors@+0.5", 0.5), ("a/b:f.safetensors@1e-1", 0.1)])
+    def test_scale_forms(self, text, scale):
+        assert parse_lora_spec(text) == LoraSpec("a/b", "f.safetensors", scale)
+
+    def test_garbled_scale_is_rejected_not_folded_into_the_filename(self):
+        with pytest.raises(ValueError, match="scale"):
+            parse_lora_spec("a/b:f.safetensors@abc")
+
     def test_empty_source_rejected(self):
         with pytest.raises(ValueError):
             parse_lora_spec(":file.safetensors")
@@ -82,12 +91,20 @@ class TestTextEncoderMerge:
         lora._merge_text_encoder(str(f), te, scale=0.0)
         assert torch.equal(te.layers[0]["mlp"]["fc1"].weight, before)
 
+    def test_ambiguous_target_raises(self, tmp_path):
+        f = tmp_path / "l.safetensors"
+        _write_te_lora(f)
+        te = _TinyClip()
+        te.a_encoder = torch.nn.ModuleDict({"layers": __import__("copy").deepcopy(te.layers)})  # same suffix under a second name
+        with pytest.raises(ValueError, match="expected exactly 1"):
+            lora._merge_text_encoder(str(f), te, scale=1.0)
+
     def test_unmatched_key_raises(self, tmp_path):
         f = tmp_path / "l.safetensors"
         _write_te_lora(f)
         te = _TinyClip()
         te.layers = te.layers[:1]  # layer 1 no longer exists
-        with pytest.raises(ValueError, match="no text-encoder module"):
+        with pytest.raises(ValueError, match="expected exactly 1"):
             lora._merge_text_encoder(str(f), te, scale=1.0)
 
 
@@ -98,8 +115,16 @@ class TestResolve:
         assert lora._resolve_file(LoraSpec(str(f))) == str(f)
 
     def test_hub_repo_without_file_name_is_refused(self):
-        with pytest.raises(ValueError, match="name the file"):
+        with pytest.raises(ValueError, match=".safetensors"):
             lora._resolve_file(LoraSpec("org/repo"))
+
+    def test_non_safetensors_is_refused(self):
+        with pytest.raises(ValueError, match=".safetensors"):
+            lora._resolve_file(LoraSpec("org/repo", "w.ckpt"))
+
+    def test_mistyped_local_path_is_a_file_not_found_not_a_hub_lookup(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            lora._resolve_file(LoraSpec(str(tmp_path / "nope.safetensors")))
 
 
 class TestWiring:

@@ -51,7 +51,7 @@ class LoraSpec:
 
 # "repo/id[:file.safetensors][@0.8]". The scale is peeled off the right first so a
 # Windows-style or colon-bearing path in the middle cannot be mistaken for it.
-_SCALE_RE = re.compile(r"@(-?\d+(?:\.\d+)?)$")
+_SCALE_RE = re.compile(r"@([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$")
 
 
 def parse_lora_spec(text: str) -> LoraSpec:
@@ -68,6 +68,8 @@ def parse_lora_spec(text: str) -> LoraSpec:
     source, _, weight_name = text.partition(":")
     if not source:
         raise ValueError(f"empty LoRA source in {text!r}")
+    if "@" in weight_name or (not weight_name and "@" in source):
+        raise ValueError(f"could not read a scale from {text!r}; write it as ...@0.8")
     return LoraSpec(source=source, weight_name=weight_name or None, scale=scale)
 
 
@@ -75,12 +77,20 @@ def _resolve_file(spec: LoraSpec) -> str:
     """Return a local .safetensors path for ``spec`` (downloading from the Hub if needed)."""
     import os
 
+    name = spec.weight_name or spec.source
+    if not name.endswith(".safetensors"):
+        raise ValueError(f"LoRA files must be .safetensors, got {name!r}")
     if os.path.isfile(spec.source):
         return spec.source
     if os.path.isdir(spec.source):
         if not spec.weight_name:
             raise ValueError(f"{spec.source!r} is a directory; give a weight file name")
-        return os.path.join(spec.source, spec.weight_name)
+        path = os.path.join(spec.source, spec.weight_name)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+        return path
+    if spec.source.startswith((".", "/", "~")) or spec.source.endswith(".safetensors"):
+        raise FileNotFoundError(f"LoRA file not found: {spec.source}")
     from huggingface_hub import hf_hub_download
 
     from animatediff_ttnn.weights_pins import revision_for
@@ -112,6 +122,9 @@ def _merge_text_encoder(path: str, text_encoder, scale: float) -> int:
     from safetensors import safe_open
 
     modules = dict(text_encoder.named_modules())
+    by_suffix = {}
+    for n in modules:
+        by_suffix.setdefault(n.split('encoder.', 1)[-1], []).append(n)
     changed = 0
     with safe_open(path, "pt") as f:
         keys = set(f.keys())
@@ -121,10 +134,10 @@ def _merge_text_encoder(path: str, text_encoder, scale: float) -> int:
                 continue
             layer, block, leaf = m.groups()
             base = k[: -len(".lora_down.weight")]
-            suffix = f"layers.{layer}.{block}.{leaf}"
-            target = next((mod for n, mod in modules.items() if n.endswith(suffix)), None)
-            if target is None:
-                raise ValueError(f"no text-encoder module matches LoRA key {k!r}")
+            hits = by_suffix.get(f"layers.{layer}.{block}.{leaf}", [])
+            if len(hits) != 1:
+                raise ValueError(f"{len(hits)} text-encoder modules match LoRA key {k!r}; expected exactly 1")
+            target = modules[hits[0]]
             down, up = f.get_tensor(k).float(), f.get_tensor(f"{base}.lora_up.weight").float()
             alpha = f.get_tensor(f"{base}.alpha").item() if f"{base}.alpha" in keys else down.shape[0]
             delta = scale * (alpha / down.shape[0]) * (up @ down)
@@ -166,11 +179,11 @@ def merge_loras(unet, text_encoder, specs: Iterable[LoraSpec]) -> List[Tuple[Lor
         unet.unload_lora()
         after = unet.state_dict()
         changed = sum(1 for k, v in before.items() if not torch.equal(v, after[k]))
-        if changed == 0:
+        te_changed = _merge_text_encoder(path, text_encoder, spec.scale) if text_encoder is not None else 0
+        if changed == 0 and te_changed == 0 and spec.scale != 0:
             raise ValueError(
-                f"LoRA {spec.source!r} loaded but changed no UNet weight. It was most "
+                f"LoRA {spec.source!r} loaded but changed no weight. It was most "
                 "likely trained for a different base model."
             )
-        te_changed = _merge_text_encoder(path, text_encoder, spec.scale) if text_encoder is not None else 0
         results.append((spec, changed, te_changed))
     return results

@@ -271,6 +271,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
 args = _build_parser().parse_args()
 
+# Validate --lora up front: a typo should fail before a chip is claimed, not after.
+if args.lora:
+    if args.mode == "cpu":
+        sys.exit("--lora is supported in blackhole/sim modes only")
+    from animatediff_ttnn.lora import parse_lora_spec, _resolve_file
+    for _t in args.lora:
+        try:
+            _resolve_file(parse_lora_spec(_t))
+        except (ValueError, FileNotFoundError) as _e:
+            sys.exit(f"--lora {_t!r}: {_e}")
+
 # Apply mode-specific defaults now that we know the mode
 if args.frames is None:
     args.frames = 16 if args.mode == "cpu" else 8

@@ -52,11 +52,13 @@ def load_sd14_ttnn(device, loras=()):
     )
 
     loras = list(loras)
-    # The CLIP encoder is a process-wide cache. Reload it so a LoRA merged by an earlier
-    # call cannot leak into this one, and so two calls with the same LoRA do not apply
-    # its delta twice.
-    global _clip_text_encoder
-    _clip_text_encoder = None
+    # The CLIP encoder is a process-wide cache. Reload it when a LoRA is about to be
+    # merged (so the delta is not applied twice) or when it still carries one (so it
+    # cannot leak into a plain load). A plain load after a plain load keeps the warm cache.
+    global _clip_text_encoder, _clip_has_lora
+    if loras or _clip_has_lora:
+        _clip_text_encoder = None
+    _clip_has_lora = bool(loras)
     if loras:
         from animatediff_ttnn.lora import merge_loras
 
@@ -75,6 +77,7 @@ def load_sd14_ttnn(device, loras=()):
 
 _clip_tokenizer = None
 _clip_text_encoder = None
+_clip_has_lora = False  # True while the cached encoder carries a merged LoRA
 
 
 def _encode_one(text: str) -> torch.Tensor:
