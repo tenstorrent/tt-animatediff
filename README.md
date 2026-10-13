@@ -544,6 +544,9 @@ application plugin, or Python library — see
 - **LoRAs in the served path.** `ANIMATEDIFF_LORAS` defines named variants; a request picks one with
   `"lora": "name"` at no per-request cost. Variants are resident on the chip and share the VAE. An unknown
   name is a 400. `GET /v1/models` lists them. `prompt_schedule` is accepted in requests.
+- **Served previews.** `GET /v1/videos/preview` reports progress and the latest 256x256 preview GIF of the
+  generation in flight, without waiting on the device lock. Request `"preview": true` (and optionally
+  `"preview_every": n`) to render frames; each render costs about 0.4 s on one chip.
 - **`--lcm-lora`** merges `latent-consistency/lcm-lora-sdv1-5` and samples with `LCMScheduler`: 4 steps at
   guidance 1.5 instead of 25 at 7.5. About 2x end to end on the CLI and 5x served warm (4.2 s against 21.6 s
   for 8 frames). A served variant that includes it samples this way automatically.

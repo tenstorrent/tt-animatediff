@@ -59,7 +59,7 @@ def test_the_asgi_attribute_is_what_uvicorn_will_load():
 def test_the_routes_are_the_ones_the_manifest_promises():
     paths = {r.path for r in app.routes}
     assert {"/health", "/tt-liveness", "/v1/models",
-            "/v1/videos/generations"} <= paths
+            "/v1/videos/generations", "/v1/videos/preview"} <= paths
 
 
 # ---- mesh shape ------------------------------------------------------------------------
@@ -990,3 +990,156 @@ def test_the_image_ships_peft_so_a_lora_request_cannot_fail_on_a_missing_import(
     root = Path(__file__).resolve().parents[1]
     assert any(p.startswith("peft") for p in _manifest()["runtime"]["packages"])
     assert "peft" in _lock_pins(), "tt_model_package.lock does not pin peft; the image would lack it"
+
+
+# ---- per-step previews ------------------------------------------------------------------
+
+
+def test_the_preview_endpoint_answers_before_the_model_is_ready():
+    """A poller should not have to tell "starting" from "idle": always 200, all zeros."""
+    r = TestClient(app).get("/v1/videos/preview")
+    assert r.status_code == 200
+    assert r.json() == {"step": 0, "total": 0, "gif_b64": None, "running": False}
+
+
+def test_the_preview_store_resets_per_request_and_publishes_what_the_callback_wrote(tmp_path):
+    import base64
+
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    try:
+        store.begin(4)
+        assert store.snapshot() == {"step": 0, "total": 4, "gif_b64": None, "running": True}
+        with open(store.path, "wb") as fh:
+            fh.write(b"GIF89a-one")
+        store.publish(f"PREVIEW: 2/4 {store.path}")
+        snap = store.snapshot()
+        assert (snap["step"], snap["total"]) == (2, 4)
+        assert base64.b64decode(snap["gif_b64"]) == b"GIF89a-one"
+        store.end()
+        assert store.snapshot()["running"] is False
+        assert store.snapshot()["gif_b64"], "the last frame stays readable after the run ends"
+        store.begin(8)  # next request: the previous request's frame must not leak into it
+        assert store.snapshot() == {"step": 0, "total": 8, "gif_b64": None, "running": True}
+    finally:
+        store.close()
+
+
+def test_a_lost_preview_frame_keeps_the_previous_one_and_never_raises():
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    try:
+        store.begin(4)
+        with open(store.path, "wb") as fh:
+            fh.write(b"first")
+        store.publish(f"PREVIEW: 1/4 {store.path}")
+        before = store.snapshot()["gif_b64"]
+        store.publish("PREVIEW: 2/4 /no/such/file.gif")  # unreadable
+        store.publish("some other log line")  # not an announcement
+        assert store.snapshot()["gif_b64"] == before
+    finally:
+        store.close()
+
+
+def test_the_step_counter_runs_without_the_flag_but_no_gif_is_rendered():
+    """The counter is free; the GIF render is what costs device time, so it is opt-in."""
+    from animatediff_ttnn.server import app as mod
+
+    store = mod.PreviewStore()
+    try:
+        with patch("animatediff_ttnn.preview.make_step_callback") as make:
+            cb = mod._step_callback(store, VideoGenerationRequest(prompt="x"), 4)
+            cb(0, 4, [object()])
+            cb(1, 4, [object()])
+        make.assert_not_called()
+        assert store.snapshot()["step"] == 2
+        assert store.snapshot()["gif_b64"] is None
+    finally:
+        store.close()
+
+
+def test_the_preview_endpoint_answers_while_the_device_lock_is_held():
+    """The requirement: previews are only useful if they can be read DURING the work.
+
+    A real POST holds the device lock inside a blocked fake denoise loop. While it is blocked
+    the endpoint must still answer promptly, report the step reached, and carry the frame the
+    loop published. The loop is the real _generate with only the model calls and the GIF
+    render stubbed, so the wiring from on_step to the endpoint is what is under test.
+    """
+    import base64
+    import threading
+    import time as _time
+
+    from animatediff_ttnn.generation_helpers import Sd14Variant  # noqa: F401  (import check)
+    from animatediff_ttnn.server import app as mod
+
+    started, release = threading.Event(), threading.Event()
+
+    def fake_loop(**kw):
+        for i in range(3):  # three steps; the callback is the real _step_callback
+            kw["on_step"](i, 3, [object()])
+        started.set()
+        assert release.wait(timeout=20), "test never released the fake loop"
+        return [object()]
+
+    def fake_export(frames, path):
+        with open(path, "wb") as fh:
+            fh.write(b"GIF89a-live")
+
+    store = mod.PreviewStore()
+    app.state.engine = {"device": "d", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": store,
+                        "hf_model": "x", "mesh_shape": (1, 1)}
+    app.state.device_lock = asyncio.Lock()
+    result = {}
+
+    def post():
+        with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb"), \
+             patch("animatediff_ttnn.temporal_attention.generate_frames_temporal", side_effect=lambda **kw: fake_loop(**kw)), \
+             patch("animatediff_ttnn.preview._latent_preview_fn", return_value=lambda *a, **k: ["f"]), \
+             patch("animatediff_ttnn.preview._export_gif_fn", return_value=fake_export), \
+             patch.object(mod, "_frames_to_gif_b64", return_value="Zm9v"):
+            result["r"] = TestClient(app).post("/v1/videos/generations", json={
+                "prompt": "a cat", "num_inference_steps": 3, "num_frames": 4, "preview": True})
+
+    t = threading.Thread(target=post)
+    try:
+        t.start()
+        assert started.wait(timeout=20), "the generation never reached the loop"
+        t0 = _time.monotonic()
+        r = TestClient(app).get("/v1/videos/preview")  # the device lock is held right now
+        elapsed = _time.monotonic() - t0
+        assert r.status_code == 200
+        body = r.json()
+        assert body["running"] is True and (body["step"], body["total"]) == (3, 3)
+        assert base64.b64decode(body["gif_b64"]) == b"GIF89a-live"
+        assert elapsed < 2.0, f"the preview endpoint waited {elapsed:.1f}s behind the generation"
+        assert app.state.device_lock.locked(), "the test is not holding the lock it claims to"
+    finally:
+        release.set()
+        t.join(timeout=30)
+        del app.state.engine
+        store.close()
+    assert result["r"].status_code == 200
+    assert store.snapshot()["running"] is False
+
+
+def test_preview_every_reaches_the_step_callback_builder():
+    from animatediff_ttnn.server import app as mod
+
+    store = mod.PreviewStore()
+    try:
+        with patch("animatediff_ttnn.preview.make_step_callback") as make:
+            mod._step_callback(store, VideoGenerationRequest(prompt="x", preview=True, preview_every=5), 20)
+            mod._step_callback(store, VideoGenerationRequest(prompt="x", preview=True), 20)
+        assert make.call_args_list[0].kwargs["every"] == 5
+        assert make.call_args_list[1].kwargs["every"] is None  # library default cadence
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("bad", [0, -1, 101])
+def test_a_preview_cadence_out_of_range_is_refused(bad):
+    r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "preview_every": bad})
+    assert r.status_code == 422

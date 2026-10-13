@@ -190,6 +190,27 @@ Hugging Face cache first.
 
 ![The same prompt and seed served three ways: no LoRA, pixel art, storybook anime](assets/lora/served-variants.jpg)
 
+## Watching a served generation
+
+`GET /v1/videos/preview` returns `{"step": n, "total": N, "gif_b64": "<base64 GIF>" | null, "running": bool}`
+for the generation in flight. It never waits on the device lock: a test holds the lock inside a blocked
+generation and reads the endpoint. It answers 200 with zeros before the model is ready, so a poller does not
+have to tell "starting" from "idle". `step` is 1-based and `total` is the loop's real step count (a 20-step
+request reports 21, because the default sampler runs 21 timesteps).
+
+The step counter always runs. The GIF is rendered only when the request sets `"preview": true`; it is
+256x256, rewritten atomically each time it renders, and reset at the start of each request. After a run ends
+the last frame stays readable until the next request begins. `"preview_every": n` renders every nth step; the
+default is every step up to 10 steps and every other step beyond that.
+
+Rendering costs generation time. On one chip, 8 frames and 20 steps took 13.5 to 13.9 s with no preview and 17.8
+to 20.2 s with previews (about 0.4 s per render, 11 renders). Poll latency during a run was about 140 ms. Ask for
+previews only when someone is looking, and raise `preview_every` if the cost matters.
+
+Every `uvicorn` run here ended with `terminate called after throwing an instance of UmdException` after
+"Application shutdown complete". It happens on a plain server with no preview and no LoRA activity at exit, so it
+is a tt-metal teardown abort and not caused by these features; the process exit code is non-zero.
+
 ## Which LoRAs to try next
 
 Tried so far: two style LoRAs (pixel art, storybook anime), their stack, and the LCM-LoRA. Not tried, and

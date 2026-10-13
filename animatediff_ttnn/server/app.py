@@ -50,6 +50,9 @@ import base64
 import io
 import os
 import re
+import shutil
+import tempfile
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional
@@ -79,6 +82,82 @@ DEFAULT_FPS = 8
 SERVABLE_SIZE = 512
 
 
+class PreviewStore:
+    """Progress and the latest preview frame of the generation in flight.
+
+    Written from the worker thread that runs the denoise loop and read from the event loop by
+    ``GET /v1/videos/preview``. It holds only plain values behind its own small lock, never
+    the device lock: the endpoint must answer while a generation holds the device, the same
+    rule ``/tt-liveness`` follows. A reader that waited on the device would show a frozen
+    preview for exactly as long as the work it is meant to show.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._dir = tempfile.mkdtemp(prefix="tt-animatediff-preview-")
+        #: Where ``make_step_callback`` writes the rolling GIF (atomically, so a read never
+        #: sees half a file).
+        self.path = os.path.join(self._dir, "preview.gif")
+        self._state = {"step": 0, "total": 0, "gif_b64": None, "running": False}
+
+    def begin(self, total: int) -> None:
+        """Reset for a new request: a stale frame from the last one must not show."""
+        with self._lock:
+            self._state = {"step": 0, "total": total, "gif_b64": None, "running": True}
+
+    def step(self, step: int, total: int) -> None:
+        with self._lock:
+            self._state.update(step=step, total=total)
+
+    def publish(self, line: str) -> None:
+        """``emit`` for ``make_step_callback``: read the GIF it just wrote and keep it.
+
+        Reading here, in the worker thread, keeps the endpoint a pure memory read. Any failure
+        leaves the previous frame in place: a lost preview must not fail the generation.
+        """
+        from animatediff_ttnn.preview import parse_preview_line
+
+        parsed = parse_preview_line(line)
+        if parsed is None:
+            return
+        step, total, path = parsed
+        try:
+            with open(path, "rb") as fh:
+                gif = base64.b64encode(fh.read()).decode("ascii")
+        except OSError:
+            return
+        with self._lock:
+            self._state.update(step=step, total=total, gif_b64=gif)
+
+    def end(self) -> None:
+        with self._lock:
+            self._state["running"] = False
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return dict(self._state)
+
+    def close(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+
+def _step_callback(preview: "PreviewStore", req: "VideoGenerationRequest", steps: int):
+    """The ``on_step`` hook for one request: always count steps, render GIFs only if asked."""
+    render = None
+    if req.preview:
+        from animatediff_ttnn.preview import make_step_callback
+
+        render = make_step_callback(preview.path, steps, every=req.preview_every, emit=preview.publish)
+
+    def on_step(step_idx: int, total: int, frame_latents) -> None:
+        # 1-based, to match the PREVIEW line and what a progress bar shows.
+        preview.step(step_idx + 1, total)
+        if render is not None:
+            render(step_idx, total, frame_latents)
+
+    return on_step
+
+
 class PromptKeyframe(BaseModel):
     """One keyframe of a prompt schedule ("prompt travel"): frame index and the prompt there."""
 
@@ -105,6 +184,16 @@ class VideoGenerationRequest(BaseModel):
     #: the plain model. A name, never a repo id or a path: the operator decides which files
     #: this server will load, so a caller cannot make it fetch or open one.
     lora: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    #: Render a rolling preview GIF of the in-flight latents, readable from
+    #: ``GET /v1/videos/preview`` while this request runs. Off by default: the step counter
+    #: there is always kept (it is free), but each GIF is a CPU render and export between
+    #: denoise steps, which is time the device spends waiting.
+    preview: bool = False
+    #: Render a preview every Nth step (the last step always renders). Omit for the library
+    #: default: every step on a run of 10 steps or fewer, every other step beyond that. Each
+    #: render added about 0.4 s on one Blackhole chip, so a larger value trades preview
+    #: smoothness for generation time.
+    preview_every: Optional[int] = Field(default=None, ge=1, le=100)
     #: Keyframe prompts interpolated across the frames ("prompt travel"). ``prompt`` stays
     #: required and is what the schedule falls back to for a frame between none; at least
     #: two keyframes are needed for anything to travel.
@@ -338,23 +427,32 @@ def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
             prompt_schedule=[(kf.frame, kf.prompt) for kf in req.prompt_schedule],
             num_frames=req.num_frames,
         )
-    return generate_frames_temporal(
-        device=state["device"],
-        ttnn_model=ttnn_model,
-        ttnn_vae=ttnn_vae,
-        config=config,
-        torch_time_proj=torch_time_proj,
-        text_embeddings=embeddings,
-        text_embeddings_per_frame=per_frame,
-        num_frames=req.num_frames,
-        num_steps=steps,
-        guidance_scale=guidance,
-        seed=req.seed,
-        temporal_alpha=req.temporal_alpha,
-        use_lcm=use_lcm,
-        height=req.height,
-        width=req.width,
-    )
+    preview = state.get("preview")
+    on_step = _step_callback(preview, req, steps) if preview is not None else None
+    if preview is not None:
+        preview.begin(steps)
+    try:
+        return generate_frames_temporal(
+            device=state["device"],
+            ttnn_model=ttnn_model,
+            ttnn_vae=ttnn_vae,
+            config=config,
+            torch_time_proj=torch_time_proj,
+            text_embeddings=embeddings,
+            text_embeddings_per_frame=per_frame,
+            num_frames=req.num_frames,
+            num_steps=steps,
+            guidance_scale=guidance,
+            seed=req.seed,
+            temporal_alpha=req.temporal_alpha,
+            use_lcm=use_lcm,
+            on_step=on_step,
+            height=req.height,
+            width=req.width,
+        )
+    finally:
+        if preview is not None:
+            preview.end()
 
 
 @asynccontextmanager
@@ -376,8 +474,10 @@ async def lifespan(app: FastAPI):
         # Same rollback _open_device_and_models does: a failed start must not keep a chip.
         _close_device(device)
         raise
+    preview = PreviewStore()
     app.state.engine = {
         "device": device, "models": models, "variants": variants, "mesh_shape": shape,
+        "preview": preview,
         "hf_model": os.environ.get("HF_MODEL", "unknown"),
         "mesh_device": os.environ.get("MESH_DEVICE", "unknown"),
     }
@@ -385,6 +485,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        preview.close()
         # Let ttnn close the mesh itself. Bypassing its teardown is what triggers an abort
         # in MetalContext::destroy_all_instances.
         try:
@@ -447,6 +548,23 @@ async def health() -> dict:
     if not _readiness()["model_ready"]:
         raise HTTPException(status_code=503, detail="Model not ready")
     return {}
+
+
+@app.get("/v1/videos/preview")
+async def videos_preview() -> dict:
+    """Progress and latest preview frame of the generation in flight.
+
+    ``{"step": n, "total": N, "gif_b64": "<base64 GIF>" | null, "running": bool}``. ``step``
+    is 1-based. ``gif_b64`` is null until a request sent ``"preview": true`` has produced a
+    frame, and is reset at the start of each request. Never blocks on the device lock, so it
+    answers while a generation holds the device; it is a memory read behind a tiny lock.
+    Always 200, including before the model is ready (all zeros, not running): a poller
+    should not need to tell "starting" from "idle".
+    """
+    preview = (getattr(app.state, "engine", None) or {}).get("preview")
+    if preview is None:
+        return {"step": 0, "total": 0, "gif_b64": None, "running": False}
+    return preview.snapshot()
 
 
 @app.get("/v1/models")
