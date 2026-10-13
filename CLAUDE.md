@@ -394,3 +394,20 @@ Run one device-opening process at a time. Also: `pkill -f` killed my own shell.
 
 **Review fixes.** `hf_hub_download` without `revision=` failed `tests/test_weights_pins.py`; the module-level
 CLIP cache would carry a merged LoRA into later loads (now reset in `load_sd14_ttnn`); `peft` was undeclared.
+
+### 2026-10-13 — Copilot review on PR #15 (still 0.12.0, unreleased)
+Four findings, all fixed in `animatediff_ttnn/lora.py`; `README.md` marks 0.12.0 as unreleased, so no version bump.
+- **Non-finite scale.** `@1e999` matched the scale regex and `float()` gave inf, which fuse would write into every
+  targeted weight. `LoraSpec.__post_init__` now rejects inf and nan, so specs built in code are covered too.
+- **`~` paths.** `os.path.isfile` does not expand `~`, so an existing `~/x.safetensors` was reported missing.
+  `_resolve_file` expands the source first.
+- **Memory.** `merge_loras` cloned the whole UNet state dict per LoRA to count changed tensors. It now snapshots only the
+  layers the loader just wrapped (`_lora_targets`, peft `base_layer` of modules holding the adapter). Checked against real
+  peft on a tiny UNet: 24 of 24 targets found and changed, none left wrapped after unload.
+- **Tests.** `TestMergeLoras` runs the UNet path on a fake UNet with a stubbed diffusers loader: fuse scaling, stacking,
+  cleanup order, the zero-match error, scale 0, and that `state_dict()` is never called. 8 of the new tests fail on the old
+  `lora.py` (scale, tilde and snapshot ones) and pass now. The fake mirrors peft's `base_layer` / `lora_A` shape, so the
+  real-peft check above is the guard if peft changes it.
+Full suite: 400 passed, 1 failed. The failure is `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing`, which
+compares the package tree with `main`'s; it fails for any branch that changes `animatediff_ttnn/` and is resolved by the
+release repin in `docs/RELEASING.md`.

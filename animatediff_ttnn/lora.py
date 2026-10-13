@@ -30,6 +30,7 @@ cannot answer; docs/LORA.md records what was observed.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
@@ -47,6 +48,13 @@ class LoraSpec:
     source: str
     weight_name: Optional[str] = None
     scale: float = 1.0
+
+    def __post_init__(self):
+        # Checked here, not only in parse_lora_spec, so a spec built in code gets the same
+        # guard. "@1e999" matches the scale regex and float() turns it into inf; fusing
+        # inf (or nan) writes it into every targeted weight and corrupts inference.
+        if not math.isfinite(self.scale):
+            raise ValueError(f"LoRA scale must be a finite number, got {self.scale!r} for {self.source!r}")
 
 
 # "repo/id[:file.safetensors][@0.8]". The scale is peeled off the right first so a
@@ -80,12 +88,16 @@ def _resolve_file(spec: LoraSpec) -> str:
     name = spec.weight_name or spec.source
     if not name.endswith(".safetensors"):
         raise ValueError(f"LoRA files must be .safetensors, got {name!r}")
-    if os.path.isfile(spec.source):
-        return spec.source
-    if os.path.isdir(spec.source):
+    # The shell expands "~" only when it is unquoted and leads a word, so a value like
+    # --lora ~/loras/x.safetensors@0.8 or one read from a config arrives with the tilde intact.
+    # Expand before testing, otherwise an existing file is reported as missing.
+    source = os.path.expanduser(spec.source)
+    if os.path.isfile(source):
+        return source
+    if os.path.isdir(source):
         if not spec.weight_name:
             raise ValueError(f"{spec.source!r} is a directory; give a weight file name")
-        path = os.path.join(spec.source, spec.weight_name)
+        path = os.path.join(source, spec.weight_name)
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
         return path
@@ -147,6 +159,20 @@ def _merge_text_encoder(path: str, text_encoder, scale: float) -> int:
     return changed
 
 
+def _lora_targets(unet, adapter_name: str) -> list:
+    """Return the base layers that carry adapter ``adapter_name`` (peft ``LoraLayer`` wrappers).
+
+    Each returned module is the original ``nn.Linear`` / ``nn.Conv2d``, whose ``weight``
+    is what ``fuse_lora`` overwrites. The same objects stay in the UNet after
+    ``unload_lora`` unwraps them, so their ``weight`` can be read again after the fuse.
+    """
+    return [
+        m.base_layer
+        for m in unet.modules()
+        if hasattr(m, "base_layer") and adapter_name in getattr(m, "lora_A", {})
+    ]
+
+
 def merge_loras(unet, text_encoder, specs: Iterable[LoraSpec]) -> List[Tuple[LoraSpec, int, int]]:
     """Fuse each LoRA into ``unet`` and ``text_encoder`` in place.
 
@@ -169,16 +195,20 @@ def merge_loras(unet, text_encoder, specs: Iterable[LoraSpec]) -> List[Tuple[Lor
     for i, spec in enumerate(specs):
         name = f"tt_lora_{i}"
         path = _resolve_file(spec)
-        before = {k: v.detach().clone() for k, v in unet.state_dict().items()}
         # UNet half only: the stock loader's text-encoder half cannot see the
         # transformers 5.x CLIP layout, so that half is _merge_text_encoder's job.
         state, alphas = Loader.lora_state_dict(path)
         Loader.load_lora_into_unet(state, alphas, unet, adapter_name=name)
+        # Count changed tensors by snapshotting only the layers this LoRA targets (the
+        # loader has just wrapped them), not the whole UNet. A LoRA touches the attention
+        # projections, a fraction of the model, and the snapshot is dropped after each LoRA.
+        targets = _lora_targets(unet, name)
+        before = [t.weight.detach().clone() for t in targets]
         unet.set_adapters([name], [spec.scale])
         unet.fuse_lora()
         unet.unload_lora()
-        after = unet.state_dict()
-        changed = sum(1 for k, v in before.items() if not torch.equal(v, after[k]))
+        changed = sum(1 for t, b in zip(targets, before) if not torch.equal(t.weight, b))
+        del before
         te_changed = _merge_text_encoder(path, text_encoder, spec.scale) if text_encoder is not None else 0
         if changed == 0 and te_changed == 0 and spec.scale != 0:
             raise ValueError(

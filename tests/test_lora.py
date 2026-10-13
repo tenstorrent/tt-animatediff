@@ -38,6 +38,17 @@ class TestParse:
         with pytest.raises(ValueError, match="scale"):
             parse_lora_spec("a/b:f.safetensors@abc")
 
+    @pytest.mark.parametrize("text", ["a/b:f.safetensors@1e999", "a/b:f.safetensors@-1e999"])
+    def test_overflowing_scale_is_rejected(self, text):
+        # float("1e999") is inf; fused into the weights it corrupts every targeted layer.
+        with pytest.raises(ValueError, match="finite"):
+            parse_lora_spec(text)
+
+    @pytest.mark.parametrize("scale", [float("inf"), float("-inf"), float("nan")])
+    def test_non_finite_scale_rejected_on_direct_construction(self, scale):
+        with pytest.raises(ValueError, match="finite"):
+            LoraSpec("a/b", "f.safetensors", scale)
+
     def test_empty_source_rejected(self):
         with pytest.raises(ValueError):
             parse_lora_spec(":file.safetensors")
@@ -114,6 +125,23 @@ class TestResolve:
         f.write_bytes(b"")
         assert lora._resolve_file(LoraSpec(str(f))) == str(f)
 
+    def test_tilde_path_is_expanded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / "a.safetensors").write_bytes(b"")
+        assert lora._resolve_file(LoraSpec("~/a.safetensors")) == str(tmp_path / "a.safetensors")
+
+    def test_tilde_directory_with_weight_name(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / "d").mkdir()
+        (tmp_path / "d" / "w.safetensors").write_bytes(b"")
+        got = lora._resolve_file(LoraSpec("~/d", "w.safetensors"))
+        assert got == str(tmp_path / "d" / "w.safetensors")
+
+    def test_missing_tilde_path_is_file_not_found(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            lora._resolve_file(LoraSpec("~/nope.safetensors"))
+
     def test_hub_repo_without_file_name_is_refused(self):
         with pytest.raises(ValueError, match=".safetensors"):
             lora._resolve_file(LoraSpec("org/repo"))
@@ -125,6 +153,132 @@ class TestResolve:
     def test_mistyped_local_path_is_a_file_not_found_not_a_hub_lookup(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             lora._resolve_file(LoraSpec(str(tmp_path / "nope.safetensors")))
+
+
+class _FakeLoraLayer(torch.nn.Module):
+    """Stands in for a peft LoRA-wrapped Linear: holds the base layer plus an adapter."""
+
+    def __init__(self, base, adapter, up_down):
+        super().__init__()
+        self.base_layer = base
+        self.lora_A = {adapter: up_down}  # only the key set is read by merge_loras
+
+
+class _FakeUnet(torch.nn.Module):
+    """Tiny UNet with the three calls merge_loras makes: set_adapters, fuse_lora, unload_lora.
+
+    ``deltas`` maps a layer name to the matrix the fuse adds, per unit scale. The stubbed
+    loader (see ``_stub_loader``) wraps those layers the way load_lora_into_unet would.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.a = torch.nn.Linear(4, 4, bias=False)
+        self.b = torch.nn.Linear(4, 4, bias=False)
+        self.untouched = torch.nn.Linear(4, 4, bias=False)
+        self.pending = {}
+        self.wrapped = {}
+        self.scales = None
+        self.log = []
+
+    def set_adapters(self, names, scales):
+        self.log.append("set")
+        self.scales = dict(zip(names, scales))
+
+    def fuse_lora(self):
+        self.log.append("fuse")
+        (name, scale), = self.scales.items()
+        with torch.no_grad():
+            for layer, delta in self.pending.items():
+                getattr(self, layer).weight += scale * delta
+
+    def unload_lora(self):
+        self.log.append("unload")
+        for layer in list(self.wrapped):
+            setattr(self, f"_wrapper_{layer}", None)
+        self.wrapped.clear()
+        self.pending = {}
+
+
+def _stub_loader(monkeypatch, unet_deltas):
+    """Replace the diffusers loader so merge_loras runs without a real kohya file."""
+    from diffusers.loaders import StableDiffusionLoraLoaderMixin as Loader
+
+    monkeypatch.setattr(Loader, "lora_state_dict", staticmethod(lambda path: ({}, {})))
+
+    def load_into_unet(state, alphas, unet, adapter_name):
+        unet.pending = dict(unet_deltas)
+        for layer in unet_deltas:
+            wrapper = _FakeLoraLayer(getattr(unet, layer), adapter_name, None)
+            unet.wrapped[layer] = wrapper
+            setattr(unet, f"_wrapper_{layer}", wrapper)
+
+    monkeypatch.setattr(Loader, "load_lora_into_unet", staticmethod(load_into_unet))
+
+
+@pytest.fixture
+def lora_file(tmp_path):
+    f = tmp_path / "x.safetensors"
+    f.write_bytes(b"")
+    return str(f)
+
+
+class TestMergeLoras:
+    """merge_loras' UNet path, run against a fake UNet and a stubbed diffusers loader."""
+
+    def test_fuse_adds_scaled_delta_and_cleans_up(self, monkeypatch, lora_file):
+        unet = _FakeUnet()
+        delta = torch.ones(4, 4)
+        _stub_loader(monkeypatch, {"a": delta})
+        before_a = unet.a.weight.detach().clone()
+        before_other = unet.untouched.weight.detach().clone()
+        res = lora.merge_loras(unet, None, [LoraSpec(lora_file, scale=0.5)])
+        assert torch.allclose(unet.a.weight, before_a + 0.5 * delta)
+        assert torch.equal(unet.untouched.weight, before_other)
+        assert unet.log == ["set", "fuse", "unload"]
+        assert unet.scales == {"tt_lora_0": 0.5}
+        assert not unet.wrapped  # adapter layers removed again
+        assert [(c, t) for _, c, t in res] == [(1, 0)]
+
+    def test_counts_only_layers_whose_weight_changed(self, monkeypatch, lora_file):
+        unet = _FakeUnet()
+        # "b" is targeted but its delta is zero, so it is not counted as changed.
+        _stub_loader(monkeypatch, {"a": torch.ones(4, 4), "b": torch.zeros(4, 4)})
+        (_, changed, _), = lora.merge_loras(unet, None, [LoraSpec(lora_file)])
+        assert changed == 1
+
+    def test_stacking_adds_both_deltas_in_order(self, monkeypatch, lora_file):
+        unet = _FakeUnet()
+        delta = torch.ones(4, 4)
+        _stub_loader(monkeypatch, {"a": delta})
+        before = unet.a.weight.detach().clone()
+        res = lora.merge_loras(unet, None, [LoraSpec(lora_file, scale=1.0), LoraSpec(lora_file, scale=0.25)])
+        assert torch.allclose(unet.a.weight, before + 1.25 * delta)
+        assert unet.log == ["set", "fuse", "unload"] * 2
+        assert len(res) == 2
+
+    def test_zero_match_raises(self, monkeypatch, lora_file):
+        # A LoRA for another base model matches nothing: it must not look like success.
+        unet = _FakeUnet()
+        _stub_loader(monkeypatch, {})
+        with pytest.raises(ValueError, match="changed no weight"):
+            lora.merge_loras(unet, None, [LoraSpec(lora_file)])
+
+    def test_scale_zero_with_no_change_is_allowed(self, monkeypatch, lora_file):
+        unet = _FakeUnet()
+        _stub_loader(monkeypatch, {"a": torch.ones(4, 4)})
+        (_, changed, _), = lora.merge_loras(unet, None, [LoraSpec(lora_file, scale=0.0)])
+        assert changed == 0
+
+    def test_merge_does_not_snapshot_the_whole_unet(self, monkeypatch, lora_file):
+        # Guards the review finding: state_dict() was cloned in full before every LoRA.
+        unet = _FakeUnet()
+        _stub_loader(monkeypatch, {"a": torch.ones(4, 4)})
+        calls = []
+        orig = unet.state_dict
+        monkeypatch.setattr(unet, "state_dict", lambda *a, **k: calls.append(1) or orig(*a, **k))
+        lora.merge_loras(unet, None, [LoraSpec(lora_file)])
+        assert calls == []
 
 
 class TestWiring:
