@@ -544,6 +544,11 @@ application plugin, or Python library — see
 - **LoRAs in the served path.** `ANIMATEDIFF_LORAS` defines named variants; a request picks one with
   `"lora": "name"` at no per-request cost. Variants are resident on the chip and share the VAE. An unknown
   name is a 400. `GET /v1/models` lists them. `prompt_schedule` is accepted in requests.
+- **The served request now covers the CLI's remaining features:** `sampler` (`euler`), `chain_save` /
+  `chain_from` / `chain_alpha` (named chains held by the server), and `motion_adapter` with
+  `motion_adapter_alpha` / `motion_adapter_skip` (Phase 3; enabled by `ANIMATEDIFF_MOTION_ADAPTER`).
+  Combinations the server cannot honour are a 400 before the device lock. `GET /v1/models` reports
+  `motion_adapter`.
 - **Served previews.** `GET /v1/videos/preview` reports progress and the latest 256x256 preview GIF of the
   generation in flight, without waiting on the device lock. Request `"preview": true` (and optionally
   `"preview_every": n`) to render frames; each render costs about 0.4 s on one chip.

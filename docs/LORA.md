@@ -211,6 +211,36 @@ Every `uvicorn` run here ended with `terminate called after throwing an instance
 "Application shutdown complete". It happens on a plain server with no preview and no LoRA activity at exit, so it
 is a tt-metal teardown abort and not caused by these features; the process exit code is non-zero.
 
+## Other served features
+
+These are the features `examples/generate.py` already had, now in the served request too.
+
+**Sampler (`"sampler": "euler"`).** The plain model samples with PNDM by default. `euler` is what the CLI calls
+`--lightning`: the base UNet with an Euler schedule and no distilled weights. 4 frames at 25 steps took 7.7 s with
+Euler and 7.9 s with PNDM, and the two outputs differ (mean absolute pixel difference 42.7). An LCM variant always
+samples with LCM, so naming a sampler with one is a 400.
+
+**Chaining (`"chain_save": "name"`, `"chain_from": "name"`, `"chain_alpha": 0.6`).** A run saves its final latents under
+a name. A later request blends their frame mean into its starting noise, so a new prompt inherits the old
+composition. Names, never paths: the server keeps the files in its own directory under a hash of the name, keeps at
+most 32 (oldest dropped), and forgets them all when it stops. An unknown `chain_from` is a 400.
+In the picture below, a lighthouse run is chained into a meadow prompt at a different seed. At 0.6 and 0.9 the tower
+and cliff carry over, and the meadow prompt is mostly lost (no flowers or butterflies), which matches the library's
+advice to stay at or below about 0.55. At 0.3 the effect is small. A pixel difference to the source did not show
+this (colour dominates it), so judge by eye.
+
+![Source lighthouse, then a meadow prompt with no chain and chained at alpha 0.3, 0.6 and 0.9](assets/lora/served-chain.jpg)
+
+**MotionAdapter temporal attention (`"motion_adapter": true`).** Phase 3. It is off unless the operator sets
+`ANIMATEDIFF_MOTION_ADAPTER=default` (or a repo id or local path), which loads the adapter at startup. Without that,
+a request for it is a 400. `GET /v1/models` reports `"motion_adapter": true|false`. `motion_adapter_alpha` (0 to 1,
+default 1) and `motion_adapter_skip` (any of `down0 down1 down2 mid up0 up1 up2`) match the CLI flags. It works with
+the Euler sampler, prompt schedules, chaining and style LoRA variants. It cannot be combined with an LCM variant,
+because the Phase 3 loop has no LCM sampler. Measured on one chip with `up1` and `up2` skipped, 2 frames at 6 steps took
+5.6 s (3.2 s at alpha 0, which bypasses the injection). Without skipping, it is much slower: the earlier measurement
+on a four-chip box was about 52 s per frame at 25 steps, so an 8-frame request runs for several minutes. Set client
+timeouts accordingly.
+
 ## Which LoRAs to try next
 
 Tried so far: two style LoRAs (pixel art, storybook anime), their stack, and the LCM-LoRA. Not tried, and

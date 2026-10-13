@@ -200,6 +200,9 @@
     <a href="#lcm">LCM</a>
     <a href="#serving">Serving</a>
     <a href="#previews">Previews</a>
+    <a href="#chaining">Chaining</a>
+    <a href="#sampler">Sampler</a>
+    <a href="#motion">Motion adapter</a>
     <a href="#api">Request reference</a>
   </div>
   <a class="topbar-home" href="index.html">&#8592; Home</a>
@@ -218,6 +221,9 @@
     <ul class="toc-list">
       <li><a href="#serving">LoRA variants</a></li>
       <li><a href="#previews">Live previews</a></li>
+      <li><a href="#chaining">Chaining</a></li>
+      <li><a href="#sampler">Sampler</a></li>
+      <li><a href="#motion">Motion adapter</a></li>
       <li><a href="#api">Request reference</a></li>
     </ul>
   </aside>
@@ -242,9 +248,9 @@
             <tr><td>LCM fast sampling (4 steps)</td><td><code>--lcm-lora</code></td><td>automatic for a catalog variant that includes the LCM-LoRA</td></tr>
             <tr><td>Prompt travel (keyframe prompts)</td><td><code>--prompt-schedule</code></td><td><code>prompt_schedule</code></td></tr>
             <tr><td>Live previews while generating</td><td><code>--preview-path</code></td><td><code>preview</code>, <code>preview_every</code>, <code>GET /v1/videos/preview</code></td></tr>
-            <tr><td>Chaining (continuity across runs)</td><td><code>--chain-from</code>, <code>--chain-save</code></td><td>Not served yet; in progress</td></tr>
-            <tr><td>Lightning sampler (Euler)</td><td><code>--lightning</code></td><td>Not served yet; in progress</td></tr>
-            <tr><td>MotionAdapter temporal attention (Phase 3)</td><td><code>--motion-adapter</code></td><td>Not served yet; in progress</td></tr>
+            <tr><td>Chaining (continuity across runs)</td><td><code>--chain-from</code>, <code>--chain-save</code>, <code>--chain-alpha</code></td><td><code>chain_save</code>, <code>chain_from</code>, <code>chain_alpha</code> (named chains)</td></tr>
+            <tr><td>Euler sampler (the CLI's Lightning)</td><td><code>--lightning</code></td><td><code>sampler: "euler"</code></td></tr>
+            <tr><td>MotionAdapter temporal attention (Phase 3)</td><td><code>--motion-adapter</code>, <code>--motion-adapter-alpha</code>, <code>--motion-adapter-skip</code></td><td><code>motion_adapter</code>, <code>motion_adapter_alpha</code>, <code>motion_adapter_skip</code> (operator enables it)</td></tr>
             <tr><td>CPU and simulator modes</td><td><code>--mode cpu|sim</code></td><td>Not served (CLI only)</td></tr>
           </tbody>
         </table>
@@ -318,8 +324,32 @@
       </div>
     </div>
 
+    <div class="section" id="chaining">
+      <div class="section-head"><span class="section-num">06</span><h2>Chaining</h2></div>
+      <p>A request can save its final latents under a name (<code>"chain_save": "lh"</code>). A later request that sets <code>"chain_from": "lh"</code> blends them into its starting noise at <code>chain_alpha</code> (default 0.6), so the new prompt inherits the old composition. The names belong to the server: it stores them in its own directory under a hash of the name, keeps the newest 32, and forgets them when it stops. An unknown <code>chain_from</code> is a 400.</p>
+      <img src="assets/lora/served-chain.jpg" alt="A lighthouse source, then a meadow prompt with no chain and chained at 0.3, 0.6 and 0.9" style="max-width:100%;border-radius:8px;margin:1rem 0" loading="lazy">
+      <div class="callout callout-warn">
+        <span class="callout-title">Keep alpha low</span>
+        <p>At 0.6 and 0.9 the lighthouse's tower and cliff carry into the meadow prompt, and the prompt itself is mostly lost: no flowers or butterflies appear. The library advises 0.2 to 0.55. At 0.3 the effect is small.</p>
+      </div>
+    </div>
+
+    <div class="section" id="sampler">
+      <div class="section-head"><span class="section-num">07</span><h2>Sampler</h2></div>
+      <p>The plain model samples with PNDM. <code>"sampler": "euler"</code> uses an Euler schedule on the same weights (the CLI's <code>--lightning</code>; no distilled weights are involved). 4 frames at 25 steps took 7.7 s with Euler and 7.9 s with PNDM, and the pictures differ. An LCM variant always samples with LCM, so naming a sampler with one is a 400.</p>
+    </div>
+
+    <div class="section" id="motion">
+      <div class="section-head"><span class="section-num">08</span><h2>Motion adapter (Phase 3)</h2></div>
+      <p>The MotionAdapter's temporal attention can be injected into the UNet blocks. The operator enables it with <code>ANIMATEDIFF_MOTION_ADAPTER=default</code> (or a repo id or path), which loads the adapter at startup; <code>GET /v1/models</code> then reports <code>"motion_adapter": true</code>. Requests set <code>"motion_adapter": true</code>, with <code>motion_adapter_alpha</code> (0 to 1) and <code>motion_adapter_skip</code> (any of <code>down0 down1 down2 mid up0 up1 up2</code>). It works with the Euler sampler, prompt schedules, chaining and style LoRA variants, and not with an LCM variant.</p>
+      <div class="callout callout-warn">
+        <span class="callout-title">Slow</span>
+        <p>With <code>up1</code> and <code>up2</code> skipped, 2 frames at 6 steps took 5.6 s on one chip. Without skipping it is far slower: about 52 s per frame at 25 steps measured earlier on a four-chip box, so an 8-frame request runs for minutes. Set client timeouts to match.</p>
+      </div>
+    </div>
+
     <div class="section" id="api">
-      <div class="section-head"><span class="section-num">06</span><h2>Request reference</h2></div>
+      <div class="section-head"><span class="section-num">09</span><h2>Request reference</h2></div>
       <p><code>POST /v1/videos/generations</code>. The response is <code>{"created": ts, "data": [{"b64_json": "&lt;GIF&gt;"}]}</code>.</p>
       <div class="param-table-wrap">
         <table class="param-table">
@@ -335,6 +365,11 @@
             <tr><td>height, width</td><td>512</td><td>Only 512 is accepted: the UNet is compiled at a fixed size</td></tr>
             <tr><td>lora</td><td>none</td><td>A catalog name; 400 if unknown</td></tr>
             <tr><td>prompt_schedule</td><td>none</td><td>Up to 16 <code>{"frame": n, "prompt": "&hellip;"}</code>; each frame must be below <code>num_frames</code></td></tr>
+            <tr><td>sampler</td><td>pndm</td><td><code>pndm</code> or <code>euler</code>; 400 with an LCM variant</td></tr>
+            <tr><td>chain_save, chain_from</td><td>none</td><td>Names (letters, digits, <code>.</code> <code>_</code> <code>-</code>; up to 64 characters). Unknown <code>chain_from</code> is a 400</td></tr>
+            <tr><td>chain_alpha</td><td>0.6</td><td>0&ndash;1; 0.2&ndash;0.55 keeps the prompt in charge</td></tr>
+            <tr><td>motion_adapter</td><td>false</td><td>400 unless the operator set <code>ANIMATEDIFF_MOTION_ADAPTER</code>; 400 with an LCM variant</td></tr>
+            <tr><td>motion_adapter_alpha, motion_adapter_skip</td><td>1.0, []</td><td>Only with <code>motion_adapter: true</code></td></tr>
             <tr><td>preview</td><td>false</td><td>Render preview GIFs for <code>GET /v1/videos/preview</code></td></tr>
             <tr><td>preview_every</td><td>library default</td><td>1&ndash;100</td></tr>
             <tr><td>response_format</td><td>b64_json</td><td>Only b64_json</td></tr>

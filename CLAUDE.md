@@ -439,3 +439,25 @@ in the container manifest and lock. Details and numbers are in `docs/LORA.md`.
 `extra_code.ref` still points at v0.10.0 and must move to a tag that contains this release. The
 `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing` failure is that repin. A LoRA catalog needs
 the files in the container's HF cache or network access at startup.
+
+### 2026-10-13 — served previews, sampler, chaining, Phase 3 (v0.13.0, same branch)
+**Prompt.** The tt-local-generator session asked for served previews; the user then said the two projects
+release together ("code as if we are in lock step"), to keep docs and the site current per feature, and to notify
+that agent per feature. Notes for later sessions: update `docs/LORA.md`, the README changelog and
+`docs/features.html` (matrix row, section, request reference) with each served feature, then message the peer.
+
+**Served request additions** (all in `animatediff_ttnn/server/app.py`): `preview` / `preview_every` plus
+`GET /v1/videos/preview`; `sampler: euler`; `chain_save` / `chain_from` / `chain_alpha` backed by `ChainStore`;
+`motion_adapter` (+ `_alpha`, `_skip`) enabled by `ANIMATEDIFF_MOTION_ADAPTER`; `request_conflicts()` returns the
+400 reasons before the device lock; `/v1/models` reports `loras` and `motion_adapter`.
+
+**Measured, not assumed.**
+* Preview GIF rendering costs ~0.4 s per render on one chip (13.5-13.9 s -> 17.8-20.2 s for 8 frames x 20 steps),
+  which is why the GIF is opt-in per request while the step counter is always on.
+* The first chaining check used the same seed for source, control and chained runs, so the control already shared the
+  source's noise; and a pixel-difference metric scored the chained runs as *less* similar even though the tower and
+  cliff visibly carried over (colour dominates the metric). The check was redone with a different seed and judged by
+  eye. The instrument, not the feature, was wrong both times.
+* `tt-model`-level serving is still untested; everything was run through uvicorn on one chip.
+* Every server run ends with a tt-metal `UmdException` abort after "Application shutdown complete" (exit non-zero);
+  it predates this work.

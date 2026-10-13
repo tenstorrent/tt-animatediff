@@ -28,6 +28,10 @@ ENVIRONMENT, set by the launcher
 ``ANIMATEDIFF_MESH_SHAPE`` the resolved shape, e.g. ``1x4`` (the manifest points
                            ``runtime.mesh_shape_env`` at this name; the kind's default is
                            FLUX.2's, which means nothing to this model)
+``ANIMATEDIFF_MOTION_ADAPTER`` optional: ``default`` or a MotionAdapter repo id / local path. When
+                           set, the adapter is loaded at startup and requests may use
+                           ``"motion_adapter": true`` (Phase 3 temporal attention). Unset means such
+                           requests are refused with a 400.
 ``HF_MODEL``               the weights repo id, reported by ``/v1/models``
 ``ANIMATEDIFF_LORAS``      optional JSON object ``{"name": "SOURCE[:FILE][@SCALE]", ...}``; each
                            entry becomes a resident LoRA variant a request can select with
@@ -49,13 +53,14 @@ import asyncio
 import base64
 import io
 import os
+import hashlib
 import re
 import shutil
 import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -67,6 +72,12 @@ MESH_SHAPE_ENV = "ANIMATEDIFF_MESH_SHAPE"
 
 #: The env var carrying the LoRA catalog: the only way a LoRA reaches this server.
 LORAS_ENV = "ANIMATEDIFF_LORAS"
+
+#: The env var that turns on Phase 3 (MotionAdapter) requests. Loaded at startup only.
+MOTION_ADAPTER_ENV = "ANIMATEDIFF_MOTION_ADAPTER"
+
+#: Injection points a request may skip (see motion_weights.py).
+MotionKey = Literal["down0", "down1", "down2", "mid", "up0", "up1", "up2"]
 
 #: What an LCM variant uses when the request leaves steps / guidance_scale out.
 LCM_DEFAULT_STEPS = 4
@@ -158,6 +169,43 @@ def _step_callback(preview: "PreviewStore", req: "VideoGenerationRequest", steps
     return on_step
 
 
+class ChainStore:
+    """Server-owned storage for chained generations ("continue from the last result").
+
+    The CLI takes file paths for ``--chain-save`` / ``--chain-from``. A server cannot take a
+    caller's path, so a request names a chain instead, and this store maps the name to a file in
+    a directory the server created. The file name is a hash of the name, so no name can point
+    outside it. At most ``MAX_CHAINS`` are kept (oldest evicted), and all of them are lost when the
+    server stops: a chain is a convenience for the next request, not a store of record.
+    """
+
+    MAX_CHAINS = 32
+
+    def __init__(self):
+        self._dir = tempfile.mkdtemp(prefix="tt-animatediff-chains-")
+
+    def path(self, name: str) -> str:
+        return os.path.join(self._dir, hashlib.sha256(name.encode()).hexdigest()[:32] + ".pt")
+
+    def has(self, name: str) -> bool:
+        return os.path.isfile(self.path(name))
+
+    def prune(self) -> None:
+        """Drop the oldest chains beyond ``MAX_CHAINS``."""
+        try:
+            files = sorted(
+                (os.path.join(self._dir, f) for f in os.listdir(self._dir)),
+                key=os.path.getmtime,
+            )
+            for stale in files[: max(0, len(files) - self.MAX_CHAINS)]:
+                os.unlink(stale)
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+
 class PromptKeyframe(BaseModel):
     """One keyframe of a prompt schedule ("prompt travel"): frame index and the prompt there."""
 
@@ -188,6 +236,22 @@ class VideoGenerationRequest(BaseModel):
     #: ``GET /v1/videos/preview`` while this request runs. Off by default: the step counter
     #: there is always kept (it is free), but each GIF is a CPU render and export between
     #: denoise steps, which is time the device spends waiting.
+    #: Sampler for the plain model: ``pndm`` (default) or ``euler`` (what the CLI calls
+    #: ``--lightning``; the base UNet with an Euler schedule, no distilled weights). An LCM
+    #: variant always samples with LCM, so naming a sampler with one is refused.
+    sampler: Optional[Literal["pndm", "euler"]] = None
+    #: Chaining: ``chain_save`` stores this run's final latents under a name; a later request's
+    #: ``chain_from`` blends them into its starting noise at ``chain_alpha``, so the new prompt
+    #: inherits the old composition. Names, never paths; see ChainStore.
+    chain_save: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    chain_from: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    chain_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    #: Phase 3: inject the MotionAdapter's temporal attention (needs the operator to set
+    #: ANIMATEDIFF_MOTION_ADAPTER). Far slower than the default: about 52 s per frame measured
+    #: on a 4-chip box, so an 8-frame request takes several minutes.
+    motion_adapter: bool = False
+    motion_adapter_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
+    motion_adapter_skip: List[MotionKey] = Field(default_factory=list)
     preview: bool = False
     #: Render a preview every Nth step (the last step always renders). Omit for the library
     #: default: every step on a run of 10 steps or fewer, every other step beyond that. Each
@@ -335,6 +399,22 @@ def _load_lora_variants(device, models: tuple, catalog: dict) -> dict:
     return {name: load_sd14_variant(device, specs, vae) for name, specs in catalog.items()}
 
 
+def motion_adapter_from_env(env: Optional[dict] = None) -> Optional[str]:
+    """``ANIMATEDIFF_MOTION_ADAPTER`` as a repo id or path, or None when unset.
+
+    ``default`` means the pinned adapter this package already names. Anything else is the
+    operator's own choice of repo or directory, the same trust as the LoRA catalog.
+    """
+    raw = (env if env is not None else os.environ).get(MOTION_ADAPTER_ENV, "").strip()
+    if not raw:
+        return None
+    if raw.lower() in ("default", "1", "true"):
+        from animatediff_ttnn.weights_pins import MOTION_ADAPTER_REPO
+
+        return MOTION_ADAPTER_REPO
+    return raw
+
+
 def _open_device_and_models(shape: tuple) -> tuple:
     """Claim the mesh and load the TTNN model set. Blocking, hardware, lifespan-only."""
     from animatediff_ttnn.generation_helpers import load_sd14_ttnn
@@ -400,6 +480,35 @@ def _frames_to_gif_b64(frames: List[Any], fps: int = DEFAULT_FPS) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def request_conflicts(req: VideoGenerationRequest, engine: dict) -> Optional[str]:
+    """The reason ``req`` cannot run on this server, or None. Checked before the device lock.
+
+    These are combinations the pydantic model cannot see because they depend on what the
+    operator configured. Refusing here costs nothing; finding out inside the denoise loop would
+    hold the one device to fail.
+    """
+    variants = engine.get("variants", {})
+    if req.lora is not None and req.lora not in variants:
+        available = sorted(variants)
+        return (f"unknown lora {req.lora!r}; this server offers "
+                f"{available if available else 'none (ANIMATEDIFF_LORAS is not set)'}")
+    lcm = bool(req.lora and variants[req.lora].lcm)
+    if lcm and req.sampler is not None:
+        return f"lora {req.lora!r} includes the LCM-LoRA and always samples with LCM; omit sampler"
+    if req.motion_adapter:
+        if engine.get("motion_kernels") is None:
+            return f"motion_adapter is not enabled on this server ({MOTION_ADAPTER_ENV} is not set)"
+        if lcm:
+            return "motion_adapter cannot be combined with an LCM variant (the Phase 3 loop has no LCM sampler)"
+    elif req.motion_adapter_skip or "motion_adapter_alpha" in req.model_fields_set:
+        return "motion_adapter_alpha / motion_adapter_skip need motion_adapter: true"
+    if req.chain_from is not None:
+        chains = engine.get("chains")
+        if chains is None or not chains.has(req.chain_from):
+            return f"unknown chain {req.chain_from!r}; save one first with chain_save"
+    return None
+
+
 def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
     """Run the denoise loop. Blocking; called in a worker thread under the device lock."""
     from animatediff_ttnn.generation_helpers import encode_prompt
@@ -431,26 +540,42 @@ def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
     on_step = _step_callback(preview, req, steps) if preview is not None else None
     if preview is not None:
         preview.begin(steps)
+    chains = state.get("chains")
+    common = dict(
+        device=state["device"],
+        ttnn_model=ttnn_model,
+        ttnn_vae=ttnn_vae,
+        config=config,
+        torch_time_proj=torch_time_proj,
+        text_embeddings=embeddings,
+        text_embeddings_per_frame=per_frame,
+        num_frames=req.num_frames,
+        num_steps=steps,
+        guidance_scale=guidance,
+        seed=req.seed,
+        temporal_alpha=req.temporal_alpha,
+        use_lightning=req.sampler == "euler",
+        chain_from=chains.path(req.chain_from) if chains and req.chain_from else None,
+        chain_save=chains.path(req.chain_save) if chains and req.chain_save else None,
+        chain_alpha=req.chain_alpha,
+        on_step=on_step,
+        height=req.height,
+        width=req.width,
+    )
     try:
-        return generate_frames_temporal(
-            device=state["device"],
-            ttnn_model=ttnn_model,
-            ttnn_vae=ttnn_vae,
-            config=config,
-            torch_time_proj=torch_time_proj,
-            text_embeddings=embeddings,
-            text_embeddings_per_frame=per_frame,
-            num_frames=req.num_frames,
-            num_steps=steps,
-            guidance_scale=guidance,
-            seed=req.seed,
-            temporal_alpha=req.temporal_alpha,
-            use_lcm=use_lcm,
-            on_step=on_step,
-            height=req.height,
-            width=req.width,
-        )
+        if req.motion_adapter:
+            from animatediff_ttnn.temporal_attention import generate_frames_motion
+
+            return generate_frames_motion(
+                temporal_kernels=state["motion_kernels"],
+                injection_alpha=req.motion_adapter_alpha,
+                skip_keys=set(req.motion_adapter_skip),
+                **common,
+            )
+        return generate_frames_temporal(use_lcm=use_lcm, **common)
     finally:
+        if chains is not None and req.chain_save:
+            chains.prune()
         if preview is not None:
             preview.end()
 
@@ -468,16 +593,23 @@ async def lifespan(app: FastAPI):
     # Parsed before the device opens: a malformed catalog should cost nothing.
     catalog = lora_catalog_from_env()
     device, models = await asyncio.to_thread(_open_device_and_models, shape)
+    motion_spec = motion_adapter_from_env()
     try:
         variants = await asyncio.to_thread(_load_lora_variants, device, models, catalog) if catalog else {}
+        motion_kernels = None
+        if motion_spec:
+            from animatediff_ttnn.motion_weights import load_motion_modules
+
+            motion_kernels = await asyncio.to_thread(load_motion_modules, motion_spec)
     except BaseException:
         # Same rollback _open_device_and_models does: a failed start must not keep a chip.
         _close_device(device)
         raise
     preview = PreviewStore()
+    chains = ChainStore()
     app.state.engine = {
         "device": device, "models": models, "variants": variants, "mesh_shape": shape,
-        "preview": preview,
+        "preview": preview, "chains": chains, "motion_kernels": motion_kernels,
         "hf_model": os.environ.get("HF_MODEL", "unknown"),
         "mesh_device": os.environ.get("MESH_DEVICE", "unknown"),
     }
@@ -486,6 +618,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         preview.close()
+        chains.close()
         # Let ttnn close the mesh itself. Bypassing its teardown is what triggers an abort
         # in MetalContext::destroy_all_instances.
         try:
@@ -574,7 +707,9 @@ async def models() -> dict:
     return {"object": "list", "data": [{"id": name, "object": "model",
                                         "owned_by": "tenstorrent"}],
             # The names a request may pass as "lora"; empty when the operator set none.
-            "loras": sorted((engine or {}).get("variants", {}))}
+            "loras": sorted((engine or {}).get("variants", {})),
+            # What a client may ask for beyond the always-on features.
+            "motion_adapter": (engine or {}).get("motion_kernels") is not None}
 
 
 @app.post("/v1/videos/generations", response_model=VideoGenerationResponse)
@@ -582,15 +717,10 @@ async def videos_generations(req: VideoGenerationRequest) -> VideoGenerationResp
     engine = getattr(app.state, "engine", None)
     if engine is None:
         raise HTTPException(status_code=503, detail="model is still starting")
-    if req.lora is not None and req.lora not in engine.get("variants", {}):
-        # 400, and before the device lock: an unknown name must not queue behind a
-        # generation just to be refused.
-        available = sorted(engine.get("variants", {}))
-        raise HTTPException(
-            status_code=400,
-            detail=f"unknown lora {req.lora!r}; this server offers "
-                   f"{available if available else 'none (ANIMATEDIFF_LORAS is not set)'}",
-        )
+    conflict = request_conflicts(req, engine)
+    if conflict is not None:
+        # 400, and before the device lock: a refusal must not queue behind a generation.
+        raise HTTPException(status_code=400, detail=conflict)
     if req.response_format != "b64_json":
         raise HTTPException(
             status_code=400,

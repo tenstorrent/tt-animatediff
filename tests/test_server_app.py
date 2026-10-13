@@ -1143,3 +1143,202 @@ def test_preview_every_reaches_the_step_callback_builder():
 def test_a_preview_cadence_out_of_range_is_refused(bad):
     r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "preview_every": bad})
     assert r.status_code == 422
+
+
+# ---- chaining, sampler choice, Phase 3 -------------------------------------------------
+
+
+def _req(**kw):
+    return VideoGenerationRequest(prompt="a cat", **kw)
+
+
+def _engine(**kw):
+    from animatediff_ttnn.generation_helpers import Sd14Variant
+    from animatediff_ttnn.server.app import ChainStore
+
+    base = {"variants": {"style": Sd14Variant(("u", "v", "c", "t"), ("tok", "te"), lcm=False),
+                         "fast": Sd14Variant(("u", "v", "c", "t"), ("tok", "te"), lcm=True)},
+            "motion_kernels": None, "chains": ChainStore()}
+    base.update(kw)
+    return base
+
+
+def test_request_conflicts_accepts_a_plain_request_and_the_documented_combinations():
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine(motion_kernels={"mid": []})
+    try:
+        for kw in ({}, {"lora": "style", "sampler": "euler"}, {"lora": "fast"},
+                   {"motion_adapter": True, "sampler": "euler", "motion_adapter_skip": ["up1", "up2"]},
+                   {"motion_adapter": True, "lora": "style"}):
+            assert request_conflicts(_req(**kw), eng) is None, kw
+    finally:
+        eng["chains"].close()
+
+
+@pytest.mark.parametrize("kw,needle", [
+    ({"lora": "nope"}, "unknown lora"),
+    ({"lora": "fast", "sampler": "euler"}, "always samples with LCM"),
+    ({"motion_adapter": True}, "ANIMATEDIFF_MOTION_ADAPTER"),
+    ({"motion_adapter_skip": ["up1"]}, "need motion_adapter"),
+    ({"motion_adapter_alpha": 0.5}, "need motion_adapter"),
+    ({"chain_from": "nothing-saved-yet"}, "unknown chain"),
+])
+def test_request_conflicts_names_the_reason(kw, needle):
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine()
+    try:
+        assert needle in request_conflicts(_req(**kw), eng)
+    finally:
+        eng["chains"].close()
+
+
+def test_motion_adapter_cannot_ride_an_lcm_variant():
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine(motion_kernels={"mid": []})
+    try:
+        assert "LCM" in request_conflicts(_req(motion_adapter=True, lora="fast"), eng)
+    finally:
+        eng["chains"].close()
+
+
+def test_a_chain_name_cannot_point_outside_the_store():
+    """Names, never paths: the pattern refuses separators and dots-only names at the edge, and the
+    file name is a hash anyway."""
+    import os
+
+    from animatediff_ttnn.server.app import ChainStore
+
+    for bad in ("../x", "a/b", "/etc/passwd", ".hidden", ""):
+        r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "chain_save": bad})
+        assert r.status_code == 422, bad
+    store = ChainStore()
+    try:
+        p = store.path("../../etc/passwd")
+        assert os.path.dirname(p) == store._dir and p.endswith(".pt")
+    finally:
+        store.close()
+
+
+def test_the_chain_store_keeps_the_newest_and_forgets_on_close():
+    import os
+
+    from animatediff_ttnn.server.app import ChainStore
+
+    store = ChainStore()
+    store.MAX_CHAINS = 3
+    try:
+        for i in range(5):
+            with open(store.path(f"c{i}"), "wb") as fh:
+                fh.write(b"x")
+            os.utime(store.path(f"c{i}"), (1000 + i, 1000 + i))
+        store.prune()
+        assert [store.has(f"c{i}") for i in range(5)] == [False, False, True, True, True]
+    finally:
+        d = store._dir
+        store.close()
+    assert not os.path.exists(d)
+
+
+def test_the_sampler_and_chain_fields_reach_the_denoise_loop():
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None}
+    from animatediff_ttnn.server.app import ChainStore
+
+    eng["chains"] = ChainStore()
+    try:
+        _calls, kw = _run_generate(eng, sampler="euler", chain_from="a", chain_save="b", chain_alpha=0.4)
+        assert kw["use_lightning"] is True and kw["use_lcm"] is False
+        assert kw["chain_from"] == eng["chains"].path("a") and kw["chain_save"] == eng["chains"].path("b")
+        assert kw["chain_alpha"] == 0.4
+        _calls, kw = _run_generate(eng)
+        assert kw["use_lightning"] is False and kw["chain_from"] is None and kw["chain_save"] is None
+    finally:
+        eng["chains"].close()
+
+
+def test_a_motion_adapter_request_runs_the_phase_3_loop_with_the_operators_kernels():
+    from animatediff_ttnn.server import app as mod
+
+    kernels = {"mid": ["m"]}
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None,
+           "motion_kernels": kernels, "chains": None}
+    with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb"), \
+         patch("animatediff_ttnn.temporal_attention.generate_frames_temporal") as plain, \
+         patch("animatediff_ttnn.temporal_attention.generate_frames_motion", return_value=[]) as motion:
+        mod._generate(eng, _req(motion_adapter=True, motion_adapter_alpha=0.5, motion_adapter_skip=["up1", "up2"]))
+    plain.assert_not_called()
+    kw = motion.call_args.kwargs
+    assert kw["temporal_kernels"] is kernels and kw["injection_alpha"] == 0.5
+    assert kw["skip_keys"] == {"up1", "up2"} and "use_lcm" not in kw
+
+
+def test_saving_a_chain_prunes_the_store_afterwards():
+    from animatediff_ttnn.server.app import ChainStore
+
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None,
+           "chains": ChainStore()}
+    try:
+        with patch.object(ChainStore, "prune") as prune:
+            _run_generate(eng, chain_save="keep")
+        prune.assert_called_once()
+    finally:
+        eng["chains"].close()
+
+
+def test_the_http_edge_refuses_unknown_chains_and_disabled_motion_before_the_lock():
+    from animatediff_ttnn.server.app import ChainStore
+
+    eng = _engine()
+    eng.update({"hf_model": "x", "mesh_shape": (1, 1), "preview": None})
+    app.state.engine = eng
+    app.state.device_lock = asyncio.Lock()
+    try:
+        with patch("animatediff_ttnn.server.app._generate") as gen:
+            c = TestClient(app)
+            r1 = c.post("/v1/videos/generations", json={"prompt": "x", "chain_from": "missing"})
+            r2 = c.post("/v1/videos/generations", json={"prompt": "x", "motion_adapter": True})
+        assert r1.status_code == 400 and "unknown chain" in r1.json()["detail"]
+        assert r2.status_code == 400 and "ANIMATEDIFF_MOTION_ADAPTER" in r2.json()["detail"]
+        gen.assert_not_called()
+    finally:
+        del app.state.engine
+        eng["chains"].close()
+
+
+def test_motion_adapter_env_parsing():
+    from animatediff_ttnn.server.app import motion_adapter_from_env
+    from animatediff_ttnn.weights_pins import MOTION_ADAPTER_REPO
+
+    assert motion_adapter_from_env({}) is None
+    assert motion_adapter_from_env({"ANIMATEDIFF_MOTION_ADAPTER": "  "}) is None
+    assert motion_adapter_from_env({"ANIMATEDIFF_MOTION_ADAPTER": "default"}) == MOTION_ADAPTER_REPO
+    assert motion_adapter_from_env({"ANIMATEDIFF_MOTION_ADAPTER": "me/adapter"}) == "me/adapter"
+
+
+def test_models_advertises_whether_motion_adapter_requests_are_accepted():
+    app.state.engine = {"hf_model": "x", "variants": {}, "motion_kernels": {"mid": []}}
+    try:
+        assert TestClient(app).get("/v1/models").json()["motion_adapter"] is True
+        app.state.engine["motion_kernels"] = None
+        assert TestClient(app).get("/v1/models").json()["motion_adapter"] is False
+    finally:
+        del app.state.engine
+
+
+def test_a_failed_motion_adapter_load_closes_the_device():
+    from animatediff_ttnn.server import app as mod
+
+    async def start():
+        async with mod.lifespan(mod.app):
+            pass
+
+    ttnn_mock = MagicMock()
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), \
+         patch.dict("os.environ", {"ANIMATEDIFF_MOTION_ADAPTER": "default"}), \
+         patch.object(mod, "_open_device_and_models", return_value=("dev", ("u", "vae", "c", "t"))), \
+         patch("animatediff_ttnn.motion_weights.load_motion_modules", side_effect=OSError("no such repo")):
+        with pytest.raises(OSError, match="no such repo"):
+            asyncio.run(start())
+    ttnn_mock.close_mesh_device.assert_called_once_with("dev")
