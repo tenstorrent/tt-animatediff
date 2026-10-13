@@ -275,12 +275,20 @@ args = _build_parser().parse_args()
 if args.lora:
     if args.mode == "cpu":
         sys.exit("--lora is supported in blackhole/sim modes only")
-    from animatediff_ttnn.lora import parse_lora_spec, _resolve_file
+    from animatediff_ttnn.lora import (
+        check_lora_compatible, inspect_lora, parse_lora_spec, _resolve_file,
+    )
     for _t in args.lora:
         try:
-            _resolve_file(parse_lora_spec(_t))
+            _info = inspect_lora(_resolve_file(parse_lora_spec(_t)))
+            check_lora_compatible(_info)
         except (ValueError, FileNotFoundError) as _e:
             sys.exit(f"--lora {_t!r}: {_e}")
+        # Trigger words are a hint read from the file's training metadata, not a requirement.
+        if _info.trigger_words:
+            print(f"  LoRA {_t}: common training tags: {', '.join(_info.trigger_words)}")
+        if _info.has_conv:
+            print(f"  LoRA {_t}: also targets conv layers (LoCon); merged only if diffusers matches them")
 
 # Apply mode-specific defaults now that we know the mode
 if args.frames is None:

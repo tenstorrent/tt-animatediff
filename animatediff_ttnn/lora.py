@@ -30,9 +30,10 @@ cannot answer; docs/LORA.md records what was observed.
 
 from __future__ import annotations
 
+import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, List, Optional, Tuple
 
 
@@ -79,6 +80,127 @@ def parse_lora_spec(text: str) -> LoraSpec:
     if "@" in weight_name or (not weight_name and "@" in source):
         raise ValueError(f"could not read a scale from {text!r}; write it as ...@0.8")
     return LoraSpec(source=source, weight_name=weight_name or None, scale=scale)
+
+
+@dataclass(frozen=True)
+class LoraInfo:
+    """What a LoRA file says about itself, read from its safetensors header only.
+
+    Nothing here loads a tensor, so inspecting a multi-hundred-MB file is instant and needs
+    neither a device nor a UNet. ``base`` and the trigger words come from kohya's ``ss_*``
+    metadata, which is optional and written by the trainer, not verified: treat them as
+    hints. The key-name fields (``family``, ``kind``) come from the tensor names and are
+    what the compatibility decision uses.
+    """
+
+    path: str
+    family: str  # "sd1" | "sdxl" | "unknown"
+    kind: str  # "lora" | "loha" | "lokr" | "unknown"
+    has_dora: bool = False
+    has_conv: bool = False  # LoCon-style: the LoRA also targets conv layers
+    rank: Optional[int] = None
+    base_hint: Optional[str] = None  # trainer-reported base model, if any
+    trigger_words: Tuple[str, ...] = field(default_factory=tuple)
+    n_unet_modules: int = 0
+    n_text_encoder_modules: int = 0
+
+
+def _trigger_words(meta: dict, limit: int = 8) -> Tuple[str, ...]:
+    """Most frequent training tags from kohya's ``ss_tag_frequency``, as activation hints.
+
+    The field is ``{dataset: {tag: count}}`` serialised as JSON. The top tags are the words
+    the model saw most, which is where a style or character's trigger phrase usually lives,
+    but a LoRA need not have one, so this is a suggestion and never a requirement.
+    """
+    raw = meta.get("ss_tag_frequency")
+    if not raw:
+        return ()
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return ()
+    counts: dict = {}
+    for tags in data.values() if isinstance(data, dict) else ():
+        if isinstance(tags, dict):
+            for tag, n in tags.items():
+                if isinstance(n, (int, float)):
+                    counts[tag.strip()] = counts.get(tag.strip(), 0) + n
+    ranked = sorted(counts, key=lambda t: (-counts[t], t))
+    return tuple(t for t in ranked if t)[:limit]
+
+
+def inspect_lora(path: str) -> LoraInfo:
+    """Read a ``.safetensors`` LoRA's header and classify it. No tensor data is loaded."""
+    from safetensors import safe_open
+
+    with safe_open(path, "pt") as f:
+        keys = list(f.keys())
+        meta = f.metadata() or {}
+        rank = None
+        for k in keys:
+            if k.endswith(".lora_down.weight"):
+                rank = f.get_slice(k).get_shape()[0]
+                break
+
+    unet = [k for k in keys if k.startswith("lora_unet_")]
+    te = [k for k in keys if k.startswith(("lora_te_", "lora_te1_", "lora_te2_"))]
+    # SDXL has two text encoders, so kohya names them lora_te1_/lora_te2_. SD 1.x has the
+    # single lora_te_. The metadata agrees when present; the key names win because they
+    # are what the loader actually sees.
+    sdxl_meta = (meta.get("ss_base_model_version", "") + meta.get("modelspec.architecture", "")).lower()
+    if any(k.startswith(("lora_te1_", "lora_te2_")) for k in te) or "sdxl" in sdxl_meta:
+        family = "sdxl"
+    elif unet or any(k.startswith("lora_te_") for k in te):
+        family = "sd1"
+    else:
+        family = "unknown"
+
+    if any(".hada_w" in k for k in keys):
+        kind = "loha"
+    elif any(".lokr_w" in k for k in keys):
+        kind = "lokr"
+    elif any(k.endswith(".lora_down.weight") for k in keys):
+        kind = "lora"
+    else:
+        kind = "unknown"
+
+    return LoraInfo(
+        path=path,
+        family=family,
+        kind=kind,
+        has_dora=any(k.endswith(".dora_scale") for k in keys),
+        # SD 1.x conv targets in kohya naming: resnets, downsamplers, upsamplers, conv_in/out.
+        has_conv=any(re.search(r"_(resnets|downsamplers|upsamplers)_|_conv_(in|out)\.", k) for k in unet),
+        rank=rank,
+        base_hint=meta.get("ss_sd_model_name") or meta.get("ss_base_model_version") or None,
+        trigger_words=_trigger_words(meta),
+        n_unet_modules=len({k.split(".")[0] for k in unet}),
+        n_text_encoder_modules=len({k.split(".")[0] for k in te}),
+    )
+
+
+def check_lora_compatible(info: LoraInfo) -> None:
+    """Raise ValueError, naming the reason, for a file this module cannot merge into SD 1.x.
+
+    Runs before any model loads, so a wrong file fails in milliseconds and before a chip is
+    claimed. Without it the same mistakes surface only after the UNet has loaded, and as the
+    vaguer "changed no weight".
+    """
+    name = info.path
+    if info.family == "sdxl":
+        raise ValueError(f"{name}: this is an SDXL LoRA; this model is Stable Diffusion 1.x")
+    if info.kind in ("loha", "lokr"):
+        raise ValueError(
+            f"{name}: this is a {info.kind.upper()} (LyCORIS) file. Only plain LoRA and LoCon "
+            "files (lora_down / lora_up weights) can be merged here"
+        )
+    if info.kind == "unknown" or info.family == "unknown":
+        raise ValueError(
+            f"{name}: no kohya-format LoRA tensors found (expected lora_unet_* / lora_te_* "
+            "keys with lora_down / lora_up weights). Diffusers-format and motion LoRAs are not supported"
+        )
+    if info.has_dora:
+        raise ValueError(f"{name}: this is a DoRA file; its magnitude vectors are not merged here")
 
 
 def _resolve_file(spec: LoraSpec) -> str:
@@ -195,6 +317,7 @@ def merge_loras(unet, text_encoder, specs: Iterable[LoraSpec]) -> List[Tuple[Lor
     for i, spec in enumerate(specs):
         name = f"tt_lora_{i}"
         path = _resolve_file(spec)
+        check_lora_compatible(inspect_lora(path))
         # UNet half only: the stock loader's text-encoder half cannot see the
         # transformers 5.x CLIP layout, so that half is _merge_text_encoder's job.
         state, alphas = Loader.lora_state_dict(path)

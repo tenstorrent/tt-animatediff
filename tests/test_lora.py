@@ -7,6 +7,7 @@ checked by hand on 2026-10-07 and is recorded in docs/LORA.md.
 """
 import ast
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,100 @@ class TestTextEncoderMerge:
             lora._merge_text_encoder(str(f), te, scale=1.0)
 
 
+def _save(path, keys, metadata=None):
+    """Write a safetensors file whose tensors are tiny but whose names/shapes are as given."""
+    save_file({k: torch.zeros(*shape) for k, shape in keys.items()}, str(path), metadata=metadata)
+    return str(path)
+
+
+_SD1 = {
+    "lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q.lora_down.weight": (4, 8),
+    "lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q.lora_up.weight": (8, 4),
+    "lora_te_text_model_encoder_layers_0_self_attn_q_proj.lora_down.weight": (4, 8),
+}
+
+
+class TestInspect:
+    def test_sd1_lora(self, tmp_path):
+        info = lora.inspect_lora(_save(tmp_path / "a.safetensors", _SD1))
+        assert (info.family, info.kind, info.rank) == ("sd1", "lora", 4)
+        assert (info.n_unet_modules, info.n_text_encoder_modules) == (1, 1)
+        assert not info.has_conv and not info.has_dora
+        lora.check_lora_compatible(info)  # does not raise
+
+    def test_sdxl_detected_by_two_text_encoders(self, tmp_path):
+        keys = dict(_SD1)
+        keys["lora_te2_text_model_encoder_layers_0_self_attn_q_proj.lora_down.weight"] = (4, 8)
+        info = lora.inspect_lora(_save(tmp_path / "x.safetensors", keys))
+        assert info.family == "sdxl"
+        with pytest.raises(ValueError, match="SDXL"):
+            lora.check_lora_compatible(info)
+
+    def test_sdxl_detected_by_metadata(self, tmp_path):
+        info = lora.inspect_lora(_save(tmp_path / "x.safetensors", _SD1, {"ss_base_model_version": "sdxl_base_v1-0"}))
+        assert info.family == "sdxl"
+
+    @pytest.mark.parametrize("marker,kind", [("hada_w1_a", "loha"), ("lokr_w1", "lokr")])
+    def test_lycoris_variants_are_refused_by_name(self, tmp_path, marker, kind):
+        keys = {"lora_unet_down_blocks_0_attentions_0_proj_in." + marker: (4, 4)}
+        info = lora.inspect_lora(_save(tmp_path / "x.safetensors", keys))
+        assert info.kind == kind
+        with pytest.raises(ValueError, match=kind.upper()):
+            lora.check_lora_compatible(info)
+
+    def test_dora_is_refused(self, tmp_path):
+        keys = dict(_SD1)
+        keys["lora_unet_down_blocks_0_attentions_0_proj_in.dora_scale"] = (1, 4)
+        with pytest.raises(ValueError, match="DoRA"):
+            lora.check_lora_compatible(lora.inspect_lora(_save(tmp_path / "x.safetensors", keys)))
+
+    def test_diffusers_format_file_is_refused_with_a_reason(self, tmp_path):
+        keys = {"unet.down_blocks.0.attentions.0.to_q.lora_A.weight": (4, 8)}
+        with pytest.raises(ValueError, match="no kohya-format"):
+            lora.check_lora_compatible(lora.inspect_lora(_save(tmp_path / "x.safetensors", keys)))
+
+    def test_conv_targets_are_flagged(self, tmp_path):
+        keys = dict(_SD1)
+        keys["lora_unet_down_blocks_0_resnets_0_conv1.lora_down.weight"] = (4, 8, 3, 3)
+        assert lora.inspect_lora(_save(tmp_path / "x.safetensors", keys)).has_conv
+
+    def test_trigger_words_come_from_tag_frequency_most_common_first(self, tmp_path):
+        meta = {"ss_tag_frequency": json.dumps({"d1": {"pixel art": 30, "castle": 5}, "d2": {"castle": 9, "sky": 1}})}
+        info = lora.inspect_lora(_save(tmp_path / "x.safetensors", _SD1, meta))
+        assert info.trigger_words[:3] == ("pixel art", "castle", "sky")
+
+    def test_malformed_tag_metadata_is_ignored(self, tmp_path):
+        info = lora.inspect_lora(_save(tmp_path / "x.safetensors", _SD1, {"ss_tag_frequency": "{not json"}))
+        assert info.trigger_words == ()
+
+    def test_no_tensor_is_loaded(self, tmp_path, monkeypatch):
+        # The point of header-only inspection: it must not read tensor data.
+        import safetensors
+
+        path = _save(tmp_path / "x.safetensors", _SD1)
+        orig = safetensors.safe_open
+
+        class Spy:
+            def __init__(self, *a, **k):
+                self.f = orig(*a, **k)
+
+            def __enter__(self):
+                self.f.__enter__()
+                return self
+
+            def __exit__(self, *a):
+                return self.f.__exit__(*a)
+
+            def get_tensor(self, *a):
+                raise AssertionError("inspect_lora read a tensor")
+
+            def __getattr__(self, n):
+                return getattr(self.f, n)
+
+        monkeypatch.setattr(safetensors, "safe_open", Spy)
+        lora.inspect_lora(path)
+
+
 class TestResolve:
     def test_local_file(self, tmp_path):
         f = tmp_path / "a.safetensors"
@@ -218,9 +313,8 @@ def _stub_loader(monkeypatch, unet_deltas):
 
 @pytest.fixture
 def lora_file(tmp_path):
-    f = tmp_path / "x.safetensors"
-    f.write_bytes(b"")
-    return str(f)
+    # A real (tiny) SD 1.x kohya header: merge_loras inspects it before loading anything.
+    return _save(tmp_path / "x.safetensors", _SD1)
 
 
 class TestMergeLoras:
@@ -256,6 +350,18 @@ class TestMergeLoras:
         assert torch.allclose(unet.a.weight, before + 1.25 * delta)
         assert unet.log == ["set", "fuse", "unload"] * 2
         assert len(res) == 2
+
+    def test_incompatible_file_is_refused_before_the_loader_runs(self, monkeypatch, tmp_path):
+        from diffusers.loaders import StableDiffusionLoraLoaderMixin as Loader
+
+        called = []
+        monkeypatch.setattr(Loader, "lora_state_dict", staticmethod(lambda p: called.append(p) or ({}, {})))
+        keys = dict(_SD1)
+        keys["lora_te2_text_model_encoder_layers_0_self_attn_q_proj.lora_down.weight"] = (4, 8)
+        f = _save(tmp_path / "xl.safetensors", keys)
+        with pytest.raises(ValueError, match="SDXL"):
+            lora.merge_loras(_FakeUnet(), None, [LoraSpec(f)])
+        assert called == []
 
     def test_zero_match_raises(self, monkeypatch, lora_file):
         # A LoRA for another base model matches nothing: it must not look like success.
