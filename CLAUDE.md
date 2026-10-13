@@ -395,8 +395,8 @@ Run one device-opening process at a time. Also: `pkill -f` killed my own shell.
 **Review fixes.** `hf_hub_download` without `revision=` failed `tests/test_weights_pins.py`; the module-level
 CLIP cache would carry a merged LoRA into later loads (now reset in `load_sd14_ttnn`); `peft` was undeclared.
 
-### 2026-10-13 — Copilot review on PR #15 (still 0.12.0, unreleased)
-Four findings, all fixed in `animatediff_ttnn/lora.py`; `README.md` marks 0.12.0 as unreleased, so no version bump.
+### 2026-10-13 — Copilot review on PR #15 (v0.12.1)
+Four findings, all fixed in `animatediff_ttnn/lora.py`. Bumped to 0.12.1 (VERSION, model card, README changelog).
 - **Non-finite scale.** `@1e999` matched the scale regex and `float()` gave inf, which fuse would write into every
   targeted weight. `LoraSpec.__post_init__` now rejects inf and nan, so specs built in code are covered too.
 - **`~` paths.** `os.path.isfile` does not expand `~`, so an existing `~/x.safetensors` was reported missing.

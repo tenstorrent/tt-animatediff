@@ -540,6 +540,12 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.12.1 — unreleased
+- Review fixes for `--lora` (PR #15). A LoRA scale of `inf` or `nan` (for example `@1e999`) is
+  rejected instead of being fused into every targeted weight. `~` in a local LoRA path is
+  expanded. Counting changed tensors snapshots only the layers a LoRA targets, not the whole
+  UNet. `merge_loras` now has unit tests for its UNet path.
+
 ### v0.12.0 — unreleased
 - **Style LoRA support** (`--lora SOURCE[:FILE][@SCALE]`). Stable Diffusion 1.x kohya-format LoRAs
   are merged into the CPU UNet and CLIP text encoder before TTNN preprocessing, so the device runs
