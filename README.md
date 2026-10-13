@@ -540,6 +540,19 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.13.0 — unreleased
+- **LoRAs in the served path.** `ANIMATEDIFF_LORAS` defines named variants; a request picks one with
+  `"lora": "name"` at no per-request cost. Variants are resident on the chip and share the VAE. An unknown
+  name is a 400. `GET /v1/models` lists them. `prompt_schedule` is accepted in requests.
+- **`--lcm-lora`** merges `latent-consistency/lcm-lora-sdv1-5` and samples with `LCMScheduler`: 4 steps at
+  guidance 1.5 instead of 25 at 7.5. About 2x end to end on the CLI and 5x served warm (4.2 s against 21.6 s
+  for 8 frames). A served variant that includes it samples this way automatically.
+- **Header pre-check.** `inspect_lora` / `check_lora_compatible` refuse SDXL, LoHa, LoKr, DoRA and
+  unsupported files with a reason before any model loads, and report trigger-word hints.
+- **`scripts/lora_device_check.py`** compares a LoRA's effect on the device with the CPU.
+- **The container image now installs `peft`.** It was in `requirements.txt` but not in
+  `tt_model_package.yaml` or its lock, so every LoRA request in a container would have failed.
+
 ### v0.12.1 — unreleased
 - Review fixes for `--lora` (PR #15). A LoRA scale of `inf` or `nan` (for example `@1e999`) is
   rejected instead of being fused into every targeted weight. `~` in a local LoRA path is

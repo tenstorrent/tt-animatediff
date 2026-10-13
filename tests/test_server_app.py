@@ -726,7 +726,10 @@ def test_the_manifest_declares_the_weights_the_served_path_actually_loads():
     )
     # Every load names the constant, and no hardcoded repo literal is left behind.
     # tests/test_weights_pins.py checks the revision= half.
-    assert loader.count("from_pretrained(") == loader.count("SD14_REPO, subfolder=") == 4
+    # (Counted as equal, not as a fixed number: adding a load is fine, adding one that does
+    # not name the constant is the thing to catch.)
+    n_loads = loader.count("from_pretrained(")
+    assert n_loads == loader.count("SD14_REPO, subfolder=") >= 4
     assert '"CompVis/' not in loader
 
 
@@ -802,3 +805,188 @@ def test_the_lock_ships_pytest_only_while_tt_metal_needs_it():
         "lock.in, regenerate the lock, and delete this test -- the workaround is no longer "
         "needed. If it does not carry the fix, extend this list."
     )
+
+
+# ---- LoRA variants ----------------------------------------------------------------------
+
+
+def test_the_lora_catalog_is_empty_when_unset():
+    from animatediff_ttnn.server.app import lora_catalog_from_env
+
+    assert lora_catalog_from_env({}) == {}
+    assert lora_catalog_from_env({"ANIMATEDIFF_LORAS": "  "}) == {}
+
+
+def test_the_lora_catalog_parses_names_specs_and_stacks():
+    import json
+
+    from animatediff_ttnn.lora import LoraSpec
+    from animatediff_ttnn.server.app import lora_catalog_from_env
+
+    raw = json.dumps({"pixel": "org/p:p.safetensors@0.8", "both": ["org/a:a.safetensors", "org/b:b.safetensors@0.5"]})
+    cat = lora_catalog_from_env({"ANIMATEDIFF_LORAS": raw})
+    assert cat["pixel"] == [LoraSpec("org/p", "p.safetensors", 0.8)]
+    assert cat["both"] == [LoraSpec("org/a", "a.safetensors", 1.0), LoraSpec("org/b", "b.safetensors", 0.5)]
+
+
+@pytest.mark.parametrize("raw", [
+    "{not json", "[]", '{"x": 3}', '{"x": []}', '{"": "a/b:f.safetensors"}', '{"base": "a/b:f.safetensors"}',
+    '{"../etc": "a/b:f.safetensors"}', '{"x": "a/b:f.safetensors@1e999"}',
+])
+def test_a_malformed_lora_catalog_raises_rather_than_dropping_entries(raw):
+    from animatediff_ttnn.server.app import lora_catalog_from_env
+
+    with pytest.raises(ValueError):
+        lora_catalog_from_env({"ANIMATEDIFF_LORAS": raw})
+
+
+def test_an_unknown_lora_is_refused_before_the_device_lock():
+    """400 names what IS offered; a refusal must not wait behind a running generation."""
+    app.state.engine = {"hf_model": "x", "mesh_shape": (1, 1), "variants": {"pixel": object()}}
+    app.state.device_lock = asyncio.Lock()
+    try:
+        with patch("animatediff_ttnn.server.app._generate") as gen:
+            r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat", "lora": "nope"})
+        assert r.status_code == 400
+        assert "pixel" in r.json()["detail"]
+        gen.assert_not_called()
+    finally:
+        del app.state.engine
+
+
+def test_a_lora_request_without_any_catalog_says_so():
+    app.state.engine = {"hf_model": "x", "mesh_shape": (1, 1), "variants": {}}
+    try:
+        r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat", "lora": "pixel"})
+        assert r.status_code == 400 and "ANIMATEDIFF_LORAS" in r.json()["detail"]
+    finally:
+        del app.state.engine
+
+
+def test_the_request_picks_the_variants_models_and_text_encoder():
+    """The wiring: a named LoRA must run on ITS UNet and encode with ITS text encoder.
+
+    Using the plain UNet with a merged encoder (or the reverse) would still produce a
+    picture, just not the one asked for, so assert on what _generate hands the pipeline.
+    """
+    from animatediff_ttnn.generation_helpers import Sd14Variant
+    from animatediff_ttnn.server import app as mod
+
+    plain = ("p_unet", "vae", "p_cfg", "p_proj")
+    variant = Sd14Variant(models=("v_unet", "vae", "v_cfg", "v_proj"), clip=("tok", "v_te"))
+    state = {"device": "dev", "models": plain, "variants": {"pixel": variant}}
+
+    def run(lora):
+        with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb") as enc, \
+             patch("animatediff_ttnn.temporal_attention.generate_frames_temporal", return_value=[]) as gen:
+            mod._generate(state, VideoGenerationRequest(prompt="a cat", lora=lora))
+        return enc.call_args.kwargs.get("clip"), gen.call_args.kwargs["ttnn_model"]
+
+    assert run("pixel") == (("tok", "v_te"), "v_unet")
+    assert run(None) == (None, "p_unet")  # plain model: the process-wide encoder, no override
+
+
+def test_a_failed_variant_load_closes_the_device():
+    """Same leak as a failed warm: a container that dies starting must release its chip."""
+    import json
+
+    from animatediff_ttnn.server import app as mod
+
+    async def start():
+        async with mod.lifespan(mod.app):
+            pass
+
+    ttnn_mock = MagicMock()
+    env = {"ANIMATEDIFF_LORAS": json.dumps({"pixel": "org/p:p.safetensors"})}
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), patch.dict("os.environ", env), \
+         patch.object(mod, "_open_device_and_models", return_value=("dev", ("u", "vae", "c", "t"))), \
+         patch.object(mod, "_load_lora_variants", side_effect=ValueError("SDXL LoRA")):
+        with pytest.raises(ValueError, match="SDXL"):
+            asyncio.run(start())
+    ttnn_mock.close_mesh_device.assert_called_once_with("dev")
+
+
+def test_variants_share_the_plain_models_vae():
+    """The VAE has no LoRA-dependent weights; a second copy would waste device memory."""
+    from animatediff_ttnn.lora import LoraSpec
+    from animatediff_ttnn.server import app as mod
+
+    with patch("animatediff_ttnn.generation_helpers.load_sd14_variant", return_value="v") as load:
+        out = mod._load_lora_variants("dev", ("u", "THE_VAE", "c", "t"), {"pixel": [LoraSpec("a/b", "f.safetensors")]})
+    assert out == {"pixel": "v"}
+    assert load.call_args.args[2] == "THE_VAE"
+
+
+def _run_generate(state, **fields):
+    """Call _generate with the model calls stubbed; return (encode calls, generate kwargs)."""
+    from animatediff_ttnn.server import app as mod
+
+    with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb") as enc, \
+         patch("animatediff_ttnn.temporal_attention.generate_frames_temporal", return_value=[]) as gen:
+        mod._generate(state, VideoGenerationRequest(prompt="a cat", **fields))
+    return enc.call_args_list, gen.call_args.kwargs
+
+
+def _state(lcm):
+    from animatediff_ttnn.generation_helpers import Sd14Variant
+
+    v = Sd14Variant(models=("u", "vae", "c", "t"), clip=("tok", "te"), lcm=lcm)
+    return {"device": "dev", "models": ("pu", "vae", "pc", "pt"), "variants": {"fast": v, "style": v._replace(lcm=False)}}
+
+
+def test_an_lcm_variant_samples_with_lcm_and_its_own_defaults():
+    """The sampler follows the LoRA: an LCM variant at 25 steps / cfg 7.5 would return noise."""
+    _, kw = _run_generate(_state(True), lora="fast")
+    assert kw["use_lcm"] is True
+    assert (kw["num_steps"], kw["guidance_scale"]) == (4, 1.5)
+
+
+def test_an_lcm_variant_honours_steps_and_guidance_the_caller_sent():
+    _, kw = _run_generate(_state(True), lora="fast", num_inference_steps=8, guidance_scale=2.0)
+    assert (kw["num_steps"], kw["guidance_scale"], kw["use_lcm"]) == (8, 2.0, True)
+
+
+def test_a_sent_default_value_still_counts_as_sent():
+    # model_fields_set, not a comparison with the default: a caller who asks for 25 gets 25.
+    _, kw = _run_generate(_state(True), lora="fast", num_inference_steps=25)
+    assert kw["num_steps"] == 25
+
+
+def test_a_style_variant_and_the_plain_model_keep_the_normal_sampler_and_defaults():
+    for lora in ("style", None):
+        _, kw = _run_generate(_state(True), lora=lora)
+        assert kw["use_lcm"] is False
+        assert (kw["num_steps"], kw["guidance_scale"]) == (25, 7.5)
+
+
+def test_a_prompt_schedule_is_encoded_per_frame_with_the_variants_encoder():
+    calls, kw = _run_generate(
+        _state(False), lora="style", num_frames=8,
+        prompt_schedule=[{"frame": 0, "prompt": "dawn"}, {"frame": 7, "prompt": "dusk"}],
+    )
+    sched = [c for c in calls if "prompt_schedule" in c.kwargs]
+    assert len(sched) == 1
+    assert sched[0].kwargs["prompt_schedule"] == [(0, "dawn"), (7, "dusk")]
+    assert sched[0].kwargs["num_frames"] == 8 and sched[0].kwargs["clip"] == ("tok", "te")
+    assert kw["text_embeddings_per_frame"] == "emb"
+
+
+def test_without_a_schedule_no_per_frame_embeddings_are_passed():
+    _, kw = _run_generate(_state(False))
+    assert kw["text_embeddings_per_frame"] is None
+
+
+def test_a_keyframe_outside_the_clip_is_refused_at_the_edge():
+    r = TestClient(app).post("/v1/videos/generations", json={
+        "prompt": "a cat", "num_frames": 4, "prompt_schedule": [{"frame": 4, "prompt": "x"}]})
+    assert r.status_code == 422 and "outside the clip" in r.text
+
+
+def test_the_image_ships_peft_so_a_lora_request_cannot_fail_on_a_missing_import():
+    """diffusers imports peft lazily, so a missing peft passes the build-time verify and
+    fails on the first LoRA load. Assert the declaration AND the lock the image installs."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    assert any(p.startswith("peft") for p in _manifest()["runtime"]["packages"])
+    assert "peft" in _lock_pins(), "tt_model_package.lock does not pin peft; the image would lack it"

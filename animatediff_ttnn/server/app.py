@@ -29,6 +29,10 @@ ENVIRONMENT, set by the launcher
                            ``runtime.mesh_shape_env`` at this name; the kind's default is
                            FLUX.2's, which means nothing to this model)
 ``HF_MODEL``               the weights repo id, reported by ``/v1/models``
+``ANIMATEDIFF_LORAS``      optional JSON object ``{"name": "SOURCE[:FILE][@SCALE]", ...}``; each
+                           entry becomes a resident LoRA variant a request can select with
+                           ``"lora": "name"``. A value may also be a list of specs, which
+                           are stacked. Unset means no variants. See ``lora_catalog_from_env``.
 
 ONE REQUEST AT A TIME
 ---------------------
@@ -45,17 +49,25 @@ import asyncio
 import base64
 import io
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 #: The env var carrying the resolved mesh shape. Named for THIS model: the kind's default
 #: is ``FLUX2_MESH_SHAPE``, which is the default only because FLUX.2 is what it was built
 #: for. A manifest serving this app sets ``runtime.mesh_shape_env`` to the name below.
 MESH_SHAPE_ENV = "ANIMATEDIFF_MESH_SHAPE"
+
+#: The env var carrying the LoRA catalog: the only way a LoRA reaches this server.
+LORAS_ENV = "ANIMATEDIFF_LORAS"
+
+#: What an LCM variant uses when the request leaves steps / guidance_scale out.
+LCM_DEFAULT_STEPS = 4
+LCM_DEFAULT_GUIDANCE = 1.5
 
 #: Frames per second baked into the returned GIF.
 DEFAULT_FPS = 8
@@ -65,6 +77,13 @@ DEFAULT_FPS = 8
 #: 64x64 latent, and 64 * 8 = 512. Named rather than repeated so the request model, the
 #: error message and any future widening all move together.
 SERVABLE_SIZE = 512
+
+
+class PromptKeyframe(BaseModel):
+    """One keyframe of a prompt schedule ("prompt travel"): frame index and the prompt there."""
+
+    frame: int = Field(ge=0)
+    prompt: str = Field(min_length=1)
 
 
 class VideoGenerationRequest(BaseModel):
@@ -82,6 +101,14 @@ class VideoGenerationRequest(BaseModel):
     num_inference_steps: int = Field(default=25, ge=1, le=100)
     guidance_scale: float = Field(default=7.5, ge=0.0, le=20.0)
     seed: int = 42
+    #: Name of a LoRA variant from the operator's catalog (``ANIMATEDIFF_LORAS``). Omit for
+    #: the plain model. A name, never a repo id or a path: the operator decides which files
+    #: this server will load, so a caller cannot make it fetch or open one.
+    lora: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    #: Keyframe prompts interpolated across the frames ("prompt travel"). ``prompt`` stays
+    #: required and is what the schedule falls back to for a frame between none; at least
+    #: two keyframes are needed for anything to travel.
+    prompt_schedule: Optional[List[PromptKeyframe]] = Field(default=None, min_length=1, max_length=16)
     # 0.35, because that is what the rest of the project calibrated: generate_animation(),
     # hf/pipeline.py AND generate_frames_temporal -- the function this server calls -- all
     # use it. This said 0.5, which matched none of them, so an HTTP client omitting the
@@ -107,6 +134,17 @@ class VideoGenerationRequest(BaseModel):
     #: no store for, and a bundle that returns links to a path the consumer cannot read is
     #: worse than one that returns bytes.
     response_format: str = "b64_json"
+
+    @model_validator(mode="after")
+    def _keyframes_fall_inside_the_clip(self):
+        # A keyframe past the last frame would be silently ignored by the interpolator;
+        # refuse it where the caller can see why.
+        for kf in self.prompt_schedule or ():
+            if kf.frame >= self.num_frames:
+                raise ValueError(
+                    f"prompt_schedule frame {kf.frame} is outside the clip (num_frames={self.num_frames})"
+                )
+        return self
 
 
 class VideoData(BaseModel):
@@ -152,6 +190,60 @@ def mesh_shape_from_env(env: Optional[dict] = None) -> tuple:
             f"would claim every chip on the box and still fail in the lifespan."
         )
     return (rows, cols)
+
+
+_LORA_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def lora_catalog_from_env(env: Optional[dict] = None) -> dict:
+    """Parse ``ANIMATEDIFF_LORAS`` into ``{name: [LoraSpec, ...]}``.
+
+    Unset or empty is an empty catalog. Anything malformed RAISES, for the same reason
+    ``mesh_shape_from_env`` does: a server that quietly dropped a LoRA would come up healthy
+    and then answer a request for it with the plain model's pictures. Raising happens
+    before the device is opened, so a typo costs nothing.
+
+    The value is a JSON object. Each value is one spec string or a list of them (stacked, in
+    order), in the CLI form ``SOURCE[:FILE][@SCALE]``. ``base`` is refused as a name only
+    because it reads like the plain model; omit ``lora`` to get that.
+    """
+    import json
+
+    from animatediff_ttnn.lora import parse_lora_spec
+
+    raw = (env if env is not None else os.environ).get(LORAS_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"{LORAS_ENV} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f'{LORAS_ENV} must be a JSON object like {{"name": "repo:file.safetensors@0.8"}}')
+    catalog = {}
+    for name, value in data.items():
+        if not _LORA_NAME.match(name) or name == "base":
+            raise ValueError(f"{LORAS_ENV}: {name!r} is not a usable LoRA name (letters, digits, . _ -; not 'base')")
+        texts = [value] if isinstance(value, str) else value
+        if not isinstance(texts, list) or not texts or not all(isinstance(t, str) for t in texts):
+            raise ValueError(f"{LORAS_ENV}: {name!r} must be a spec string or a non-empty list of them")
+        catalog[name] = [parse_lora_spec(t) for t in texts]
+    return catalog
+
+
+def _load_lora_variants(device, models: tuple, catalog: dict) -> dict:
+    """Build one resident model set per catalog entry, next to the plain ``models``.
+
+    Blocking, hardware, lifespan-only. Each variant costs a UNet's weights on the device
+    (the VAE is shared), and no more compile time than the plain model, because the kernels
+    are keyed on shapes. A bad file raises here, at startup, which is where a readiness
+    probe wants the failure: ``merge_loras`` rejects wrong-base and unsupported files before
+    it loads anything.
+    """
+    from animatediff_ttnn.generation_helpers import load_sd14_variant
+
+    vae = models[1]
+    return {name: load_sd14_variant(device, specs, vae) for name, specs in catalog.items()}
 
 
 def _open_device_and_models(shape: tuple) -> tuple:
@@ -224,19 +316,42 @@ def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
     from animatediff_ttnn.generation_helpers import encode_prompt
     from animatediff_ttnn.temporal_attention import generate_frames_temporal
 
-    ttnn_model, ttnn_vae, config, torch_time_proj = state["models"]
+    variant = state.get("variants", {}).get(req.lora) if req.lora else None
+    # A variant brings its own text encoder: its UNet and encoder were merged together.
+    models, clip = (variant.models, variant.clip) if variant else (state["models"], None)
+    ttnn_model, ttnn_vae, config, torch_time_proj = models
+    use_lcm = bool(variant and variant.lcm)
+    steps, guidance = req.num_inference_steps, req.guidance_scale
+    if use_lcm:
+        # An LCM variant is a 2-8 step, low-guidance model; the request defaults (25, 7.5)
+        # would waste time and oversaturate it. Only fields the caller did not send change.
+        if "num_inference_steps" not in req.model_fields_set:
+            steps = LCM_DEFAULT_STEPS
+        if "guidance_scale" not in req.model_fields_set:
+            guidance = LCM_DEFAULT_GUIDANCE
+
+    embeddings = encode_prompt(req.prompt, req.negative_prompt, clip=clip)
+    per_frame = None
+    if req.prompt_schedule:
+        per_frame = encode_prompt(
+            req.prompt, req.negative_prompt, clip=clip,
+            prompt_schedule=[(kf.frame, kf.prompt) for kf in req.prompt_schedule],
+            num_frames=req.num_frames,
+        )
     return generate_frames_temporal(
         device=state["device"],
         ttnn_model=ttnn_model,
         ttnn_vae=ttnn_vae,
         config=config,
         torch_time_proj=torch_time_proj,
-        text_embeddings=encode_prompt(req.prompt, req.negative_prompt),
+        text_embeddings=embeddings,
+        text_embeddings_per_frame=per_frame,
         num_frames=req.num_frames,
-        num_steps=req.num_inference_steps,
-        guidance_scale=req.guidance_scale,
+        num_steps=steps,
+        guidance_scale=guidance,
         seed=req.seed,
         temporal_alpha=req.temporal_alpha,
+        use_lcm=use_lcm,
         height=req.height,
         width=req.width,
     )
@@ -252,9 +367,17 @@ async def lifespan(app: FastAPI):
     would answer /health cheerfully and fail every generation.
     """
     shape = mesh_shape_from_env()
+    # Parsed before the device opens: a malformed catalog should cost nothing.
+    catalog = lora_catalog_from_env()
     device, models = await asyncio.to_thread(_open_device_and_models, shape)
+    try:
+        variants = await asyncio.to_thread(_load_lora_variants, device, models, catalog) if catalog else {}
+    except BaseException:
+        # Same rollback _open_device_and_models does: a failed start must not keep a chip.
+        _close_device(device)
+        raise
     app.state.engine = {
-        "device": device, "models": models, "mesh_shape": shape,
+        "device": device, "models": models, "variants": variants, "mesh_shape": shape,
         "hf_model": os.environ.get("HF_MODEL", "unknown"),
         "mesh_device": os.environ.get("MESH_DEVICE", "unknown"),
     }
@@ -331,7 +454,9 @@ async def models() -> dict:
     engine = getattr(app.state, "engine", None)
     name = (engine or {}).get("hf_model", "unknown")
     return {"object": "list", "data": [{"id": name, "object": "model",
-                                        "owned_by": "tenstorrent"}]}
+                                        "owned_by": "tenstorrent"}],
+            # The names a request may pass as "lora"; empty when the operator set none.
+            "loras": sorted((engine or {}).get("variants", {}))}
 
 
 @app.post("/v1/videos/generations", response_model=VideoGenerationResponse)
@@ -339,6 +464,15 @@ async def videos_generations(req: VideoGenerationRequest) -> VideoGenerationResp
     engine = getattr(app.state, "engine", None)
     if engine is None:
         raise HTTPException(status_code=503, detail="model is still starting")
+    if req.lora is not None and req.lora not in engine.get("variants", {}):
+        # 400, and before the device lock: an unknown name must not queue behind a
+        # generation just to be refused.
+        available = sorted(engine.get("variants", {}))
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown lora {req.lora!r}; this server offers "
+                   f"{available if available else 'none (ANIMATEDIFF_LORAS is not set)'}",
+        )
     if req.response_format != "b64_json":
         raise HTTPException(
             status_code=400,

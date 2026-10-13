@@ -20,6 +20,8 @@ Rules (``revision_for``)
   the tt-dit-server path loads. tt-model-manager's v6 ``run.sh`` exports
   ``TT_MODEL_WEIGHTS_REVISION`` from the bundle manifest, and that env var wins when set
   and non-empty. Otherwise the pin below applies.
+* **The LCM-LoRA** (``--lcm-lora``) is the one LoRA this package names itself, so it has a pin
+  like the other fixed repos. LoRAs a user names are not pinned (see below).
 * **The motion adapter and the Lightning checkpoints** are used only by the CPU
   diffusers path, the Phase 3 CLI and the Gradio UI. They get their own pins.
   ``TT_MODEL_WEIGHTS_REVISION`` names *the bundle's* weights repo (SD 1.4), and applying
@@ -58,10 +60,19 @@ MOTION_ADAPTER_REVISION = "6167b88ffe39b4441fdf2113e77b99a6f56b7906"
 LIGHTNING_REPO = "ByteDance/AnimateDiff-Lightning"
 LIGHTNING_REVISION = "027c893eec01df7330f5d4b733bc9485ee02e8b2"
 
+#: Latent Consistency LoRA for SD 1.x (``--lcm-lora``). A kohya-format LoCon (rank 64, conv
+#: and linear targets) that turns the UNet into a 2-8 step consistency model. Unlike a
+#: user-chosen style LoRA, the package names this one itself, so it gets a pin.
+#: Revision is the snapshot downloaded and measured on 2026-10-13.
+LCM_LORA_REPO = "latent-consistency/lcm-lora-sdv1-5"
+LCM_LORA_FILE = "pytorch_lora_weights.safetensors"
+LCM_LORA_REVISION = "cf2fced511dbe7e26c8d1d397e728fbab875db4b"
+
 #: Fixed pins for the repos the env var does not govern.
 _FIXED_PINS = {
     MOTION_ADAPTER_REPO: MOTION_ADAPTER_REVISION,
     LIGHTNING_REPO: LIGHTNING_REVISION,
+    LCM_LORA_REPO: LCM_LORA_REVISION,
 }
 
 

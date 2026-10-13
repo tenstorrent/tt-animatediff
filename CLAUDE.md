@@ -411,3 +411,31 @@ Four findings, all fixed in `animatediff_ttnn/lora.py`. Bumped to 0.12.1 (VERSIO
 Full suite: 400 passed, 1 failed. The failure is `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing`, which
 compares the package tree with `main`'s; it fails for any branch that changes `animatediff_ttnn/` and is resolved by the
 release repin in `docs/RELEASING.md`.
+
+### 2026-10-13 — LoRA features for the first release (v0.13.0)
+**Prompt.** After the review fixes: "work on some of these useful and faster items so our shipped version starts
+on the best foot", then "how do we make our full feature set available when served via tt-model?".
+
+**What was built.** Header pre-check (`inspect_lora`, `check_lora_compatible`), `scripts/lora_device_check.py`,
+served LoRA variants (`ANIMATEDIFF_LORAS` catalog, `"lora"` request field, resident per variant, shared VAE),
+`--lcm-lora` plus `use_lcm` in `generate_frames_temporal`, `prompt_schedule` in the served request, and `peft`
+in the container manifest and lock. Details and numbers are in `docs/LORA.md`.
+
+**Things that were wrong until checked.**
+* The container lock had no `peft`. diffusers imports it lazily, so the build-time verify passed and every
+  LoRA request in the image would have failed. Added to `tt_model_package.yaml`; the lock was recompiled from
+  its own top-level requirements plus peft, and the diff is only peft and its `# via` lines. The LoRA tests and a
+  real three-LoRA merge then ran in a bare venv built from the lock (diffusers 0.40, not the 0.39 used before).
+* I assumed the LCM-LoRA was diffusers-format and would be refused by the new pre-check. Reading its header showed
+  kohya keys with conv targets (a LoCon). The assumption was wrong, and the header read is why it was caught.
+* The LCM-only run showed grid lines. Alpha 0 and 8 steps did not remove them; a neutral prompt did. The
+  "Pixel Art" in the prompt asked for the grid. Without that control it would have been logged as an LCM bug.
+* A port the box already used (8765) failed the first serve attempt; pick a free port.
+
+**Hardware traps.** `gozer run` leaves the lease held for ~30 s after the server exits while it resets chips;
+`gozer status` reports unreadable serials during that window. Wait for FREE before the next run.
+
+**Not done.** Nothing was run through `tt-model serve` itself, only uvicorn on the chip. `tt_model_package.yaml`'s
+`extra_code.ref` still points at v0.10.0 and must move to a tag that contains this release. The
+`test_the_pinned_extra_code_ref_ships_the_package_we_are_developing` failure is that repin. A LoRA catalog needs
+the files in the container's HF cache or network access at startup.

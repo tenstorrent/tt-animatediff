@@ -42,7 +42,9 @@
 # hardware serves in this branch all ran 4.52.4. The lock makes that visible and
 # reproducible rather than resolving differently on every build; it does not bless it.
 accelerate==1.14.0
-    # via -r lock.in
+    # via
+    #   -r lock.in
+    #   peft
 annotated-doc==0.0.5
     # via
     #   fastapi
@@ -93,6 +95,7 @@ huggingface-hub==1.30.0
     # via
     #   accelerate
     #   diffusers
+    #   peft
     #   tokenizers
     #   transformers
 idna==3.19
@@ -120,13 +123,17 @@ numpy==2.5.3
     # via
     #   accelerate
     #   diffusers
+    #   peft
     #   transformers
 packaging==26.3
     # via
     #   accelerate
     #   huggingface-hub
+    #   peft
     #   pytest
     #   transformers
+peft==0.21.2
+    # via -r lock.in
 pillow==12.3.0
     # via
     #   -r lock.in
@@ -134,7 +141,9 @@ pillow==12.3.0
 pluggy==1.6.0
     # via pytest
 psutil==7.2.2
-    # via accelerate
+    # via
+    #   accelerate
+    #   peft
 pydantic==2.13.5
     # via
     #   -r lock.in
@@ -151,6 +160,7 @@ pyyaml==6.0.3
     # via
     #   accelerate
     #   huggingface-hub
+    #   peft
     #   transformers
 regex==2026.9.3
     # via
@@ -165,6 +175,7 @@ safetensors==0.8.0
     #   -r lock.in
     #   accelerate
     #   diffusers
+    #   peft
     #   transformers
 setuptools==81.0.0
     # via torch
@@ -180,12 +191,16 @@ torch==2.11.0+cpu
     # via
     #   -r lock.in
     #   accelerate
+    #   peft
 tqdm==4.70.0
     # via
     #   huggingface-hub
+    #   peft
     #   transformers
 transformers==5.16.1
-    # via -r lock.in
+    # via
+    #   -r lock.in
+    #   peft
 typer==0.27.2
     # via transformers
 typing-extensions==4.16.0

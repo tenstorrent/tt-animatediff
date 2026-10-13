@@ -58,6 +58,14 @@ class LoraSpec:
             raise ValueError(f"LoRA scale must be a finite number, got {self.scale!r} for {self.source!r}")
 
 
+# The published LCM-LoRA, as a spec. Merged alongside a style LoRA (their deltas add) and
+# paired with the LCM sampler, it cuts 20-25 steps to about 4. See docs/LORA.md.
+def lcm_lora_spec(scale: float = 1.0) -> "LoraSpec":
+    from animatediff_ttnn.weights_pins import LCM_LORA_FILE, LCM_LORA_REPO
+
+    return LoraSpec(LCM_LORA_REPO, LCM_LORA_FILE, scale)
+
+
 # "repo/id[:file.safetensors][@0.8]". The scale is peeled off the right first so a
 # Windows-style or colon-bearing path in the middle cannot be mistaken for it.
 _SCALE_RE = re.compile(r"@([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$")

@@ -394,12 +394,30 @@ class TestWiring:
     the device with the unmodified weights.
     """
 
-    def test_load_sd14_ttnn_merges_before_preprocessing(self):
+    @pytest.mark.parametrize("fn", ["load_sd14_ttnn", "load_sd14_variant"])
+    def test_loaders_merge_before_building_the_ttnn_unet(self, fn):
         from animatediff_ttnn import generation_helpers as g
 
-        src = inspect.getsource(g.load_sd14_ttnn)
+        src = inspect.getsource(getattr(g, fn))
         assert "merge_loras(" in src
-        assert src.index("merge_loras(") < src.index("preprocess_model_parameters(")
+        assert src.index("merge_loras(") < src.index("_build_ttnn_unet(")
+
+    def test_the_shared_builder_is_what_uploads_the_weights(self):
+        # The wiring test above is only meaningful while _build_ttnn_unet is the one place
+        # that calls preprocess_model_parameters.
+        from animatediff_ttnn import generation_helpers as g
+
+        assert "preprocess_model_parameters(" in inspect.getsource(g._build_ttnn_unet)
+        for fn in ("load_sd14_ttnn", "load_sd14_variant"):
+            assert "preprocess_model_parameters(" not in inspect.getsource(getattr(g, fn))
+
+    def test_a_variant_touches_no_process_wide_encoder(self):
+        # load_sd14_variant must leave the cached CLIP alone, or a LoRA would leak into the
+        # plain model's prompts.
+        from animatediff_ttnn import generation_helpers as g
+
+        src = inspect.getsource(g.load_sd14_variant)
+        assert "global " not in src and "_clip_text_encoder =" not in src
 
     def test_cli_passes_loras_to_the_loader(self):
         tree = ast.parse((REPO / "examples" / "generate.py").read_text())
@@ -408,3 +426,43 @@ class TestWiring:
             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "load_sd14_ttnn"
         ]
         assert calls and all(any(k.arg == "loras" for k in c.keywords) for c in calls)
+
+
+class TestLcm:
+    """The LCM-LoRA path: the pin, the spec, the sampler guard and the CLI wiring."""
+
+    def test_the_lcm_lora_is_pinned_and_is_a_spec_for_that_repo(self):
+        from animatediff_ttnn.weights_pins import LCM_LORA_FILE, LCM_LORA_REPO, LCM_LORA_REVISION, revision_for
+
+        spec = lora.lcm_lora_spec(0.8)
+        assert (spec.source, spec.weight_name, spec.scale) == (LCM_LORA_REPO, LCM_LORA_FILE, 0.8)
+        assert revision_for(LCM_LORA_REPO) == LCM_LORA_REVISION and len(LCM_LORA_REVISION) == 40
+
+    def test_lcm_and_lightning_are_refused_together_before_any_device_work(self):
+        from animatediff_ttnn.temporal_attention import generate_frames_temporal
+
+        with pytest.raises(ValueError, match="pick one"):
+            generate_frames_temporal(None, None, None, None, None, torch.zeros(2, 96, 768),
+                                     use_lightning=True, use_lcm=True)
+
+    def test_lcm_timesteps_are_the_ones_the_device_embeds(self):
+        # The loop embeds schedulers[0].timesteps via a stand-in object; if diffusers changed
+        # how LCM spaces them, the embeddings would still build but be wrong. 4 steps from
+        # 50 original steps is the documented recipe: 999, 759, 499, 259.
+        from diffusers import LCMScheduler
+
+        s = LCMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", original_inference_steps=50)
+        s.set_timesteps(4)
+        assert s.timesteps.tolist() == [999, 759, 499, 259]
+        assert float(s.init_noise_sigma) == 1.0
+
+    def test_the_cli_passes_use_lcm_to_the_temporal_loop(self):
+        tree = ast.parse((REPO / "examples" / "generate.py").read_text())
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", "") == "generate_frames_temporal"]
+        assert calls and all(any(k.arg == "use_lcm" for k in c.keywords) for c in calls)
+
+    def test_lcm_defaults_are_few_steps_and_low_guidance(self):
+        src = (REPO / "examples" / "generate.py").read_text()
+        assert "args.steps = 4  # the LCM-LoRA" in src
+        assert "guidance = 1.5 if args.lcm_lora else 7.5" in src

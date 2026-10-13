@@ -115,6 +115,9 @@ runtime:
     - transformers>=4.30.0,<6
     - accelerate>=0.20.0,<2
     - safetensors>=0.4.0,<1
+    # LoRA merge (animatediff_ttnn.lora, ANIMATEDIFF_LORAS). diffusers imports it lazily, so
+    # its absence passes the build-time verify and fails on the first LoRA load.
+    - peft>=0.15,<1
 
 serve:
   # ONE chip, and that is the model's limit rather than a conservative default.

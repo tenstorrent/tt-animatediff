@@ -30,7 +30,8 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1] / "animatediff_ttnn"
 
 
 @pytest.mark.parametrize(
-    "sha", [wp.SD14_REVISION, wp.MOTION_ADAPTER_REVISION, wp.LIGHTNING_REVISION]
+    "sha",
+    [wp.SD14_REVISION, wp.MOTION_ADAPTER_REVISION, wp.LIGHTNING_REVISION, wp.LCM_LORA_REVISION],
 )
 def test_every_pin_is_a_full_40_char_sha(sha):
     assert len(sha) == 40

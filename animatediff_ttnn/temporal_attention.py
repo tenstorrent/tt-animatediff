@@ -240,6 +240,7 @@ def generate_frames_temporal(
     width: int = 512,
     temporal_alpha: float = 0.35,
     use_lightning: bool = False,
+    use_lcm: bool = False,
     chain_from: str | None = None,
     chain_save: str | None = None,
     chain_alpha: float = 0.6,
@@ -273,6 +274,11 @@ def generate_frames_temporal(
                         1 → full attention; default 0.35)
         use_lightning: If True, use EulerDiscreteScheduler instead of PNDM.
                        CFG=7.5 still applies (base UNet, no distilled adapter).
+        use_lcm: If True, sample with diffusers' LCMScheduler. Only meaningful when the
+                 UNet has the LCM-LoRA merged in (``--lcm`` / a served variant that names
+                 it): that LoRA turns the UNet into a consistency model that needs 2-8
+                 steps and a guidance_scale of about 1-2, not 20+ steps at 7.5. Without
+                 the LoRA the output is noise. Mutually exclusive with use_lightning.
         chain_from: Path to a .pt file saved by a previous run's chain_save.
                     The stored latents are blended into this run's base_noise at
                     chain_alpha weight — visual continuity across prompts without
@@ -298,6 +304,11 @@ def generate_frames_temporal(
     """
     # Validate before anything expensive: no device, no compile, no ttnn import.
     _validate_per_frame_text(text_embeddings_per_frame, num_frames)
+    if use_lcm and use_lightning:
+        raise ValueError("use_lcm and use_lightning are different samplers; pick one")
+    # Both are stateless per-frame samplers: no multi-step buffer to desync, so the loop
+    # can blend predictions before the step and latents after it (the "Lightning" branch).
+    _fast_sampler = use_lightning or use_lcm
 
     import ttnn as _ttnn
     from animatediff_ttnn.ttnn_pipeline import plan_frame_sharding
@@ -318,7 +329,29 @@ def generate_frames_temporal(
 
     lh, lw = height // 8, width // 8
 
-    if use_lightning:
+    if use_lcm:
+        # LCM: the schedule the LCM-LoRA was distilled on (SD 1.x, scaled_linear betas,
+        # 50 original inference steps). One scheduler per frame, as for Euler.
+        from diffusers import LCMScheduler
+
+        lcm_kwargs = dict(
+            beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear",
+            original_inference_steps=50,
+        )
+        schedulers = [LCMScheduler(**lcm_kwargs) for _ in range(num_frames)]
+        for s in schedulers:
+            s.set_timesteps(num_steps)
+
+        class _LcmTimesteps:
+            """build_tlist reads only ``.timesteps``; LCM's are the ones to embed."""
+
+            timesteps = schedulers[0].timesteps
+
+        _tt_sched = _LcmTimesteps
+        # LCM injects fresh noise at every step but the last. Seeded per frame so a rerun
+        # with the same seed reproduces the same frames.
+        _lcm_gens = [torch.Generator().manual_seed(seed + 1 + i) for i in range(num_frames)]
+    elif use_lightning:
         # Lightning: EulerDiscreteScheduler with trailing timesteps, linear betas.
         # One scheduler per frame — each maintains independent step-index state.
         from diffusers import EulerDiscreteScheduler
@@ -367,7 +400,7 @@ def generate_frames_temporal(
     # has proportionally more leverage on the final structure.
     generator = torch.Generator().manual_seed(seed)
     base_noise = torch.randn(1, 4, lh, lw, generator=generator)
-    noise_perturb = 0.02 if use_lightning else 0.05
+    noise_perturb = 0.02 if _fast_sampler else 0.05
 
     # Chain continuity: blend a low-pass version of the previous run's latents into
     # this run's seed noise, biasing the denoiser toward the same coarse composition
@@ -454,7 +487,7 @@ def generate_frames_temporal(
                 cfg_latents = []
                 for i in range(c0, c0 + _chunk):
                     latent_cpu = frame_latents[i]
-                    if use_lightning:
+                    if _fast_sampler:
                         # Euler schedulers require scaling the latent by 1/sqrt(sigma^2+1)
                         # before each UNet call (PNDM's sigma is always 1.0 so it's a no-op
                         # there, but Euler's sigma starts at ~25 and must be normalized).
@@ -498,7 +531,7 @@ def generate_frames_temporal(
             noise_preds = []
             for i in range(num_frames):
                 latent_cpu = frame_latents[i]
-                if use_lightning:
+                if _fast_sampler:
                     latent_cpu = schedulers[i].scale_model_input(latent_cpu, t)
                 cfg_lat = torch.cat([latent_cpu, latent_cpu], dim=0)  # [2, 4, lh, lw]
                 lat_dev = to_device(cfg_lat, device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT)
@@ -519,7 +552,7 @@ def generate_frames_temporal(
                 ttnn_out_i.deallocate(True)
                 noise_preds.append(_tt_guide_cpu(frame_out, guidance_scale).to(torch.float32))
 
-        if use_lightning:
+        if _fast_sampler:
             # Lightning two-point blend with cosine-decay alpha:
             #
             # Point 1: blend noise_preds before stepping. All preds at the same
@@ -540,8 +573,9 @@ def generate_frames_temporal(
             # Step each frame with the blended noise_pred
             next_latents = []
             for i in range(num_frames):
+                step_kw = {"generator": _lcm_gens[i]} if use_lcm else {}
                 next_latents.append(
-                    schedulers[i].step(blended_preds[i], t, frame_latents[i]).prev_sample
+                    schedulers[i].step(blended_preds[i], t, frame_latents[i], **step_kw).prev_sample
                 )
 
             # Point 2: latent-space blend after stepping (gentler — 0.4× alpha)
