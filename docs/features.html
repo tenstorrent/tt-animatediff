@@ -317,7 +317,7 @@
 
     <div class="section" id="previews">
       <div class="section-head"><span class="section-num">05</span><h2>Live previews</h2></div>
-      <p><code>GET /v1/videos/preview</code> reports the generation in flight: <code>{"step": n, "total": N, "gif_b64": "&hellip;"|null, "running": bool}</code>. It never waits on the device, so it answers while a generation runs (about 140 ms measured). The step counter always runs. The 256&times;256 GIF is rendered only when the request sets <code>"preview": true</code>, because each render costs about 0.4 s: 8 frames at 20 steps took 13.5&ndash;13.9 s without previews and 17.8&ndash;20.2 s with them. <code>"preview_every": n</code> renders every nth step.</p>
+      <p><code>GET /v1/videos/preview</code> reports the generation in flight: <code>{"step": n, "total": N, "gif_b64": "&hellip;"|null, "running": bool, "request_id": str|null}</code>. It never waits on the device, so it answers while a generation runs (about 140 ms measured). The step counter always runs. The 256&times;256 GIF is rendered only when the request sets <code>"preview": true</code>, because each render costs about 0.4 s: 8 frames at 20 steps took 13.5&ndash;13.9 s without previews and 17.8&ndash;20.2 s with them. <code>"preview_every": n</code> renders every nth step.</p>
       <div class="callout callout-note">
         <span class="callout-title">Reading it correctly</span>
         <p><code>step</code> is 1-based and <code>total</code> is the loop's real step count (a 20-step request reports 21). The last frame stays readable after a run ends, until the next request begins, so check <code>running</code>.</p>
@@ -372,6 +372,7 @@
             <tr><td>motion_adapter_alpha, motion_adapter_skip</td><td>1.0, []</td><td>Only with <code>motion_adapter: true</code></td></tr>
             <tr><td>preview</td><td>false</td><td>Render preview GIFs for <code>GET /v1/videos/preview</code></td></tr>
             <tr><td>preview_every</td><td>library default</td><td>1&ndash;100</td></tr>
+            <tr><td>request_id</td><td>none</td><td>Your name for the request (letters, digits, <code>.</code> <code>_</code> <code>-</code>, up to 64). <code>GET /v1/videos/preview</code> echoes it, so a client sharing the server can ignore previews that belong to another request</td></tr>
             <tr><td>response_format</td><td>b64_json</td><td>Only b64_json</td></tr>
           </tbody>
         </table>

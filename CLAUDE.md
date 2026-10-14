@@ -527,3 +527,8 @@ Four findings, each checked against the code before fixing, each with a test see
   deletes the chain on acquire, which is when a pruning generation would have finished. That test first failed by reaching generation.
 * **Benchmark script** no longer guesses LCM from the name; it sends no step count for any variant.
 Not repackaged: the published container package is still built from `fb9ef60` (0.13.0).
+* **Preview ownership (from the tt-local-generator #29 review).** One global preview plus a queue on the device lock let a waiting
+  client show another client's step-20 frame. The fix is in both repos, released together: `request_id` on the request,
+  `PreviewStore.begin(total, request_id)`, echoed in `GET /v1/videos/preview`; the generator sends a fresh id and ignores previews
+  with another one. No compatibility path: a server without the field gives the generator no previews, which it already treats as
+  "no preview endpoint".

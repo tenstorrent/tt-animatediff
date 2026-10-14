@@ -113,12 +113,18 @@ class PreviewStore:
         #: Where ``make_step_callback`` writes the rolling GIF (atomically, so a read never
         #: sees half a file).
         self.path = os.path.join(self._dir, "preview.gif")
-        self._state = {"step": 0, "total": 0, "gif_b64": None, "running": False}
+        self._state = {"step": 0, "total": 0, "gif_b64": None, "running": False, "request_id": None}
 
-    def begin(self, total: int) -> None:
-        """Reset for a new request: a stale frame from the last one must not show."""
+    def begin(self, total: int, request_id: Optional[str] = None) -> None:
+        """Reset for a new request: a stale frame from the last one must not show.
+
+        ``request_id`` is the caller's own name for the request. The store holds one preview, and
+        requests queue on the device lock, so without it a client cannot tell its generation's
+        preview from another client's. It is replaced, not kept, when the next request begins.
+        """
         with self._lock:
-            self._state = {"step": 0, "total": total, "gif_b64": None, "running": True}
+            self._state = {"step": 0, "total": total, "gif_b64": None, "running": True,
+                           "request_id": request_id}
 
     def step(self, step: int, total: int) -> None:
         with self._lock:
@@ -257,6 +263,10 @@ class VideoGenerationRequest(BaseModel):
     motion_adapter_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
     motion_adapter_skip: List[MotionKey] = Field(default_factory=list)
     preview: bool = False
+    #: The caller's name for this request, echoed by ``GET /v1/videos/preview`` while the request
+    #: runs, so a client sharing the server with others can tell whose preview it is looking at.
+    #: Opaque to the server; any unique string works.
+    request_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
     #: Render a preview every Nth step (the last step always renders). Omit for the library
     #: default: every step on a run of 10 steps or fewer, every other step beyond that. Each
     #: render added about 0.4 s on one Blackhole chip, so a larger value trades preview
@@ -562,7 +572,7 @@ def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
     preview = state.get("preview")
     on_step = _step_callback(preview, req, steps) if preview is not None else None
     if preview is not None:
-        preview.begin(steps)
+        preview.begin(steps, req.request_id)
     chains = state.get("chains")
     common = dict(
         device=state["device"],
@@ -710,8 +720,10 @@ async def health() -> dict:
 async def videos_preview() -> dict:
     """Progress and latest preview frame of the generation in flight.
 
-    ``{"step": n, "total": N, "gif_b64": "<base64 GIF>" | null, "running": bool}``. ``step``
-    is 1-based. ``gif_b64`` is null until a request sent ``"preview": true`` has produced a
+    ``{"step": n, "total": N, "gif_b64": "<base64 GIF>" | null, "running": bool,
+    "request_id": str | null}``. ``request_id`` is the one the running (or last finished)
+    request sent, so a client that shares the server can ignore previews that are not its own.
+    ``step`` is 1-based. ``gif_b64`` is null until a request sent ``"preview": true`` has produced a
     frame, and is reset at the start of each request. Never blocks on the device lock, so it
     answers while a generation holds the device; it is a memory read behind a tiny lock.
     Always 200, including before the model is ready (all zeros, not running): a poller
@@ -719,7 +731,7 @@ async def videos_preview() -> dict:
     """
     preview = (getattr(app.state, "engine", None) or {}).get("preview")
     if preview is None:
-        return {"step": 0, "total": 0, "gif_b64": None, "running": False}
+        return {"step": 0, "total": 0, "gif_b64": None, "running": False, "request_id": None}
     return preview.snapshot()
 
 

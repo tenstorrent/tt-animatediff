@@ -1000,7 +1000,7 @@ def test_the_preview_endpoint_answers_before_the_model_is_ready():
     """A poller should not have to tell "starting" from "idle": always 200, all zeros."""
     r = TestClient(app).get("/v1/videos/preview")
     assert r.status_code == 200
-    assert r.json() == {"step": 0, "total": 0, "gif_b64": None, "running": False}
+    assert r.json() == {"step": 0, "total": 0, "gif_b64": None, "running": False, "request_id": None}
 
 
 def test_the_preview_store_resets_per_request_and_publishes_what_the_callback_wrote(tmp_path):
@@ -1011,7 +1011,7 @@ def test_the_preview_store_resets_per_request_and_publishes_what_the_callback_wr
     store = PreviewStore()
     try:
         store.begin(4)
-        assert store.snapshot() == {"step": 0, "total": 4, "gif_b64": None, "running": True}
+        assert store.snapshot() == {"step": 0, "total": 4, "gif_b64": None, "running": True, "request_id": None}
         with open(store.path, "wb") as fh:
             fh.write(b"GIF89a-one")
         store.publish(f"PREVIEW: 2/4 {store.path}")
@@ -1022,7 +1022,7 @@ def test_the_preview_store_resets_per_request_and_publishes_what_the_callback_wr
         assert store.snapshot()["running"] is False
         assert store.snapshot()["gif_b64"], "the last frame stays readable after the run ends"
         store.begin(8)  # next request: the previous request's frame must not leak into it
-        assert store.snapshot() == {"step": 0, "total": 8, "gif_b64": None, "running": True}
+        assert store.snapshot() == {"step": 0, "total": 8, "gif_b64": None, "running": True, "request_id": None}
     finally:
         store.close()
 
@@ -1436,3 +1436,64 @@ def test_a_chain_evicted_while_the_request_waits_for_the_device_is_a_400():
     finally:
         del app.state.engine
         chains.close()
+
+
+# ---- preview ownership ---------------------------------------------------------------------
+
+def test_the_preview_store_tags_each_generation_with_the_callers_request_id():
+    """Review finding (tt-local-generator #29): the preview was one global value, so a client whose
+    request was still queued could show another client's step-20 frame as its own. A caller names
+    its request, and the store says whose generation the preview belongs to."""
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    try:
+        store.begin(4, request_id="mine-1")
+        assert store.snapshot()["request_id"] == "mine-1"
+        store.end()
+        assert store.snapshot()["request_id"] == "mine-1", "the finished run's frame still belongs to it"
+        store.begin(4)  # a caller that sends no id must not inherit the previous caller's
+        assert store.snapshot()["request_id"] is None
+    finally:
+        store.close()
+
+
+def test_the_request_id_reaches_the_preview_store():
+    # Wiring: the store can tag correctly while _generate never passes the id.
+    calls = []
+
+    class _Store:
+        path = "unused"
+
+        def begin(self, total, request_id=None):
+            calls.append((total, request_id))
+
+        def step(self, *a):
+            pass
+
+        def end(self):
+            pass
+
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": _Store()}
+    _run_generate(eng, request_id="r-7", num_inference_steps=9)
+    assert calls == [(9, "r-7")]
+
+
+@pytest.mark.parametrize("bad", ["", "has space", "a/b", "x" * 65])
+def test_a_malformed_request_id_is_refused(bad):
+    r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "request_id": bad})
+    assert r.status_code == 422
+
+
+def test_the_preview_endpoint_reports_whose_generation_it_is_showing():
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    app.state.engine = {"preview": store}
+    try:
+        store.begin(3, request_id="abc")
+        body = TestClient(app).get("/v1/videos/preview").json()
+        assert body["request_id"] == "abc" and body["running"] is True
+    finally:
+        del app.state.engine
+        store.close()

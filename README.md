@@ -560,6 +560,10 @@ application plugin, or Python library — see
   are one constant, `LCM_ORIGINAL_STEPS`.
 - **Chain recheck under the lock.** A request whose `chain_from` source was pruned while it waited for the device is a
   400. Before, it returned 200 without the continuity it asked for.
+- **Preview ownership.** `request_id` on the request, echoed as `request_id` by `GET /v1/videos/preview`. The server keeps
+  one preview and requests queue on the device lock, so a client waiting its turn used to be able to show another
+  client's frame as its own (tt-local-generator #29 review). A client now sends a unique id and shows only previews that
+  carry it.
 - **Benchmark script** sends no step count for any LoRA variant, so the server's own defaults decide (25 for a style,
   4 for LCM) whatever the catalog names are. Results in `docs/LORA.md` are unchanged: they used those defaults.
 - The published container package `episod/tt-animatediff-container-v5.1` is built from `fb9ef60` (0.13.0) and has none
