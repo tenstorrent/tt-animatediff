@@ -481,3 +481,22 @@ reboot, "fix docs error. continue".
   skipped. The server was right and the instrument was wrong.
 * A 5.6 s motion-adapter figure from 2026-10-13 was a first request. Steady state is 3.4 s with `up1`,`up2` skipped, and
   about 24 s with nothing skipped, at alpha 0 as well.
+
+### 2026-10-14 (later) — container package published, verified through `tt-model serve`
+**Prompt.** "yes push both commits, and let's go ahead and publish the model on HF even before we review and approve
+those PRs", then, after I explained that `publish_to_hub.py` would overwrite the thin bundle's README and root code,
+"let's do option 2, episod/tt-animatediff-container-v5.1 ?".
+* The v5.1 manifest's `repo:` is now `episod/tt-animatediff-container-v5.1`, with a `card:` block (numbers from the
+  mode benchmark) and `extra_code.ref` pinned to `fb9ef60` (tree `ce376a9`, identical to the branch head's). That ref is
+  not reachable from main until PR #15 merges and is squashed: repin to the tag or squash commit afterwards
+  (docs/RELEASING.md step 5), or the next `tt-model package` fails once the branch is deleted.
+* Pushed private, run through `tt-model serve episod/tt-animatediff-container-v5.1 --device-id 0` under a gozer lease
+  (benchmark within 0.3 s of the docker-run numbers, frames byte-identical), then made public with
+  `update_repo_settings(private=False)` and read back anonymously.
+* The generated card says "Runs on **p150** or **p150**" when two profiles share hardware. That is a
+  tt-model-manager card-generator quirk, not fixable from this manifest.
+* `tt-model stop` takes the repo id (`episod/tt-animatediff-container-v5.1`), not the package name.
+* A monitor that tested `pgrep -x gozer` reported "exited" while the serve was running (the process is python3). Wait on a
+  pid you recorded.
+* `scripts/publish_to_hub.py` (the diffusers pipeline repo `episod/tt-animatediff`) was NOT run. It would replace the live
+  README with the generic model card and the root `animatediff_ttnn/` that the thin bundle's `run.sh` loads.

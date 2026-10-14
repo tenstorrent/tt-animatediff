@@ -256,13 +256,14 @@ timeouts accordingly.
 
 ## Every served mode, timed (2026-10-14, container image)
 
-Measured through the container image that `tt-model package --container` built from commit `fb9ef60`, on one
-chip of a P300c pair. `tt-model serve` cannot serve a package directory that has not been pushed (`pull` and
-`serve` take a Hub repo id only), so the container was started with the `docker run` that `tt-model serve --print`
-composes for this package, plus the `full` serve profile's environment (the LoRA catalog and
-`ANIMATEDIFF_MOTION_ADAPTER=default`). Pushing to `episod/tt-animatediff` to test would have replaced the live repo.
-`scripts/benchmark_modes.py` drove it: 8 frames at 512x512, seed 42, the same prompt for every row, median of 3
-after one warm-up request. The first request of the process took 119.6 s, because it compiles kernels.
+Measured through the container package `episod/tt-animatediff-container-v5.1`, which `tt-model package --container`
+built from commit `fb9ef60`, served with `tt-model serve episod/tt-animatediff-container-v5.1 --device-id 0` on one chip
+of a P300c pair. The first pass of these numbers ran the same image with the `docker run` that `tt-model serve --print`
+composes, before the package was pushed; the pushed package then reproduced every timing within 0.3 s and returned
+byte-identical frames (maximum pixel difference 0.0 in the seven modes compared).
+`scripts/benchmark_modes.py` drove it: 8 frames at 512x512, seed 42, the same prompt for every row, median of 3 after one
+warm-up request. The first request of a process that starts with an empty kernel cache took 119.6 s, because it compiles
+kernels; with the compile cache warm it took 8.4 s.
 
 | Mode | Seconds | Against |
 | --- | --- | --- |
