@@ -177,7 +177,8 @@
   <text x="687" y="974" class="small">decoded output</text>
   <path d="M850 968h45" stroke="#8bb6ca" stroke-width="4" marker-end="url(#arrow)"/>
   <text x="914" y="974" class="small">data flow</text>
-  <text x="100" y="1040" class="footer">Entry points: <tspan class="code">generate_baseline.py</tspan> · <tspan class="code">generate_blackhole.py</tspan> · <tspan class="code">generate_blackhole_v2.py --temporal-alpha</tspan></text>
-  <text x="100" y="1072" class="footer"><tspan class="code">generate.py --motion-adapter</tspan> · <tspan class="code">plan_frame_sharding</tspan></text>
-  <text x="1200" y="1085" text-anchor="end" class="small">tt-animatediff · canonical generation paths</text>
+  <text x="100" y="1036" class="footer">Entry points:</text>
+  <text x="100" y="1062" class="footer"><tspan class="code">generate_baseline.py</tspan> · <tspan class="code">generate_blackhole.py</tspan> · <tspan class="code">generate_blackhole_v2.py --temporal-alpha</tspan></text>
+  <text x="100" y="1088" class="footer"><tspan class="code">generate.py --motion-adapter</tspan> · <tspan class="code">plan_frame_sharding</tspan> · <tspan class="code">tt serve episod/tt-animatediff-container-v5.1</tspan></text>
+  <text x="2240" y="1092" text-anchor="end" class="small">tt-animatediff · canonical generation paths</text>
 </svg>
