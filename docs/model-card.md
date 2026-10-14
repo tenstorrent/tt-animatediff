@@ -28,8 +28,7 @@ weights it needs — SD 1.4 and the AnimateDiff MotionAdapter — are resolved f
 upstream repositories, at pinned revisions, the first time you generate.
 
 Version 0.11.2 · [GitHub](https://github.com/tenstorrent/tt-animatediff) ·
-[Docs](https://docs.tenstorrent.com/tt-animatediff/) ·
-[How it was built](https://tsingletarytt.github.io/writing/2026/06/23/animatediff-on-tt-hardware-the-full-story/)
+[Docs](https://docs.tenstorrent.com/tt-animatediff/)
 
 ## Usage
 
