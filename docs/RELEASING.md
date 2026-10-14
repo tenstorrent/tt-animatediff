@@ -35,6 +35,12 @@ from `main` at all if the PR is squash-merged, and nothing in CI would tell you.
            repo: https://github.com/tenstorrent/tt-animatediff
            ref: vX.Y.Z
    ```
+   **Packaging before the merge.** Do not commit a branch commit as the pin: CI's
+   `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing` compares the pin's
+   tree with main's and fails for a PR that pins its own head. Copy the manifest outside the
+   repo, set `ref` to the pushed branch commit, and run `tt-model package --container <copy>`.
+   The repo's manifest stays at the tag main ships.
+
    Two things about this pin are easy to get wrong:
 
    - **It must be reachable from `main`.** A squash merge makes every commit that was on

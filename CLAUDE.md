@@ -532,3 +532,14 @@ Not repackaged: the published container package is still built from `fb9ef60` (0
   `PreviewStore.begin(total, request_id)`, echoed in `GET /v1/videos/preview`; the generator sends a fresh id and ignores previews
   with another one. No compatibility path: a server without the field gives the generator no previews, which it already treats as
   "no preview endpoint".
+
+### 2026-10-14 — CI: the Serving contract job (v0.13.1)
+**Prompt.** "CI issue it looks like".
+* `Serving contract` failed on `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing`. I had been reading that
+  failure as "resolves after merge", and had been seeing it locally since the manifest repin (`2895b66`), but I never checked
+  what CI did with it. CI runs it with full history, so it fails there. The suite reported "1 failed" at every step after that
+  commit and I carried it as known. A failure that has a stated reason is not the same as a failure that is understood.
+* The test's docstring says what the pin is for: during a PR it must match main's tree, so a pin to the branch head is wrong by
+  design. The fix restores `ref: v0.11.2` (tree `cd75b0c`, equal to main's) and moves the commit pin to a scratch manifest outside
+  the repo (`~/tt-model-builds-ad513/manifest-branch-pin-7b4772f.yaml`). `docs/RELEASING.md` now says how to package before a merge.
+* Suite after the fix: 488 passed, 0 failed. Not changed: the published packages were built from the commit pins and are unaffected.

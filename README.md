@@ -555,6 +555,9 @@ application plugin, or Python library — see
 ## Changelog
 
 ### v0.13.1 — unreleased (review fixes on PR #15)
+- **Manifest pin back at the release tag.** `tt_model_package.yaml` carried a branch commit as `extra_code.ref`, which
+  made the `Serving contract` CI job fail: that job compares the pin's tree with main's. The repo's manifest is at
+  `v0.11.2` again; a package built before the merge uses a copy of the manifest with the commit pin (`docs/RELEASING.md`).
 - **Explicit LCM designation.** A catalog entry can end in `#lcm` to mark a local copy of an LCM-LoRA. Before, only the
   published repo id counted, so a local copy sampled with PNDM at 25 steps and guidance 7.5.
 - **LCM step limit.** An LCM variant with more than 50 steps is a 400 before the device lock. Before, 51-100 passed

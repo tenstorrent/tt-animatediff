@@ -86,13 +86,15 @@ source:
         # (..._ships_the_package_we_are_developing and ..._is_reachable_from_head), and both
         # skip on a shallow clone -- which is why the serve-contract job checks out with
         # fetch-depth: 0.
-        # 2026-10-14: 7b4772f, the head of feat/lora-support carrying the v0.13.1 review fixes (the
-        # first package was built from fb9ef60, v0.13.0). animatediff_ttnn/ at this commit is the
-        # tree being shipped. It is NOT yet
-        # reachable from main (PR #15 is unmerged and will be squashed), so after the merge
-        # repin this to the release tag or the squash commit (docs/RELEASING.md step 5); until then
-        # a fresh `tt-model package` works only while the branch exists on GitHub.
-        ref: 7b4772f9c504e43d980e336f39588d08fe09c34d
+        # 2026-10-14: this stays at the tag main ships while a PR is in flight, because
+        # test_the_pinned_extra_code_ref_ships_the_package_we_are_developing compares the pin's
+        # tree with main's and CI runs it. The tag predates animatediff_ttnn/server, so a package
+        # built from this file on a feature branch has no server in it. To build one before the
+        # merge, copy this file outside the repo, set `ref` to the branch commit being shipped
+        # (it must be on GitHub, because stage() clones it), and package the copy. The first
+        # published container package used fb9ef60 and the v0.13.1 rebuild used 7b4772f. After
+        # the merge, repin here to the new release tag (docs/RELEASING.md step 5).
+        ref: v0.11.2
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
