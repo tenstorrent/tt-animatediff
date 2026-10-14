@@ -506,3 +506,12 @@ those PRs", then, after I explained that `publish_to_hub.py` would overwrite the
   top-level part of the website". Docs only, so VERSION is unchanged. `docs/index.html`, `usage.html` and `benchmarks.html`
   still carry the older ~12.5 s/frame and ~100 s Phase 2.5 figures, while the README says ~1.94 s/frame and the measured
   served runs say 15.3 s per 8 frames; the CLI path has not been re-timed to settle which is right.
+* **Phase 2.5 timing settled (2026-10-14).** User question: how do the new numbers compare to the spooky-loops blog post
+  (~100 s per clip)? Under a gozer lease, `generate.py` (one chip, 8 frames, 512x512, 25 steps, seed 42) printed "Done in"
+  21.2 s x3 (PNDM) and 20.6 s x3 (`--lightning`, Euler). Four `generate_animation` calls in one process took 28.3 s, then
+  15.7 s, 15.8 s, 15.6 s. So 21 s is a first call, 15.5 s is warm (matches the model card and `tt-model serve`), and ~100 s
+  was stale. My first blog edits assumed the blog's table was CLI-timed and nearly used 2.7 s/frame; the one-process run is
+  what showed the CLI figure carries first-call warmup. The blog's sharding rows (16 frames ~86 s, 4 clips ~105 s) and
+  `benchmarks.html`'s sharding text still rest on the stale single-chip baseline and are not re-measured. The Google Doc
+  edits were made as suggestions (`writeMode: SUGGEST`); the doc's JSON marks them with `suggestedInsertionIds`.
+

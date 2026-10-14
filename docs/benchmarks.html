@@ -357,7 +357,7 @@
       A batched D→H transfer optimisation (all N frames pulled in a single <code>ttnn.concat → ttnn.to_torch</code>)
       cut Phase 3 to <strong>52 s/frame</strong> — a 1.94× speedup. Skipping the two
       costliest injection points (up1 + up2) cuts it further to <strong>7.7 s/frame</strong>,
-      beating Phase 2.5 outright.
+      which is still about 4× slower than Phase 2.5 (1.94 s/frame, re-measured).
     </p>
 
     <div class="bar-chart">
@@ -372,27 +372,27 @@
         </div>
         <div class="bar-value" style="color:var(--green)">~62 s total</div>
       </div>
-      <!-- Phase 2.5 PNDM: 100s / 8 frames = 12.5 s/frame, n=6 comparison runs -->
+      <!-- Phase 2.5 PNDM: 15.5s / 8 frames = 1.94 s/frame, median of 3, re-measured 2026-09-07 and 2026-10-14 -->
       <div class="bar-row">
         <div class="bar-label">
           <strong>Phase 2.5 · PNDM</strong>
           <small>PNDM 25-step · cross-frame blend</small>
         </div>
         <div class="bar-track">
-          <div class="bar-fill phase25" style="width:24%">12.5 s/frame</div>
+          <div class="bar-fill phase25" style="width:3.7%">1.94 s/frame</div>
         </div>
-        <div class="bar-value hl">~100 s total</div>
+        <div class="bar-value hl">~15.5 s total</div>
       </div>
-      <!-- Lightning: 96s / 8 frames = 12.0 s/frame, n=3 comparison runs -->
+      <!-- Lightning: 6.5s / 8 frames = 0.82 s/frame, median of 3, re-measured 2026-09-07 -->
       <div class="bar-row">
         <div class="bar-label">
           <strong>Phase 2.5 · Lightning</strong>
           <small>Euler 8-step · cross-frame blend</small>
         </div>
         <div class="bar-track">
-          <div class="bar-fill light" style="width:23.1%">12.0 s/frame</div>
+          <div class="bar-fill light" style="width:1.6%">0.82 s/frame</div>
         </div>
-        <div class="bar-value hl-gold">~96 s total</div>
+        <div class="bar-value hl-gold">~6.5 s total</div>
       </div>
       <!-- Phase 3 optimised: 416s / 8 frames = 52 s/frame, 2026-06-15 benchmark -->
       <div class="bar-row">
@@ -408,13 +408,14 @@
     </div>
 
     <div class="insight">
-      <strong>Unexpected result:</strong> Lightning 8-step and PNDM 25-step take almost
-      identical wall-clock time (~96s vs ~100s). The bottleneck is the cross-frame temporal
-      attention pass (CPU, run once per denoising step across all 8 frames), not the
-      TTNN UNet calls themselves. Reducing steps 25→8 saves ~68% of UNet compute but the
-      temporal blend overhead dominates, leaving total time roughly flat. The same effect
-      applies to Phase 3 — Lightning + MotionAdapter measured at 404s (50.6 s/frame), nearly
-      identical to the 25-step 416s run. Fewer steps don't help when CPU bridge calls dominate.
+      <strong>Correction (2026-10-14):</strong> an earlier version of this page said Lightning
+      8-step and PNDM 25-step took the same wall-clock time (~96 s vs ~100 s) and blamed the CPU
+      temporal blend. Those Phase 2.5 figures were about 6× too slow and the conclusion does not
+      hold. Phase 2.5 time follows the step count: measured through <code>tt-model serve</code>,
+      8 frames take 8.7 s at 12 steps, 12.8 s at 20 steps and 15.3 s at 25 steps, and 8 steps
+      take about 6.5 s. Phase 3 is different: Lightning + MotionAdapter measured 404 s
+      (50.6 s/frame), nearly identical to the 25-step 416 s run, because the CPU bridge calls at the
+      injection points dominate and their number does not depend on the step count alone.
     </div>
 
     <div class="speedup-grid">
@@ -429,9 +430,9 @@
         <div class="speedup-sub">416s vs 806s · 8 frames · 25 steps</div>
       </div>
       <div class="speedup-card">
-        <div class="speedup-num" style="color:var(--teal)">4.2×</div>
-        <div class="speedup-label">Phase 2.5 vs full Phase 3<br>PNDM 25-step</div>
-        <div class="speedup-sub">100s vs 416s · 8 frames</div>
+        <div class="speedup-num" style="color:var(--teal)">27×</div>
+        <div class="speedup-label">Phase 2.5 vs full Phase 3<br>25 steps</div>
+        <div class="speedup-sub">15.5s vs 416s · 8 frames</div>
       </div>
       <div class="speedup-card">
         <div class="speedup-num" style="color:var(--gold)">4×</div>
@@ -506,20 +507,20 @@
           <td>PNDM</td>
           <td>25</td>
           <td>8</td>
-          <td class="hl">95–104</td>
-          <td class="hl">~12.5</td>
-          <td>6</td>
-          <td>Comparison study</td>
+          <td class="hl">15.3–15.8</td>
+          <td class="hl">~1.94</td>
+          <td>3</td>
+          <td>Re-measured 2026-10-14</td>
         </tr>
         <tr>
           <td><span class="tag tag-lit">Lightning</span> cross-frame</td>
           <td>Euler (trailing)</td>
           <td>8</td>
           <td>8</td>
-          <td class="hl-gold">95–97</td>
-          <td class="hl-gold">~12.0</td>
+          <td class="hl-gold">6.5</td>
+          <td class="hl-gold">~0.82</td>
           <td>3</td>
-          <td>Comparison study</td>
+          <td>Re-measured 2026-09-07</td>
         </tr>
         <tr>
           <td><span class="tag tag-lit">Lightning</span> cross-frame</td>
@@ -529,7 +530,7 @@
           <td class="hl-gold">103–104</td>
           <td class="hl-gold">~12.9</td>
           <td>5</td>
-          <td>Maya Q2, chip 3 (no stagger)</td>
+          <td>Maya Q2, chip 3 (no stagger); recorded before the 2026-09 re-measure, now superseded</td>
         </tr>
         <tr>
           <td><span class="tag tag-p25">Phase 2.5</span> cross-frame</td>
@@ -539,7 +540,7 @@
           <td class="hl">84–88</td>
           <td class="hl">~5.4</td>
           <td>3</td>
-          <td>Comparison study (E)</td>
+          <td>Comparison study (E); not re-measured, see note below</td>
         </tr>
       </tbody>
     </table>
@@ -547,8 +548,9 @@
     <div class="insight">
       <strong>16 frames is cheaper per-frame than 8.</strong> At 16 frames the cross-frame
       attention operates on a larger batch but the TTNN UNet is pipelined more efficiently —
-      result is ~5.4 s/frame vs ~12.5 s/frame at 8 frames. Longer clips are more efficient
-      to generate on Blackhole.
+      result was ~5.4 s/frame vs ~12.5 s/frame at 8 frames. The 8-frame figure was stale: 8 frames
+      now run at ~1.94 s/frame, and the 16-frame sharded figure has not been re-measured, so this
+      comparison no longer holds.
     </div>
   </section>
 
@@ -665,7 +667,7 @@ flowchart TB
         SKS -->|"× 25 steps"| SKU
     end
 
-    subgraph P25["Phase 2.5 — cross-frame blend · ~12.5 s/frame"]
+    subgraph P25["Phase 2.5 — cross-frame blend · ~1.94 s/frame"]
         direction LR
         P2U["TTNN UNet\n8 frames serial"] --> P2C["cross_frame_attention\nblend α=0.35 — CPU"] --> P2S["scheduler.step"]
         P2S -->|"× 25 steps"| P2U
@@ -718,8 +720,9 @@ flowchart TB
       <div class="obs-card">
         <h4>16 frames is more efficient than 8</h4>
         <p>
-          8 frames at 25 steps: ~12.5 s/frame. 16 frames at 25 steps: ~5.4 s/frame —
-          a 2.3× per-frame improvement. The TTNN UNet pipeline amortizes its initialization
+          8 frames at 25 steps was recorded as ~12.5 s/frame and 16 frames as ~5.4 s/frame.
+          The 8-frame figure was stale (it now runs at ~1.94 s/frame) and the 16-frame figure has
+          not been re-measured, so the 2.3× per-frame claim is withdrawn until it is. The TTNN UNet pipeline amortizes its initialization
           cost better, and the cross-frame attention benefits from the larger batch. Generate
           longer clips when possible.
         </p>

@@ -379,7 +379,7 @@
 
       <h4>Standard Blackhole generation</h4>
       <div class="code-block">
-        <pre class="bash"><span class="c"># 8 frames, 25 steps, ~100 s total on P300C</span>
+        <pre class="bash"><span class="c"># 8 frames, 25 steps: ~15.5 s warm on P300C (about 21 s for the first clip in a fresh process)</span>
 <span class="prompt">$ </span>python examples/generate.py \
     --prompt "aurora borealis over a frozen tundra, long exposure" \
     --frames 8 --steps 25 --seed 1337</pre>
@@ -634,10 +634,10 @@ frames = <span class="fn">generate_frames_temporal</span>(device, ttnn_model, tt
           <tbody>
             <tr><td>cpu</td><td>None</td><td>~2 min/frame</td><td>Full MotionAdapter ✓</td><td>Any machine, 16 GB RAM</td></tr>
             <tr><td>cpu --lightning</td><td>None</td><td>~20 s/frame</td><td>Full MotionAdapter ✓</td><td>4-step distilled adapter, CFG=1.0</td></tr>
-            <tr><td>blackhole</td><td>Blackhole P300C</td><td><strong>~12.5 s/frame</strong></td><td>Cross-frame blend</td><td>PNDM · 25 steps · CFG=7.5</td></tr>
-            <tr><td>blackhole --lightning</td><td>Blackhole P300C</td><td><strong>~12.0 s/frame</strong></td><td>Cross-frame blend</td><td>Euler solver · same step count</td></tr>
+            <tr><td>blackhole</td><td>Blackhole P300C</td><td><strong>~1.94 s/frame</strong></td><td>Cross-frame blend</td><td>25 steps · CFG=7.5 · warm</td></tr>
+            <tr><td>blackhole --lightning</td><td>Blackhole P300C</td><td><strong>~1.9 s/frame</strong></td><td>Cross-frame blend</td><td>Euler solver · 25 steps (about 0.8 s/frame at 8 steps)</td></tr>
             <tr><td>blackhole --motion-adapter</td><td>Blackhole P300C</td><td>~52 s/frame</td><td>Full MotionAdapter Phase 3 ✓</td><td>7 injection points, batched D→H</td></tr>
-            <tr><td>blackhole --motion-adapter --motion-adapter-skip up1 up2</td><td>Blackhole P300C</td><td><strong>~7.7 s/frame</strong></td><td>Encoder-side MotionAdapter ✓</td><td>5 injection points, fastest Blackhole mode</td></tr>
+            <tr><td>blackhole --motion-adapter --motion-adapter-skip up1 up2</td><td>Blackhole P300C</td><td><strong>~7.7 s/frame</strong></td><td>Encoder-side MotionAdapter ✓</td><td>5 injection points; slower than the default Blackhole mode</td></tr>
             <tr><td>sim</td><td>None (ttsim)</td><td>10–100× slower than silicon</td><td>Cross-frame blend</td><td>Bit-exact, Linux/x86_64 only</td></tr>
           </tbody>
         </table>

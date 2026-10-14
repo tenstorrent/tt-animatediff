@@ -553,6 +553,13 @@ application plugin, or Python library — see
 ## Changelog
 
 ### v0.13.0 — unreleased
+- **Phase 2.5 timings on the site match the model card.** `docs/index.html`, `usage.html` and `benchmarks.html` still
+  showed ~12.5 s/frame and ~100 s per 8-frame clip, which the model card had already marked 6.4x too slow. They now
+  say ~1.94 s/frame (~15.5 s warm) and ~0.82 s/frame at 8 steps. One process measured on 2026-10-14: the first
+  `generate_animation` call took 28.3 s including model setup, and the next three took 15.6-15.8 s. `generate.py`
+  prints "Done in" of 21-25 s for its one clip because that clip is the first call. The `benchmarks.html` claim that
+  Lightning 8-step and PNDM 25-step take the same time is withdrawn: Phase 2.5 time follows the step count. The
+  16-frame sharding figures there are marked as not re-measured.
 - **tt-model is the primary way to run the model.** The site's top page (`docs/index.html`) now opens with a
   `tt-model serve episod/tt-animatediff-container-v5.1` section, the usage guide lists it first under Installation,
   and the README Quick Start leads with it. The command-line scripts are described as the development path.
