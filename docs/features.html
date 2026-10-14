@@ -300,8 +300,8 @@
       <div class="section-head"><span class="section-num">04</span><h2>Serving LoRAs</h2></div>
       <p>The operator defines a catalog of named variants in <code>ANIMATEDIFF_LORAS</code>. Each variant is a full model set kept on the chip, so a request picks one at no cost. Variants share one VAE. A request names a variant and never a repo id or a path.</p>
       <p><code>tt-model serve</code> has no option for the catalog. It forwards only <code>HF_TOKEN</code> from the host, so the catalog is part of the package. <code>tt_model_package.yaml</code> ships two serve profiles from one image: <code>full</code> (the default), with the <code>pixel</code>, <code>pixel-fast</code> and <code>lcm</code> catalog and the motion adapter, and <code>plain</code>, with neither.</p>
-      <div class="code-block"><span class="cb-label">server</span><pre class="bash"><span class="prompt">$ </span>tt-model serve episod/tt-animatediff                    # full
-<span class="prompt">$ </span>tt-model serve episod/tt-animatediff --profile plain</pre></div>
+      <div class="code-block"><span class="cb-label">server</span><pre class="bash"><span class="prompt">$ </span>tt-model serve episod/tt-animatediff-container-v5.1                    # full
+<span class="prompt">$ </span>tt-model serve episod/tt-animatediff-container-v5.1 --profile plain</pre></div>
       <p>A different catalog means a repackage, because the values are part of the published manifest. <code>full</code> downloads the LoRA files and the adapter at startup and keeps three more UNets on the chip.</p>
       <div class="code-block"><span class="cb-label">request</span><pre class="bash"><span class="prompt">$ </span>curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
     -d '{"prompt": "a moonlit crypt", "lora": "pixel-fast", "num_frames": 8}'</pre></div>

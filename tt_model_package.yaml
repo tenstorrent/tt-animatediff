@@ -4,7 +4,7 @@
 # tt-model-manager v5.1 container package for tt-animatediff.
 #
 #   tt-model package tt_model_package.yaml
-#   tt-model serve episod/tt-animatediff
+#   tt-model serve episod/tt-animatediff-container-v5.1
 #
 # This is a DIFFUSION model, so it uses `kind: tt-dit-server` rather than either vLLM
 # kind: there are no tokens, no KV cache and no continuous batching, so the whole engine
@@ -13,7 +13,10 @@
 
 schema: "5.1"
 name: tt-animatediff
-repo: episod/tt-animatediff
+# NOT episod/tt-animatediff: that repo holds the v6 thin bundle (tt_kernel_manifest.json, run.sh,
+# wheels/) and the diffusers custom pipeline. Pushing this v5.1 container manifest there would
+# overwrite the thin bundle's manifest and card, so the container package has its own repo.
+repo: episod/tt-animatediff-container-v5.1
 # The repo the SERVED path actually loads: SD 1.4's UNet, VAE and tokenizer, pulled by
 # generation_helpers.load_sd14_ttnn. It said `guoyww/animatediff`, which is a repo of raw
 # mm_sd_v*.ckpt motion modules -- not diffusers format, and not loaded here at all. That
@@ -82,7 +85,12 @@ source:
         # (..._ships_the_package_we_are_developing and ..._is_reachable_from_head), and both
         # skip on a shallow clone -- which is why the serve-contract job checks out with
         # fetch-depth: 0.
-        ref: 53dcb40e8b0c8c8807023c20de23f522f65d7679
+        # 2026-10-14: fb9ef60, the head of feat/lora-support when the container image was built and
+        # run on a chip. animatediff_ttnn/ at this commit is the tree being shipped. It is NOT yet
+        # reachable from main (PR #15 is unmerged and will be squashed), so after the merge
+        # repin this to the release tag or the squash commit (docs/RELEASING.md step 5); until then
+        # a fresh `tt-model package` works only while the branch exists on GitHub.
+        ref: fb9ef6039b4b11e73fff731e08e46d859d6af801
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
@@ -136,7 +144,7 @@ serve:
 # serve profile is the only way the operator-side switches reach the container:
 # ANIMATEDIFF_LORAS (a named catalog; a request picks a name, never a repo id or path) and
 # ANIMATEDIFF_MOTION_ADAPTER (loads the Phase 3 adapter). The consumer chooses with
-# `tt-model serve episod/tt-animatediff --profile plain`. A different catalog is a repackage,
+# `tt-model serve episod/tt-animatediff-container-v5.1 --profile plain`. A different catalog is a repackage,
 # because the values are part of the published manifest.
 #
 # `full` is the default so a first-time consumer gets every feature. It downloads the LoRA files
@@ -154,3 +162,52 @@ serve_profiles:
       ANIMATEDIFF_MOTION_ADAPTER: default
       ANIMATEDIFF_LORAS: '{"pixel": "artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5:PixelArtRedmond15V-PixelArt-PIXARFK.safetensors", "pixel-fast": ["artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5:PixelArtRedmond15V-PixelArt-PIXARFK.safetensors", "latent-consistency/lcm-lora-sdv1-5:pytorch_lora_weights.safetensors"], "lcm": "latent-consistency/lcm-lora-sdv1-5:pytorch_lora_weights.safetensors"}'
 default_profile: full
+
+card:
+  description: >
+    AnimateDiff text-to-video on Tenstorrent Blackhole: a TTNN Stable Diffusion 1.4 UNet with
+    cross-frame temporal attention, served over HTTP as 512x512 GIF loops. Offers style LoRAs,
+    LCM-LoRA fast sampling, prompt travel, latent chaining, per-step previews and an optional
+    MotionAdapter.
+  performance: >
+    One Blackhole chip of a P300c pair, 8 frames at 512x512, warm, median of 3: 15.3 s at 25
+    steps, 12.8 s at 20, 8.7 s at 12. A style LoRA costs +0.5 s. An LCM variant runs 4 steps in
+    4.1 s (3.7x faster than 25 steps); style + LCM takes 4.3 s. Prompt schedule +0.2 s, chaining
+    +0.1 s, per-step preview +4.9 s at 20 steps. The first request after start compiles kernels
+    and took 119.6 s. Measured through this container image with scripts/benchmark_modes.py
+    (docs/LORA.md, "Every served mode, timed").
+  limitations: >
+    One chip, 512x512 only. LoRAs must be single kohya-format SD 1.5 UNet files; SDXL, LoHa, LoKr
+    and DoRA files are refused at startup. LCM clips are less frame-coherent than 25-step clips.
+    The MotionAdapter takes about 24 s for 2 frames at 6 steps with nothing skipped (alpha 0 is
+    just as slow) and 3.4 s with up1 and up2 skipped. The first request to each LoRA variant is
+    about 1.4 s slower than the following ones. No CPU, simulator or Lightning-UNet modes here.
+  risks: >
+    The full profile downloads third-party LoRA files and the motion adapter from the Hugging
+    Face Hub at startup, and a file that fails to load stops the server before it reports ready.
+    Check each LoRA's own license before use. Output is AI-generated video and can reproduce
+    biases of the SD 1.4 training data.
+  architecture: Stable Diffusion 1.4 UNet (TTNN) with cross-frame temporal attention
+  status: Community bring-up, validated on one Blackhole chip
+  intended_use: Short looping text-to-video clips, style experiments with SD 1.5 LoRAs, and fast previews with LCM.
+  out_of_scope_use: >
+    Image-to-video, resolutions other than 512x512, multi-chip or multi-user throughput, and
+    SDXL checkpoints or LoRAs.
+  usage: |
+    `POST /v1/videos/generations` returns a base64 GIF. Fields beyond `prompt`, `num_frames`,
+    `num_inference_steps`, `guidance_scale` and `seed`: `lora` (a name from `GET /v1/models`),
+    `prompt_schedule`, `sampler` (`pndm` or `euler`), `chain_save` / `chain_from` / `chain_alpha`,
+    `motion_adapter` (+ `_alpha`, `_skip`), `preview` / `preview_every` (read progress from
+    `GET /v1/videos/preview`) and `temporal_alpha`. The `full` profile (default) offers the
+    `pixel`, `pixel-fast` and `lcm` LoRA variants and the motion adapter; `--profile plain` offers
+    neither. A variant that includes the LCM-LoRA defaults to 4 steps and guidance 1.5 when the
+    request leaves them out.
+  licensing: >
+    The weights are CompVis/stable-diffusion-v1-4 under the CreativeML OpenRAIL-M license,
+    fetched at start and not bundled. The TTNN port and serving code in `code/` are Apache-2.0.
+    LoRA files carry their own licenses.
+  related: Source and docs at https://github.com/tenstorrent/tt-animatediff. The diffusers custom pipeline and v6 thin bundle are `episod/tt-animatediff`.
+  license:
+    id: creativeml-openrail-m
+  pipeline_tag: text-to-video
+  base_model: [CompVis/stable-diffusion-v1-4]

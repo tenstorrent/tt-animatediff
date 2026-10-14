@@ -191,8 +191,8 @@ package's manifest, as `serve.env` or in a serve profile. `tt_model_package.yaml
   fastest start.
 
 ```bash
-tt-model serve episod/tt-animatediff                    # full
-tt-model serve episod/tt-animatediff --profile plain
+tt-model serve episod/tt-animatediff-container-v5.1                    # full
+tt-model serve episod/tt-animatediff-container-v5.1 --profile plain
 ```
 
 A different catalog means a repackage, because the values are part of the published manifest. A test parses every
