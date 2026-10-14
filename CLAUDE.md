@@ -500,3 +500,9 @@ those PRs", then, after I explained that `publish_to_hub.py` would overwrite the
   pid you recorded.
 * `scripts/publish_to_hub.py` (the diffusers pipeline repo `episod/tt-animatediff`) was NOT run. It would replace the live
   README with the generic model card and the root `animatediff_ttnn/` that the thin bundle's `run.sh` loads.
+* `tt-model serve` is now the primary run path on the site's top page. `docs/index.html` has a `#run` section after the hero
+  (the hero's main button points at it), `docs/usage.html` has `#install-tt-model` first, and the README Quick Start leads
+  with it. User's instruction: "tt-model should now be presented as the primary way to deploy/run the model on the
+  top-level part of the website". Docs only, so VERSION is unchanged. `docs/index.html`, `usage.html` and `benchmarks.html`
+  still carry the older ~12.5 s/frame and ~100 s Phase 2.5 figures, while the README says ~1.94 s/frame and the measured
+  served runs say 15.3 s per 8 frames; the CLI path has not been re-timed to settle which is right.

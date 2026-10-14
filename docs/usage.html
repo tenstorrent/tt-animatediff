@@ -209,6 +209,7 @@
     <span class="toc-label">Usage Guide</span>
     <ul class="toc-list">
       <li><a href="#install">Installation</a></li>
+      <li class="toc-sub"><a href="#install-tt-model">tt-model (recommended)</a></li>
       <li class="toc-sub"><a href="#install-cpu">CPU / any machine</a></li>
       <li class="toc-sub"><a href="#install-blackhole">Blackhole hardware</a></li>
       <li class="toc-sub"><a href="#install-sim">ttsim simulator</a></li>
@@ -258,6 +259,17 @@
         <span class="callout-title">Prerequisites</span>
         <p>Python 3.10+, 16 GB RAM for CPU mode. Blackhole hardware requires Tenstorrent Blackhole P100/P150/P300c or QB2 with <a href="https://github.com/tenstorrent/tt-metal">tt-metal</a> built and its Python env active. Model weights are downloaded automatically from HuggingFace on first run.</p>
       </div>
+
+      <h3 id="install-tt-model">tt-model serve <span class="chip chip-bh">Blackhole</span> <span class="chip chip-cpu">recommended</span></h3>
+      <p>The recommended way to run the model on Blackhole. The package <code>episod/tt-animatediff-container-v5.1</code> carries the image, the code and the manifest, so <code>tt-model</code> needs no tt-metal build on the host. It runs on one chip.</p>
+      <div class="code-block">
+        <span class="cb-label">bash</span>
+        <pre class="bash"><span class="prompt">$ </span>tt-model serve episod/tt-animatediff-container-v5.1              <span class="c"># full profile</span>
+<span class="prompt">$ </span>tt-model serve episod/tt-animatediff-container-v5.1 --profile plain
+<span class="prompt">$ </span>curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+    -d '{"prompt": "ocean waves at sunset", "num_frames": 8}'</pre>
+      </div>
+      <p>The first start downloads the image and the SD 1.4 weights, and the first request compiles kernels: about 2 minutes with an empty kernel cache and about 8 seconds with a warm one. An 8-frame 512&times;512 clip at 25 steps then takes about 15 s. The <code>full</code> profile adds the <code>pixel</code>, <code>pixel-fast</code> and <code>lcm</code> LoRA variants and the Phase 3 motion adapter; <code>tt-model serve</code> has no <code>--env</code> option, so a different catalog means a repackage. See <a href="features.html">Features</a> for every request field. The sections below install the command-line tools, which are for development and for the CPU and simulator modes.</p>
 
       <h3 id="install-cpu">CPU / any machine <span class="chip chip-cpu">CPU</span></h3>
       <p>Runs Phase&nbsp;1: <code>diffusers.AnimateDiffPipeline</code> + full MotionAdapter on any machine. No Tenstorrent hardware needed.</p>

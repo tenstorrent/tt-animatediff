@@ -37,6 +37,18 @@ See the [full 10-prompt gallery](https://tenstorrent.github.io/tt-animatediff/ga
 
 ## Quick Start
 
+The recommended way to run the model on Blackhole is `tt-model serve`. It needs no tt-metal build on the host:
+
+```bash
+tt-model serve episod/tt-animatediff-container-v5.1             # full profile: LoRA catalog + motion adapter
+tt-model serve episod/tt-animatediff-container-v5.1 --profile plain
+curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+  -d '{"prompt": "ocean waves at sunset, cinematic", "num_frames": 8}'
+```
+
+An 8-frame 512x512 clip at 25 steps takes about 15 s warm. See `docs/features.html` for every request field.
+The scripts below are for development and for the CPU and simulator modes.
+
 ```bash
 pip install -r requirements.txt
 hf download CompVis/stable-diffusion-v1-4
@@ -541,6 +553,9 @@ application plugin, or Python library — see
 ## Changelog
 
 ### v0.13.0 — unreleased
+- **tt-model is the primary way to run the model.** The site's top page (`docs/index.html`) now opens with a
+  `tt-model serve episod/tt-animatediff-container-v5.1` section, the usage guide lists it first under Installation,
+  and the README Quick Start leads with it. The command-line scripts are described as the development path.
 - **LoRAs in the served path.** `ANIMATEDIFF_LORAS` defines named variants; a request picks one with
   `"lora": "name"` at no per-request cost. Variants are resident on the chip and share the VAE. An unknown
   name is a 400. `GET /v1/models` lists them. `prompt_schedule` is accepted in requests.

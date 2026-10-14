@@ -210,6 +210,20 @@
     .alpha-table .hl { color: var(--text2); }
     .alpha-table .hl code { color: var(--teal); font-weight: 700; }
 
+
+    /* ── run with tt-model ── */
+    .run-section { padding: 3rem 2rem; border-bottom: 1px solid var(--border); background: var(--bg1); }
+    .run-inner { max-width: 820px; margin: 0 auto; }
+    .run-inner h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: .5rem; }
+    .run-inner h2 em { color: var(--teal); font-style: normal; }
+    .run-inner p { font-size: .92rem; color: var(--text2); margin-bottom: 1rem; }
+    .run-inner code { color: var(--teal); font-size: .85em; }
+    .run-code { background: var(--bg0); border: 1px solid var(--border); border-radius: 8px; padding: .9rem 1.1rem; font-family: Consolas, 'Courier New', monospace; font-size: .8rem; color: var(--teal); white-space: pre-wrap; overflow-x: auto; margin: .75rem 0 1.25rem; }
+    .run-code .c { color: var(--muted); }
+    .run-facts { display: flex; gap: 1.25rem; flex-wrap: wrap; margin: 0 0 1rem; padding: 0; list-style: none; }
+    .run-facts li { flex: 1 1 200px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .9rem; font-size: .8rem; color: var(--text2); }
+    .run-facts strong { display: block; color: var(--teal); font-size: 1.05rem; }
+
     /* ── footer ── */
     footer { padding: 1.5rem 2rem; text-align: center; border-top: 1px solid rgba(79,209,197,.08); font-size: .72rem; color: var(--muted); }
 
@@ -250,7 +264,8 @@
   <h1>A Cosmic <em>Quick Study</em></h1>
   <p>35 animated GIFs generated on a single Blackhole chip. Each cell in this grid is a Tensix compute node. The ones that glow ran the model.</p>
   <div class="hero-links">
-    <a class="btn btn-primary" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
+    <a class="btn btn-primary" href="#run">Run with tt-model →</a>
+    <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
     <a class="btn btn-ghost" href="gallery.html">Gallery →</a>
     <a class="btn btn-ghost" href="worlds-fair.html">World's Fair →</a>
     <a class="btn btn-ghost" href="mayan-glyphs.html">Maya Glyphs →</a>
@@ -262,6 +277,29 @@
   <div class="hero-related">
     <a href="https://docs.tenstorrent.com/tt-local-generator/">Generate art locally with AnimateDiff and tt-local-generator →</a>
     <a href="https://docs.tenstorrent.com/tt-vscode-toolkit/">Learn how to make models like AnimateDiff work on your hardware with tt-vscode-toolkit →</a>
+  </div>
+</section>
+
+<section class="run-section" id="run">
+  <div class="run-inner">
+    <span class="section-label">The way to run it</span>
+    <h2>Serve it with <em>tt-model</em></h2>
+    <p>The model is published as a container package. <code>tt-model serve</code> pulls the image and the code, downloads the weights, opens the chip and answers HTTP requests. There is no tt-metal build and no Python environment to set up.</p>
+    <div class="run-code"><span class="c"># start the server (default profile: LoRA catalog and motion adapter included)</span>
+tt-model serve episod/tt-animatediff-container-v5.1
+
+<span class="c"># ask for an 8-frame loop; the response holds a base64 GIF</span>
+curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+  -d '{"prompt": "a moonlit crypt beneath a drowned chapel, ghostly mist", "num_frames": 8}'
+
+<span class="c"># the same image without the LoRA catalog and motion adapter</span>
+tt-model serve episod/tt-animatediff-container-v5.1 --profile plain</div>
+    <ul class="run-facts">
+      <li><strong>15.3 s</strong>8 frames, 512&times;512, 25 steps, one chip, warm</li>
+      <li><strong>4.1 s</strong>the <code>lcm</code> LoRA variant at its own 4-step defaults</li>
+      <li><strong>8 s / 2 min</strong>first request with a warm / empty kernel cache</li>
+    </ul>
+    <p>The server also takes LoRA variants, sampler choice, prompt schedules, per-step previews, chaining and the Phase 3 motion adapter. <a href="features.html">Features</a> lists each one with its request fields. The <a href="usage.html#install-tt-model">usage guide</a> covers the setup. The command-line scripts below are for development and for modes the server does not offer yet.</p>
   </div>
 </section>
 
