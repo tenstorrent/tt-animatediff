@@ -273,6 +273,15 @@
       </div>
       <img src="assets/lora/crypt-base-pixel-anime-stacked.jpg" alt="The same crypt prompt with no LoRA, pixel art, storybook anime and both stacked" style="max-width:100%;border-radius:8px;margin:1rem 0" loading="lazy">
       <p style="font-size:.8rem;color:var(--muted)">Crypt, seed 666, top to bottom: no LoRA, pixel art, storybook anime at 0.85, both stacked.</p>
+      <h3 style="margin-top:2rem">A full clip: the suspension bridge at Iguazu Falls</h3>
+      <p>The contact sheet shows three frames per clip. These are the complete 16-frame clips, a pair for each of two seeds, without a LoRA and with the pixel art LoRA. Prompt: <em>the suspension bridge at iguazu falls</em>, with <code>Pixel Art, </code> in front for the LoRA column. 25 steps, 512&times;512, guidance 7.5.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.75rem;margin:1rem 0">
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-base-seed11.gif" alt="The suspension bridge at Iguazu Falls, seed 11, no LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">No LoRA, seed 11</figcaption></figure>
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-pixel-seed11.gif" alt="The suspension bridge at Iguazu Falls, seed 11, pixel art LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">Pixel art, seed 11</figcaption></figure>
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-base-seed33.gif" alt="The suspension bridge at Iguazu Falls, seed 33, no LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">No LoRA, seed 33</figcaption></figure>
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-pixel-seed33.gif" alt="The suspension bridge at Iguazu Falls, seed 33, pixel art LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">Pixel art, seed 33</figcaption></figure>
+      </div>
+      <p style="font-size:.8rem;color:var(--muted)">The bridge is clear in seed 11 in both columns. Seed 33 drew the falls without a clear bridge, with or without the LoRA. Motion is slight, as with every clip from the default path. Made on 2026-10-14 through the v0.13.1 container image on one chip; each GIF is 2.5&ndash;3.9&nbsp;MB and is the server's output, which was not re-encoded.</p>
     </div>
 
     <div class="section" id="lcm">

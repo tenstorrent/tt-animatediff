@@ -83,6 +83,31 @@ haunting, mysterious*, with each LoRA's trigger phrase in front ("Pixel Art, ",
 Each image shows frames 1, 4 and 8 of the 8-frame GIF. With the default Phase 2.5 path the
 frames differ little from each other.
 
+## A full clip: the suspension bridge at Iguazu Falls
+
+The contact sheets above show three frames each. These are the complete 16-frame clips, each pair
+with the same seed and settings, one without a LoRA and one with the pixel art LoRA.
+
+| Seed | No LoRA | Pixel art |
+|---|---|---|
+| 11 | ![Iguazu bridge, seed 11, no LoRA](assets/lora/iguazu-bridge-base-seed11.gif) | ![Iguazu bridge, seed 11, pixel art](assets/lora/iguazu-bridge-pixel-seed11.gif) |
+| 33 | ![Iguazu falls, seed 33, no LoRA](assets/lora/iguazu-bridge-base-seed33.gif) | ![Iguazu falls, seed 33, pixel art](assets/lora/iguazu-bridge-pixel-seed33.gif) |
+
+Prompt: *the suspension bridge at iguazu falls*, with the LoRA's trigger phrase in front for the pixel art
+column (`Pixel Art, the suspension bridge at iguazu falls`). Negative prompt `blurry, low quality, watermark`.
+16 frames, 25 steps, 512x512, guidance 7.5, seeds 11 and 33. The bridge is clear in seed 11, in
+both columns. Seed 33 drew the falls without a clear bridge, with or without the LoRA. The frames differ little
+from each other, as in the contact sheets: the default path blends neighbouring frames and does not add motion.
+
+Made on 2026-10-14 through the v0.13.1 container image on one chip, using the `full` serve profile's `pixel`
+variant. The GIFs are the server's output and were not re-encoded; each is 2.5 to 3.9 MB.
+
+```bash
+curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+  -d '{"prompt": "Pixel Art, the suspension bridge at iguazu falls", "lora": "pixel", "seed": 11,
+       "num_frames": 16, "num_inference_steps": 25, "negative_prompt": "blurry, low quality, watermark"}'
+```
+
 ## Checked before anything loads
 
 `inspect_lora()` reads only the safetensors header, so it costs milliseconds and needs no device. The

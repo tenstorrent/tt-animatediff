@@ -543,3 +543,14 @@ Not repackaged: the published container package is still built from `fb9ef60` (0
   design. The fix restores `ref: v0.11.2` (tree `cd75b0c`, equal to main's) and moves the commit pin to a scratch manifest outside
   the repo (`~/tt-model-builds-ad513/manifest-branch-pin-7b4772f.yaml`). `docs/RELEASING.md` now says how to package before a merge.
 * Suite after the fix: 488 passed, 0 failed. Not changed: the published packages were built from the commit pins and are unaffected.
+
+### 2026-10-14 — full-clip LoRA GIFs for the docs
+**Prompt.** "we don't have any examples ... of the full animated GIF of a LoRA production, just the jpg contact sheets. Make one for:
+'the suspension bridge at iguazu falls'", then "these are great ... these will go well in the repo and on the site".
+* Rendered through the staged v0.13.1 container image (`full` profile, `pixel` variant), 16 frames, 25 steps, seeds 11/22/33, each
+  with a no-LoRA twin. The user kept 11 and 33 and dropped 22 before the push. Seed 11 shows a bridge; seed 33 shows the falls with no
+  clear bridge, which the captions say.
+* A shared-palette re-encode saved about 10% and moved pixels by a mean of 3.6-5.3 of 255, and lossless optimisation saved nothing, so
+  the GIFs are the server's bytes. Four files, about 12 MB, in git history once pushed (the commit was rewritten before the push so seed 22 never entered it).
+* Process slips: my launcher waited for all four chips to be free while another agent held two, so the render sat for several minutes;
+  `gozer run` queued with exit 10 although board 0 was free, and `gozer wait <ticket>` granted it. `git add` was by explicit path.

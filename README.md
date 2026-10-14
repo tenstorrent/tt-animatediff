@@ -555,6 +555,8 @@ application plugin, or Python library — see
 ## Changelog
 
 ### v0.13.1 — unreleased (review fixes on PR #15)
+- **Full-clip LoRA examples.** `docs/LORA.md` and `docs/features.html` now show complete 16-frame GIFs, with and without the
+  pixel art LoRA, for two seeds of "the suspension bridge at iguazu falls". Before, only JPG contact sheets were there.
 - **Manifest pin back at the release tag.** `tt_model_package.yaml` carried a branch commit as `extra_code.ref`, which
   made the `Serving contract` CI job fail: that job compares the pin's tree with main's. The repo's manifest is at
   `v0.11.2` again; a package built before the merge uses a copy of the manifest with the commit pin (`docs/RELEASING.md`).
