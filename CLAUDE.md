@@ -515,3 +515,15 @@ those PRs", then, after I explained that `publish_to_hub.py` would overwrite the
   `benchmarks.html`'s sharding text still rest on the stale single-chip baseline and are not re-measured. The Google Doc
   edits were made as suggestions (`writeMode: SUGGEST`); the doc's JSON marks them with `suggestedInsertionIds`.
 
+
+### 2026-10-14 — second Copilot review on PR #15 (v0.13.1)
+**Prompt.** "watch for another batch of reviews on this PR and tt-local-generator's please", then "GO AHEAD FOR BOTH 15 AND 29".
+Four findings, each checked against the code before fixing, each with a test seen failing first.
+* **Local LCM-LoRA** was only recognised by repo id. `LoraSpec.lcm` and the `#lcm` catalog marker add an explicit designation;
+  `variant_is_lcm()` is the one decision, and a wiring test fails if `load_sd14_variant` compares repo names itself.
+* **LCM steps above 50** were a 500 inside the loop. I ran `LCMScheduler.set_timesteps(51)` with `original_inference_steps=50`
+  to confirm it raises, then made the limit one constant (`LCM_ORIGINAL_STEPS`) shared by the scheduler and `request_conflicts`.
+* **Chain pruned while queued**: `chain_conflict()` runs before the lock and again under it. The test replaces the lock with one that
+  deletes the chain on acquire, which is when a pruning generation would have finished. That test first failed by reaching generation.
+* **Benchmark script** no longer guesses LCM from the name; it sends no step count for any variant.
+Not repackaged: the published container package is still built from `fb9ef60` (0.13.0).

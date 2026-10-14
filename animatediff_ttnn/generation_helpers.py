@@ -133,12 +133,12 @@ def load_sd14_variant(device, loras, vae):
     for spec, n_unet, n_te in merge_loras(torch_unet, text_encoder, loras):
         print(f"  LoRA {spec.source} @ {spec.scale}: {n_unet} UNet + {n_te} text-encoder tensors merged")
     models = (_build_ttnn_unet(device, torch_unet), vae, torch_unet.config, torch_unet.time_proj)
-    from animatediff_ttnn.weights_pins import LCM_LORA_REPO
+    from animatediff_ttnn.lora import variant_is_lcm
 
     return Sd14Variant(
         models=models,
         clip=(tokenizer, text_encoder),
-        lcm=any(spec.source == LCM_LORA_REPO for spec in loras),
+        lcm=variant_is_lcm(loras),
     )
 
 

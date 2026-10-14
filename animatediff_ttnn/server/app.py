@@ -33,10 +33,12 @@ ENVIRONMENT, set by the launcher
                            ``"motion_adapter": true`` (Phase 3 temporal attention). Unset means such
                            requests are refused with a 400.
 ``HF_MODEL``               the weights repo id, reported by ``/v1/models``
-``ANIMATEDIFF_LORAS``      optional JSON object ``{"name": "SOURCE[:FILE][@SCALE]", ...}``; each
+``ANIMATEDIFF_LORAS``      optional JSON object ``{"name": "SOURCE[:FILE][@SCALE][#lcm]", ...}``; each
                            entry becomes a resident LoRA variant a request can select with
                            ``"lora": "name"``. A value may also be a list of specs, which
-                           are stacked. Unset means no variants. See ``lora_catalog_from_env``.
+                           are stacked. ``#lcm`` marks a local copy of an LCM-LoRA so the variant
+                           samples with LCM (the published repo is recognised without it). Unset
+                           means no variants. See ``lora_catalog_from_env``.
 
 ONE REQUEST AT A TIME
 ---------------------
@@ -64,6 +66,8 @@ from typing import Any, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, model_validator
+
+from animatediff_ttnn.weights_pins import LCM_ORIGINAL_STEPS
 
 #: The env var carrying the resolved mesh shape. Named for THIS model: the kind's default
 #: is ``FLUX2_MESH_SHAPE``, which is the default only because FLUX.2 is what it was built
@@ -357,7 +361,7 @@ def lora_catalog_from_env(env: Optional[dict] = None) -> dict:
     before the device is opened, so a typo costs nothing.
 
     The value is a JSON object. Each value is one spec string or a list of them (stacked, in
-    order), in the CLI form ``SOURCE[:FILE][@SCALE]``. ``base`` is refused as a name only
+    order), in the CLI form ``SOURCE[:FILE][@SCALE][#lcm]``. ``base`` is refused as a name only
     because it reads like the plain model; omit ``lora`` to get that.
     """
     import json
@@ -502,6 +506,25 @@ def request_conflicts(req: VideoGenerationRequest, engine: dict) -> Optional[str
             return "motion_adapter cannot be combined with an LCM variant (the Phase 3 loop has no LCM sampler)"
     elif req.motion_adapter_skip or "motion_adapter_alpha" in req.model_fields_set:
         return "motion_adapter_alpha / motion_adapter_skip need motion_adapter: true"
+    if lcm:
+        # The scheduler refuses more steps than the schedule the LoRA was distilled on, and it does
+        # so inside the denoise loop, after the request has taken the device lock. A request that
+        # sends no step count gets LCM_DEFAULT_STEPS instead of the model default.
+        steps = req.num_inference_steps if "num_inference_steps" in req.model_fields_set else LCM_DEFAULT_STEPS
+        if steps > LCM_ORIGINAL_STEPS:
+            return (f"lora {req.lora!r} samples with LCM, which allows at most {LCM_ORIGINAL_STEPS} "
+                    f"steps; got {steps}")
+    return chain_conflict(req, engine)
+
+
+def chain_conflict(req: VideoGenerationRequest, engine: dict) -> Optional[str]:
+    """The reason ``req.chain_from`` cannot be used, or None.
+
+    Checked twice: early, so a refusal never queues, and again under the device lock, because a
+    generation running ahead of this request can save another chain and prune this one's source
+    while it waits. ``chain_blend_seed`` ignores a missing file, so without the second check the
+    request would return 200 without the continuity it asked for.
+    """
     if req.chain_from is not None:
         chains = engine.get("chains")
         if chains is None or not chains.has(req.chain_from):
@@ -729,6 +752,9 @@ async def videos_generations(req: VideoGenerationRequest) -> VideoGenerationResp
         )
     # One denoise loop at a time: the pipeline owns the device.
     async with app.state.device_lock:
+        gone = chain_conflict(req, engine)
+        if gone is not None:
+            raise HTTPException(status_code=400, detail=gone)
         frames = await asyncio.to_thread(_generate, engine, req)
     # Off the loop as well, and NOT because it is slow in absolute terms: PIL's GIF
     # palette quantization plus base64 of a multi-MB payload is seconds of pure CPU, and

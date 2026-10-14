@@ -552,6 +552,19 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.13.1 — unreleased (review fixes on PR #15)
+- **Explicit LCM designation.** A catalog entry can end in `#lcm` to mark a local copy of an LCM-LoRA. Before, only the
+  published repo id counted, so a local copy sampled with PNDM at 25 steps and guidance 7.5.
+- **LCM step limit.** An LCM variant with more than 50 steps is a 400 before the device lock. Before, 51-100 passed
+  validation and the scheduler failed inside the loop as a 500. The limit and the scheduler's `original_inference_steps`
+  are one constant, `LCM_ORIGINAL_STEPS`.
+- **Chain recheck under the lock.** A request whose `chain_from` source was pruned while it waited for the device is a
+  400. Before, it returned 200 without the continuity it asked for.
+- **Benchmark script** sends no step count for any LoRA variant, so the server's own defaults decide (25 for a style,
+  4 for LCM) whatever the catalog names are. Results in `docs/LORA.md` are unchanged: they used those defaults.
+- The published container package `episod/tt-animatediff-container-v5.1` is built from `fb9ef60` (0.13.0) and has none
+  of these fixes until it is repackaged.
+
 ### v0.13.0 — unreleased
 - **Phase 2.5 timings on the site match the model card.** `docs/index.html`, `usage.html` and `benchmarks.html` still
   showed ~12.5 s/frame and ~100 s per 8-frame clip, which the model card had already marked 6.4x too slow. They now

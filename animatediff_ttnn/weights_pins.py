@@ -67,6 +67,10 @@ LIGHTNING_REVISION = "027c893eec01df7330f5d4b733bc9485ee02e8b2"
 LCM_LORA_REPO = "latent-consistency/lcm-lora-sdv1-5"
 LCM_LORA_FILE = "pytorch_lora_weights.safetensors"
 LCM_LORA_REVISION = "cf2fced511dbe7e26c8d1d397e728fbab875db4b"
+#: The LCM-LoRA was distilled on a 50-step schedule. LCMScheduler refuses more inference steps than
+#: this, so it is both the scheduler's ``original_inference_steps`` and the server's step limit for
+#: an LCM variant.
+LCM_ORIGINAL_STEPS = 50
 
 #: Fixed pins for the repos the env var does not govern.
 _FIXED_PINS = {

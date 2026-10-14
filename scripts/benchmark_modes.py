@@ -91,13 +91,13 @@ def build_modes(models: dict) -> tuple:
     if not loras:
         skipped.append(("LoRA variants", "the server has no ANIMATEDIFF_LORAS catalog"))
     for name in loras:
-        # An LCM variant defaults to 4 steps and guidance 1.5 on its own; the others take
-        # the same 25 steps as the plain model so the comparison is like for like.
-        fast = "fast" in name or "lcm" in name.lower()
+        # No step count is sent. The server defaults a style variant to 25 steps (the same as the
+        # plain model, so the comparison is like for like) and an LCM variant to 4 steps and
+        # guidance 1.5. Catalog names are arbitrary, so the script cannot tell which a variant is
+        # from its name; leaving steps out lets the server decide.
         payload = base_payload(lora=name)
-        if fast:
-            payload.pop("num_inference_steps")
-        modes.append((f"LoRA variant {name!r}" + (" (its own defaults)" if fast else ", 25 steps"), payload, None))
+        payload.pop("num_inference_steps")
+        modes.append((f"LoRA variant {name!r} (server defaults)", payload, None))
 
     ma = models.get("motion_adapter")
     if not ma:

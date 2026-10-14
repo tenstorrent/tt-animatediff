@@ -334,9 +334,11 @@ def generate_frames_temporal(
         # 50 original inference steps). One scheduler per frame, as for Euler.
         from diffusers import LCMScheduler
 
+        from animatediff_ttnn.weights_pins import LCM_ORIGINAL_STEPS
+
         lcm_kwargs = dict(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear",
-            original_inference_steps=50,
+            original_inference_steps=LCM_ORIGINAL_STEPS,
         )
         schedulers = [LCMScheduler(**lcm_kwargs) for _ in range(num_frames)]
         for s in schedulers:

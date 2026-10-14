@@ -232,7 +232,7 @@
   <div class="main-inner">
 
     <div class="hero">
-      <span class="hero-badge">v0.13.0 &middot; unreleased</span>
+      <span class="hero-badge">v0.13.1 &middot; unreleased</span>
       <h1>Features and <em>abilities</em></h1>
       <p>Every feature, how to ask for it on the command line, and how to ask for it from the served HTTP API (<code>tt-model serve</code>). This page is updated as each served feature lands.</p>
     </div>
@@ -307,7 +307,8 @@
     -d '{"prompt": "a moonlit crypt", "lora": "pixel-fast", "num_frames": 8}'</pre></div>
       <ul style="color:var(--text2);margin:0 0 1rem 1.2rem">
         <li><code>GET /v1/models</code> lists the names under <code>loras</code>. An unknown name is a 400 that lists the valid ones.</li>
-        <li>A variant that includes the LCM-LoRA samples with LCM and defaults to 4 steps and guidance 1.5 when the request leaves them out. Values you send are used as sent.</li>
+        <li>A variant that includes the LCM-LoRA samples with LCM and defaults to 4 steps and guidance 1.5 when the request leaves them out. Values you send are used as sent, up to 50 steps: more is a 400, because the LoRA was distilled on a 50-step schedule.</li>
+        <li>The published LCM-LoRA is recognised by its repo id. Mark a local copy with <code>#lcm</code> after the scale, for example <code>"/data/loras/my-lcm.safetensors@0.8#lcm"</code>; without it the variant samples with PNDM at 25 steps.</li>
         <li>A bad catalog or incompatible file stops the server at startup, before it reports ready.</li>
         <li>LoRA files come from the Hugging Face cache or the network at startup, so a container with no network access needs them cached first.</li>
       </ul>

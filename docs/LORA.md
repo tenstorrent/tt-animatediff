@@ -174,7 +174,11 @@ curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json'
   refused before the device lock, so it never waits behind a generation.
 * A request names a variant and never a repo id or a path. The operator decides which files the server loads.
 * A variant that includes the LCM-LoRA samples with LCM and defaults to 4 steps and guidance 1.5 when the
-  request leaves them out. Values the caller sends are used as sent.
+  request leaves them out. Values the caller sends are used as sent, up to 50 steps: the LCM-LoRA was distilled on
+  a 50-step schedule and the scheduler refuses more, so 51 or above is a 400 before the device lock.
+* The published LCM-LoRA is recognised by its repo id. A local copy or a re-host has no such name, so mark it with
+  `#lcm` after the scale: `"/data/loras/my-lcm.safetensors@0.8#lcm"`. Without the marker the variant is treated as
+  a style variant and samples with PNDM at 25 steps and guidance 7.5.
 * Variants share the plain model's VAE. Each costs one UNet's weights on the device, plus about 7 s at startup.
   Switching between the plain model and two variants, then back, reproduced the plain model's frames exactly.
 * A bad catalog or an incompatible file fails startup, before readiness, and the chip is released.

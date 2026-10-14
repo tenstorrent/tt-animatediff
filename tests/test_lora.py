@@ -438,6 +438,32 @@ class TestLcm:
         assert (spec.source, spec.weight_name, spec.scale) == (LCM_LORA_REPO, LCM_LORA_FILE, 0.8)
         assert revision_for(LCM_LORA_REPO) == LCM_LORA_REVISION and len(LCM_LORA_REVISION) == 40
 
+    def test_a_local_copy_of_the_lcm_lora_can_be_designated_lcm(self):
+        # Review finding: the variant was marked LCM only when the source was the published
+        # repo id, so a local copy got PNDM at 25 steps and guidance 7.5. The marker is "#lcm".
+        spec = parse_lora_spec("/data/loras/my-lcm.safetensors@0.8#lcm")
+        assert (spec.source, spec.scale, spec.lcm) == ("/data/loras/my-lcm.safetensors", 0.8, True)
+        assert parse_lora_spec("/data/loras/style.safetensors").lcm is False
+        assert parse_lora_spec("org/x:f.safetensors#lcm").lcm is True
+
+    def test_variant_is_lcm_follows_the_marker_or_the_published_repo(self):
+        from animatediff_ttnn.lora import variant_is_lcm
+
+        assert variant_is_lcm([LoraSpec("/local/a.safetensors", lcm=True)]) is True
+        assert variant_is_lcm([lora.lcm_lora_spec()]) is True
+        assert variant_is_lcm([LoraSpec("org/style"), LoraSpec("/local/a.safetensors", lcm=True)]) is True
+        assert variant_is_lcm([LoraSpec("org/style"), LoraSpec("/local/b.safetensors")]) is False
+
+    def test_the_variant_builder_decides_lcm_through_variant_is_lcm(self):
+        # Wiring, not arithmetic: variant_is_lcm can be right while load_sd14_variant still
+        # compares repo names itself.
+        import inspect
+
+        from animatediff_ttnn import generation_helpers
+
+        src = inspect.getsource(generation_helpers.load_sd14_variant)
+        assert "variant_is_lcm(" in src and "LCM_LORA_REPO" not in src
+
     def test_lcm_and_lightning_are_refused_together_before_any_device_work(self):
         from animatediff_ttnn.temporal_attention import generate_frames_temporal
 

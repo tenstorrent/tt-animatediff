@@ -49,6 +49,9 @@ class LoraSpec:
     source: str
     weight_name: Optional[str] = None
     scale: float = 1.0
+    #: True when this file is an LCM-LoRA. The published one is recognised by its repo id; a local
+    #: copy or a re-host has no such name, so the catalog marks it with ``#lcm``.
+    lcm: bool = False
 
     def __post_init__(self):
         # Checked here, not only in parse_lora_spec, so a spec built in code gets the same
@@ -63,7 +66,18 @@ class LoraSpec:
 def lcm_lora_spec(scale: float = 1.0) -> "LoraSpec":
     from animatediff_ttnn.weights_pins import LCM_LORA_FILE, LCM_LORA_REPO
 
-    return LoraSpec(LCM_LORA_REPO, LCM_LORA_FILE, scale)
+    return LoraSpec(LCM_LORA_REPO, LCM_LORA_FILE, scale, lcm=True)
+
+
+def variant_is_lcm(loras) -> bool:
+    """Whether a stack of LoRAs makes the UNet an LCM model, so it must sample with LCM.
+
+    True for any spec marked ``lcm`` and for the published LCM-LoRA by repo id. The marker
+    exists because a local copy cannot be told from a style LoRA by its path.
+    """
+    from animatediff_ttnn.weights_pins import LCM_LORA_REPO
+
+    return any(spec.lcm or spec.source == LCM_LORA_REPO for spec in loras)
 
 
 # "repo/id[:file.safetensors][@0.8]". The scale is peeled off the right first so a
@@ -72,11 +86,16 @@ _SCALE_RE = re.compile(r"@([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$")
 
 
 def parse_lora_spec(text: str) -> LoraSpec:
-    """Parse the CLI form ``SOURCE[:WEIGHT_NAME][@SCALE]`` into a LoraSpec.
+    """Parse the CLI form ``SOURCE[:WEIGHT_NAME][@SCALE][#lcm]`` into a LoraSpec.
+
+    ``#lcm`` goes last and marks the file as an LCM-LoRA (see ``LoraSpec.lcm``).
 
     >>> parse_lora_spec("org/style:style.safetensors@0.8")
-    LoraSpec(source='org/style', weight_name='style.safetensors', scale=0.8)
+    LoraSpec(source='org/style', weight_name='style.safetensors', scale=0.8, lcm=False)
     """
+    lcm = text.endswith("#lcm")
+    if lcm:
+        text = text[: -len("#lcm")]
     scale = 1.0
     m = _SCALE_RE.search(text)
     if m:
@@ -87,7 +106,7 @@ def parse_lora_spec(text: str) -> LoraSpec:
         raise ValueError(f"empty LoRA source in {text!r}")
     if "@" in weight_name or (not weight_name and "@" in source):
         raise ValueError(f"could not read a scale from {text!r}; write it as ...@0.8")
-    return LoraSpec(source=source, weight_name=weight_name or None, scale=scale)
+    return LoraSpec(source=source, weight_name=weight_name or None, scale=scale, lcm=lcm)
 
 
 @dataclass(frozen=True)

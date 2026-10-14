@@ -17,6 +17,7 @@ The lifespan is deliberately never entered: ``TestClient(app)`` as a plain objec
 run it, and entering it would open a device.
 """
 import asyncio
+import os
 import subprocess
 import sys
 import textwrap
@@ -1183,6 +1184,8 @@ def test_request_conflicts_accepts_a_plain_request_and_the_documented_combinatio
     ({"motion_adapter_skip": ["up1"]}, "need motion_adapter"),
     ({"motion_adapter_alpha": 0.5}, "need motion_adapter"),
     ({"chain_from": "nothing-saved-yet"}, "unknown chain"),
+    ({"lora": "fast", "num_inference_steps": 51}, "at most 50"),
+    ({"lora": "fast", "num_inference_steps": 100}, "at most 50"),
 ])
 def test_request_conflicts_names_the_reason(kw, needle):
     from animatediff_ttnn.server.app import request_conflicts
@@ -1366,3 +1369,70 @@ def test_the_serve_profiles_carry_a_catalog_the_server_can_parse():
             assert env["ANIMATEDIFF_MOTION_ADAPTER"] in ("default", "repo") or "/" in env["ANIMATEDIFF_MOTION_ADAPTER"]
     assert with_catalog >= 1, f"no profile sets {LORAS_ENV}"
     assert "plain" in profiles and not (profiles["plain"].get("env") or {}), "plain must stay catalog-free"
+
+
+def test_lcm_accepts_fifty_steps_and_a_style_variant_accepts_a_hundred():
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine()
+    try:
+        assert request_conflicts(_req(lora="fast", num_inference_steps=50), eng) is None
+        assert request_conflicts(_req(lora="fast"), eng) is None  # the 4-step default
+        assert request_conflicts(_req(lora="style", num_inference_steps=100), eng) is None
+    finally:
+        eng["chains"].close()
+
+
+def test_the_lcm_step_limit_is_the_one_the_scheduler_is_built_with():
+    # Review finding: 51-100 steps passed validation and then failed inside the scheduler as
+    # an HTTP 500 after taking the device lock. The server's limit and the scheduler's
+    # original_inference_steps must be the same number, and the scheduler must really refuse
+    # one step more.
+    import inspect
+
+    from diffusers import LCMScheduler
+
+    from animatediff_ttnn import temporal_attention
+    from animatediff_ttnn.weights_pins import LCM_ORIGINAL_STEPS
+
+    assert f"original_inference_steps={'LCM_ORIGINAL_STEPS'}" in inspect.getsource(
+        temporal_attention.generate_frames_temporal).replace(" ", "")
+    sched = LCMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear",
+                         original_inference_steps=LCM_ORIGINAL_STEPS)
+    sched.set_timesteps(LCM_ORIGINAL_STEPS)
+    with pytest.raises(ValueError):
+        sched.set_timesteps(LCM_ORIGINAL_STEPS + 1)
+
+
+def test_a_chain_evicted_while_the_request_waits_for_the_device_is_a_400():
+    """The early check passes, the request queues, and a running generation prunes the source.
+
+    Review finding: chain_blend_seed ignores a missing file, so the queued request used to
+    return 200 with no continuity. The lock below deletes the chain at the moment it is
+    granted, which is when a pruning generation would have finished.
+    """
+    import animatediff_ttnn.server.app as mod
+    from animatediff_ttnn.server.app import ChainStore
+
+    chains = ChainStore()
+    open(chains.path("src"), "wb").write(b"x")
+
+    class _EvictOnAcquire:
+        async def __aenter__(self):
+            os.unlink(chains.path("src"))
+
+        async def __aexit__(self, *exc):
+            return False
+
+    app.state.engine = {"device": object(), "models": object(), "ready": True, "variants": {},
+                        "chains": chains, "model": "m", "mesh_device": "P150", "mesh_shape": "1x1"}
+    app.state.device_lock = _EvictOnAcquire()
+    try:
+        with patch.object(mod, "_generate", return_value=[object()]) as gen:
+            r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat", "chain_from": "src"})
+        assert r.status_code == 400, r.text
+        assert "unknown chain" in r.json()["detail"]
+        gen.assert_not_called()
+    finally:
+        del app.state.engine
+        chains.close()
