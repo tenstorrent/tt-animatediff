@@ -85,12 +85,13 @@ source:
         # (..._ships_the_package_we_are_developing and ..._is_reachable_from_head), and both
         # skip on a shallow clone -- which is why the serve-contract job checks out with
         # fetch-depth: 0.
-        # 2026-10-14: fb9ef60, the head of feat/lora-support when the container image was built and
-        # run on a chip. animatediff_ttnn/ at this commit is the tree being shipped. It is NOT yet
+        # 2026-10-14: 7b4772f, the head of feat/lora-support carrying the v0.13.1 review fixes (the
+        # first package was built from fb9ef60, v0.13.0). animatediff_ttnn/ at this commit is the
+        # tree being shipped. It is NOT yet
         # reachable from main (PR #15 is unmerged and will be squashed), so after the merge
         # repin this to the release tag or the squash commit (docs/RELEASING.md step 5); until then
         # a fresh `tt-model package` works only while the branch exists on GitHub.
-        ref: fb9ef6039b4b11e73fff731e08e46d859d6af801
+        ref: 7b4772f9c504e43d980e336f39588d08fe09c34d
       paths:
         - animatediff_ttnn
   ubuntu: "22.04"
