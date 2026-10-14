@@ -549,6 +549,9 @@ application plugin, or Python library — see
   `motion_adapter_alpha` / `motion_adapter_skip` (Phase 3; enabled by `ANIMATEDIFF_MOTION_ADAPTER`).
   Combinations the server cannot honour are a 400 before the device lock. `GET /v1/models` reports
   `motion_adapter`.
+- **Every served mode is timed** in `docs/LORA.md` ("Every served mode, timed"), measured through the container
+  image on one chip with `scripts/benchmark_modes.py`. The docs no longer say `tt-model serve --env`: that
+  option does not exist, and the LoRA catalog and `ANIMATEDIFF_MOTION_ADAPTER` go in the package's serve profile.
 - **Served previews.** `GET /v1/videos/preview` reports progress and the latest 256x256 preview GIF of the
   generation in flight, without waiting on the device lock. Request `"preview": true` (and optionally
   `"preview_every": n`) to render frames; each render costs about 0.4 s on one chip.

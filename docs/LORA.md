@@ -182,11 +182,25 @@ curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json'
   variant's text encoder. With keyframes at frames 0 and 7 the first and last frames differed by 82.7 against
   43.9 without a schedule.
 
-With tt-model, pass the catalog as `tt-model serve --env ANIMATEDIFF_LORAS=...`. That was not run through
-`tt-model` here, only through uvicorn on the chip. The container image needs `peft`, which this release adds
-to `tt_model_package.yaml` and its lock, and `extra_code.ref` must point at a tag that contains this code.
-LoRA files are fetched from the Hub at startup, so a container without network access needs them in its
-Hugging Face cache first.
+`tt-model serve` has no `--env` option. It forwards only `HF_TOKEN` from the host, so the catalog goes in the
+package's manifest instead, as `serve.env` or in a serve profile. A profile lets one image offer a plain launch and
+a launch with the catalog:
+
+```yaml
+serve_profiles:
+  - name: plain
+  - name: loras
+    env:
+      ANIMATEDIFF_LORAS: '{"pixel": "artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5:PixelArtRedmond15V-PixelArt-PIXARFK.safetensors"}'
+      ANIMATEDIFF_MOTION_ADAPTER: default
+default_profile: loras
+```
+
+and the consumer picks one with `tt-model serve episod/tt-animatediff --profile loras`. A different catalog means a
+repackage, because the values are part of the published manifest. The image needs `peft`, which this release adds to
+`tt_model_package.yaml` and its lock (checked in a built image: `peft`, `animatediff_ttnn.lora` and the server module
+all import). `extra_code.ref` must point at a tag that contains this code. LoRA files are fetched from the Hub at
+startup, so a container without network access needs them in its Hugging Face cache first.
 
 ![The same prompt and seed served three ways: no LoRA, pixel art, storybook anime](assets/lora/served-variants.jpg)
 
@@ -232,7 +246,7 @@ this (colour dominates it), so judge by eye.
 ![Source lighthouse, then a meadow prompt with no chain and chained at alpha 0.3, 0.6 and 0.9](assets/lora/served-chain.jpg)
 
 **MotionAdapter temporal attention (`"motion_adapter": true`).** Phase 3. It is off unless the operator sets
-`ANIMATEDIFF_MOTION_ADAPTER=default` (or a repo id or local path), which loads the adapter at startup. Without that,
+`ANIMATEDIFF_MOTION_ADAPTER=default` (or a repo id or local path) in the package's `serve.env` or a serve profile, which loads the adapter at startup. Without that,
 a request for it is a 400. `GET /v1/models` reports `"motion_adapter": true|false`. `motion_adapter_alpha` (0 to 1,
 default 1) and `motion_adapter_skip` (any of `down0 down1 down2 mid up0 up1 up2`) match the CLI flags. It works with
 the Euler sampler, prompt schedules, chaining and style LoRA variants. It cannot be combined with an LCM variant,
@@ -240,6 +254,48 @@ because the Phase 3 loop has no LCM sampler. Measured on one chip with `up1` and
 5.6 s (3.2 s at alpha 0, which bypasses the injection). Without skipping, it is much slower: the earlier measurement
 on a four-chip box was about 52 s per frame at 25 steps, so an 8-frame request runs for several minutes. Set client
 timeouts accordingly.
+
+## Every served mode, timed (2026-10-14, container image)
+
+Measured through the container image that `tt-model package --container` built from commit `fb9ef60`, on one
+chip of a P300c pair. `tt-model serve` cannot serve a package directory that has not been pushed (`pull` and
+`serve` take a Hub repo id only), so the container was started with the `docker run` that `tt-model serve --print`
+composes for this package, plus the `full` serve profile's environment (the LoRA catalog and
+`ANIMATEDIFF_MOTION_ADAPTER=default`). Pushing to `episod/tt-animatediff` to test would have replaced the live repo.
+`scripts/benchmark_modes.py` drove it: 8 frames at 512x512, seed 42, the same prompt for every row, median of 3
+after one warm-up request. The first request of the process took 119.6 s, because it compiles kernels.
+
+| Mode | Seconds | Against |
+| --- | --- | --- |
+| plain, 25 steps | 15.3 | |
+| plain, 20 steps | 12.8 | |
+| plain, 12 steps | 8.7 | about 0.5 s per step plus 2.4 s fixed |
+| `temporal_alpha` 0 | 15.2 | same as 25 steps: the blend costs nothing measurable |
+| `sampler: euler`, 25 steps | 15.0 | 15.3 with PNDM |
+| `prompt_schedule` (frames 0 and 7) | 15.5 | +0.2 |
+| `preview: true`, 20 steps | 17.7 | +4.9 over 12.8 |
+| `chain_from`, 20 steps | 12.9 | +0.1 over 12.8 (the `chain_save` run is not timed) |
+| `lora: pixel`, 25 steps | 15.8 | +0.5 over 15.3 |
+| `lora: lcm` (4 steps, guidance 1.5) | 4.1 | 3.7x faster than plain 25 |
+| `lora: pixel-fast` (style + LCM, 4 steps) | 4.3 | 3.6x faster than plain 25; 3.7x faster than `pixel` |
+
+The first request to each LoRA variant took 1.3 to 1.5 s longer than the next two (5.6 against 4.1 for `lcm`,
+17.6 against 15.8 for `pixel`), so a service that switches variants pays that once per variant.
+
+**Motion adapter (Phase 3), 2 frames, 6 steps.** The adapter's cost is the CPU round-trip at its injection
+points, so it depends on which points run and not on the alpha:
+
+| Setting | Seconds (3 runs) |
+| --- | --- |
+| no skip, alpha 1 | 23.6, 24.2, 25.3 |
+| no skip, alpha 0 | 25.4, 25.9, 27.8 |
+| `motion_adapter_skip: [up1, up2]`, alpha 1 | 3.7, 3.4, 3.4 |
+| `motion_adapter_skip: [up1, up2]`, alpha 0 | 3.2, 3.3, 3.2 |
+
+Alpha 0 saves nothing, because the staged UNet and its round-trips still run. The two skipped blocks are the
+high-resolution ones and account for about 20 of the 24 seconds. The alpha 1 and alpha 0 frames differ (mean pixel
+difference about 44), so the adapter does change the output at the remaining points. The 5.6 s I recorded for the
+skipped run on 2026-10-13 was a first request; the same setting settles at 3.4 s.
 
 ## Which LoRAs to try next
 

@@ -461,3 +461,23 @@ that agent per feature. Notes for later sessions: update `docs/LORA.md`, the REA
 * `tt-model`-level serving is still untested; everything was run through uvicorn on one chip.
 * Every server run ends with a tt-metal `UmdException` abort after "Application shutdown complete" (exit non-zero);
   it predates this work.
+
+### 2026-10-14 — container serve check and all-mode benchmark (v0.13.0, same branch)
+**Prompt.** "go ahead and test the package serving after a tt-smi -r. benchmark all the modes again", then, after a
+reboot, "fix docs error. continue".
+
+**What happened.**
+* `tt-smi -r 0 1` on the two chips of a leased board failed (`Reset failed`, warm_reset.cpp:337) and left the board
+  unreadable: `tt_serial` returned "No data available", `tt-smi` found no device 0, and `gozer` refused every command
+  for all four chips, including the healthy board. Only a host reboot recovered it. Next time let `gozer release`
+  do the reset; a hand-run reset on a leased board is what broke it.
+* The reboot cleared `/tmp`, including the scratchpad with the staged package. Keep builds out of `/tmp`.
+* `tt-model serve` has no `--env`. It forwards only `HF_TOKEN`. My docs said `tt-model serve --env ANIMATEDIFF_LORAS=...`.
+  The catalog goes in `serve.env` or a serve profile in the manifest; docs corrected.
+* `tt-model serve <path>` does not take a local package directory, so the real `tt-model serve` run of this branch is
+  still untested. The image itself was run with the `docker run` that `tt-model serve --print` composes.
+* The image has `peft` and imports `animatediff_ttnn.lora` and the server module: the lock fix holds in a real image.
+* The benchmark script first read `loras` from the wrong level of `/v1/models` and reported the LoRA and adapter modes as
+  skipped. The server was right and the instrument was wrong.
+* A 5.6 s motion-adapter figure from 2026-10-13 was a first request. Steady state is 3.4 s with `up1`,`up2` skipped, and
+  about 24 s with nothing skipped, at alpha 0 as well.
