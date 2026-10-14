@@ -551,7 +551,8 @@ application plugin, or Python library — see
   `motion_adapter`.
 - **Every served mode is timed** in `docs/LORA.md` ("Every served mode, timed"), measured through the container
   image on one chip with `scripts/benchmark_modes.py`. The docs no longer say `tt-model serve --env`: that
-  option does not exist, and the LoRA catalog and `ANIMATEDIFF_MOTION_ADAPTER` go in the package's serve profile.
+  option does not exist, and the LoRA catalog and `ANIMATEDIFF_MOTION_ADAPTER` go in the package's serve profile. `tt_model_package.yaml` now
+  ships two: `full` (default, the `pixel`, `pixel-fast` and `lcm` catalog plus the motion adapter) and `plain`.
 - **Served previews.** `GET /v1/videos/preview` reports progress and the latest 256x256 preview GIF of the
   generation in flight, without waiting on the device lock. Request `"preview": true` (and optionally
   `"preview_every": n`) to render frames; each render costs about 0.4 s on one chip.

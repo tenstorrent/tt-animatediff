@@ -183,21 +183,20 @@ curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json'
   43.9 without a schedule.
 
 `tt-model serve` has no `--env` option. It forwards only `HF_TOKEN` from the host, so the catalog goes in the
-package's manifest instead, as `serve.env` or in a serve profile. A profile lets one image offer a plain launch and
-a launch with the catalog:
+package's manifest, as `serve.env` or in a serve profile. `tt_model_package.yaml` ships two profiles from one image:
 
-```yaml
-serve_profiles:
-  - name: plain
-  - name: loras
-    env:
-      ANIMATEDIFF_LORAS: '{"pixel": "artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5:PixelArtRedmond15V-PixelArt-PIXARFK.safetensors"}'
-      ANIMATEDIFF_MOTION_ADAPTER: default
-default_profile: loras
+* `full` (the default): the `pixel`, `pixel-fast` and `lcm` catalog above plus `ANIMATEDIFF_MOTION_ADAPTER=default`.
+  It downloads the LoRA files and the adapter at startup and keeps three more UNets resident.
+* `plain`: the plain model only, for a box with no route to the Hub beyond the SD 1.4 weights or one that wants the
+  fastest start.
+
+```bash
+tt-model serve episod/tt-animatediff                    # full
+tt-model serve episod/tt-animatediff --profile plain
 ```
 
-and the consumer picks one with `tt-model serve episod/tt-animatediff --profile loras`. A different catalog means a
-repackage, because the values are part of the published manifest. The image needs `peft`, which this release adds to
+A different catalog means a repackage, because the values are part of the published manifest. A test parses every
+profile's catalog with the server's own parser. The image needs `peft`, which this release adds to
 `tt_model_package.yaml` and its lock (checked in a built image: `peft`, `animatediff_ttnn.lora` and the server module
 all import). `extra_code.ref` must point at a tag that contains this code. LoRA files are fetched from the Hub at
 startup, so a container without network access needs them in its Hugging Face cache first.

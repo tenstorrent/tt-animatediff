@@ -131,3 +131,26 @@ serve:
   hardware: p150
   mesh_device: P150
   port: 8000
+
+# `tt-model serve` has no --env option and forwards only HF_TOKEN from the host, so a
+# serve profile is the only way the operator-side switches reach the container:
+# ANIMATEDIFF_LORAS (a named catalog; a request picks a name, never a repo id or path) and
+# ANIMATEDIFF_MOTION_ADAPTER (loads the Phase 3 adapter). The consumer chooses with
+# `tt-model serve episod/tt-animatediff --profile plain`. A different catalog is a repackage,
+# because the values are part of the published manifest.
+#
+# `full` is the default so a first-time consumer gets every feature. It downloads the LoRA files
+# and the motion adapter from the Hub at startup and keeps three more UNets resident
+# (about 7 s each to load), and a catalog entry that fails to load stops the server before it
+# reports ready. `plain` is the same image without any of that, for a box with no route to the
+# Hub beyond the SD 1.4 weights or one that wants the fastest start.
+# tests/test_server_app.py parses every profile's catalog with the server's own parser.
+serve_profiles:
+  - name: plain
+    description: The plain model only. No LoRA catalog and no motion adapter.
+  - name: full
+    description: Plain model plus a LoRA catalog (pixel, pixel-fast, lcm) and the Phase 3 motion adapter.
+    env:
+      ANIMATEDIFF_MOTION_ADAPTER: default
+      ANIMATEDIFF_LORAS: '{"pixel": "artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5:PixelArtRedmond15V-PixelArt-PIXARFK.safetensors", "pixel-fast": ["artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5:PixelArtRedmond15V-PixelArt-PIXARFK.safetensors", "latent-consistency/lcm-lora-sdv1-5:pytorch_lora_weights.safetensors"], "lcm": "latent-consistency/lcm-lora-sdv1-5:pytorch_lora_weights.safetensors"}'
+default_profile: full

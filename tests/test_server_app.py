@@ -1342,3 +1342,27 @@ def test_a_failed_motion_adapter_load_closes_the_device():
         with pytest.raises(OSError, match="no such repo"):
             asyncio.run(start())
     ttnn_mock.close_mesh_device.assert_called_once_with("dev")
+
+
+def test_the_serve_profiles_carry_a_catalog_the_server_can_parse():
+    """`tt-model serve` has no --env, so the manifest's serve profiles are the only way an
+    operator's LoRA catalog and motion-adapter switch reach the container. Parse each
+    profile's env with the server's own parser: a typo here would otherwise surface as a
+    lifespan failure inside a published image."""
+    from animatediff_ttnn.server.app import LORAS_ENV, lora_catalog_from_env
+
+    m = _manifest()
+    profiles = {p["name"]: p for p in m.get("serve_profiles", [])}
+    assert profiles, "no serve_profiles: the catalog has no way into the container"
+    assert m["default_profile"] in profiles
+    with_catalog = 0
+    for name, p in profiles.items():
+        env = {k: str(v) for k, v in (p.get("env") or {}).items()}
+        catalog = lora_catalog_from_env(env)  # raises on a malformed catalog
+        if catalog:
+            with_catalog += 1
+            assert "base" not in catalog
+        if "ANIMATEDIFF_MOTION_ADAPTER" in env:
+            assert env["ANIMATEDIFF_MOTION_ADAPTER"] in ("default", "repo") or "/" in env["ANIMATEDIFF_MOTION_ADAPTER"]
+    assert with_catalog >= 1, f"no profile sets {LORAS_ENV}"
+    assert "plain" in profiles and not (profiles["plain"].get("env") or {}), "plain must stay catalog-free"
