@@ -419,6 +419,60 @@ class TestWiring:
         src = inspect.getsource(g.load_sd14_variant)
         assert "global " not in src and "_clip_text_encoder =" not in src
 
+    @pytest.mark.parametrize("n_te,shares", [(0, True), (12, False)])
+    def test_a_unet_only_variant_shares_the_plain_text_encoder(self, n_te, shares):
+        # A variant whose files carry no lora_te_* keys must not load a private ~0.5 GB encoder;
+        # one that does needs its own, merged copy. The shared encoder is never handed to
+        # merge_loras (a merge would change the plain model's prompts).
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from animatediff_ttnn import generation_helpers as g
+
+        shared = object()
+        merged = []
+
+        def fake_merge(unet, te, specs):
+            merged.append(te)
+            return [(sp, 1, 0) for sp in specs]
+
+        with patch("diffusers.UNet2DConditionModel.from_pretrained",
+                   return_value=SimpleNamespace(config="cfg", time_proj="tp")), \
+             patch("transformers.CLIPTextModel.from_pretrained") as load_te, \
+             patch.object(g, "_get_clip", return_value=("tok", shared)), \
+             patch.object(g, "_clip_has_lora", False), \
+             patch.object(g, "_build_ttnn_unet", return_value="unet"), \
+             patch("animatediff_ttnn.lora._resolve_file", side_effect=lambda spec: spec.source), \
+             patch("animatediff_ttnn.lora.inspect_lora",
+                   return_value=SimpleNamespace(n_text_encoder_modules=n_te)), \
+             patch("animatediff_ttnn.lora.merge_loras", side_effect=fake_merge):
+            load_te.return_value.eval.return_value = "private"
+            variant = g.load_sd14_variant("dev", [lora.LoraSpec("a.safetensors", None, 1.0)], "vae")
+
+        if shares:
+            assert variant.clip == ("tok", shared) and merged == [None] and not load_te.called
+        else:
+            assert variant.clip == ("tok", "private") and merged == ["private"] and load_te.call_count == 1
+
+    def test_a_variant_gets_its_own_encoder_when_the_shared_one_carries_a_lora(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from animatediff_ttnn import generation_helpers as g
+
+        with patch("diffusers.UNet2DConditionModel.from_pretrained",
+                   return_value=SimpleNamespace(config="cfg", time_proj="tp")), \
+             patch("transformers.CLIPTextModel.from_pretrained") as load_te, \
+             patch.object(g, "_get_clip", return_value=("tok", "merged-elsewhere")), \
+             patch.object(g, "_clip_has_lora", True), \
+             patch.object(g, "_build_ttnn_unet", return_value="unet"), \
+             patch("animatediff_ttnn.lora._resolve_file", side_effect=lambda spec: spec.source), \
+             patch("animatediff_ttnn.lora.inspect_lora", return_value=SimpleNamespace(n_text_encoder_modules=0)), \
+             patch("animatediff_ttnn.lora.merge_loras", side_effect=lambda u, t, specs: [(sp, 1, 0) for sp in specs]):
+            load_te.return_value.eval.return_value = "private"
+            variant = g.load_sd14_variant("dev", [lora.LoraSpec("a.safetensors", None, 1.0)], "vae")
+        assert variant.clip == ("tok", "private")
+
     def test_cli_passes_loras_to_the_loader(self):
         tree = ast.parse((REPO / "examples" / "generate.py").read_text())
         calls = [
@@ -471,6 +525,25 @@ class TestLcm:
             generate_frames_temporal(None, None, None, None, None, torch.zeros(2, 96, 768),
                                      use_lightning=True, use_lcm=True)
 
+    def test_lcm_skips_the_post_step_latent_blend(self):
+        # LCM's prev_sample carries fresh per-frame noise. Blending it across frames averages that
+        # noise and leaves its std below what the next timestep assumes, so the post-step blend
+        # (Point 2) must not run for LCM. Guard at the wiring: the blend call may only appear in the
+        # else branch of `if use_lcm`, and the if branch must not call cross_frame_attention at all.
+        tree = ast.parse((REPO / "animatediff_ttnn" / "temporal_attention.py").read_text())
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "generate_frames_temporal")
+
+        def blends(nodes):
+            return [c for n in nodes for c in ast.walk(n) if isinstance(c, ast.Call)
+                    and getattr(c.func, "id", "") == "cross_frame_attention"
+                    and any(isinstance(a, ast.Name) and a.id == "stacked_lat" for a in c.args)]
+
+        gates = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+                 and isinstance(n.test, ast.Name) and n.test.id == "use_lcm" and blends(n.orelse)]
+        assert len(gates) == 1, "the latent blend is not gated on use_lcm"
+        assert not blends(gates[0].body)
+        assert sum(len(blends([n])) for n in fn.body) == 1  # and there is still exactly one such blend
+
     def test_lcm_timesteps_are_the_ones_the_device_embeds(self):
         # The loop embeds schedulers[0].timesteps via a stand-in object; if diffusers changed
         # how LCM spaces them, the embeddings would still build but be wrong. 4 steps from
@@ -482,13 +555,30 @@ class TestLcm:
         assert s.timesteps.tolist() == [999, 759, 499, 259]
         assert float(s.init_noise_sigma) == 1.0
 
-    def test_the_cli_passes_use_lcm_to_the_temporal_loop(self):
+    def test_the_cli_passes_the_shared_lcm_decision_to_the_temporal_loop(self):
+        # The loop must get the same decision the server uses (variant_is_lcm), not a copy of
+        # "--lcm-lora was given": a --lora that is an LCM-LoRA would merge into the UNet and then
+        # sample with PNDM at guidance 7.5.
         tree = ast.parse((REPO / "examples" / "generate.py").read_text())
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and getattr(n.func, "id", "") == "generate_frames_temporal"]
-        assert calls and all(any(k.arg == "use_lcm" for k in c.keywords) for c in calls)
+        assert calls
+        for c in calls:
+            kw = {k.arg: k.value for k in c.keywords}
+            assert isinstance(kw.get("use_lcm"), ast.Name) and kw["use_lcm"].id == "use_lcm"
+        assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                   and any(getattr(t, "id", "") == "use_lcm" for t in n.targets)]
+        assert len(assigns) == 1
+        assert "variant_is_lcm" in ast.unparse(assigns[0].value)
 
-    def test_lcm_defaults_are_few_steps_and_low_guidance(self):
+    def test_the_cli_derives_steps_and_guidance_from_the_same_decision(self):
         src = (REPO / "examples" / "generate.py").read_text()
-        assert "args.steps = 4  # the LCM-LoRA" in src
-        assert "guidance = 1.5 if args.lcm_lora else 7.5" in src
+        assert "elif use_lcm:\n        args.steps = 4" in src
+        assert "guidance = 1.5 if use_lcm else 7.5" in src
+        # the flag itself is only an input to the decision, never a second decision
+        assert "guidance = 1.5 if args.lcm_lora" not in src
+        assert "use_lcm=args.lcm_lora" not in src
+
+    def test_the_cli_documents_the_lcm_marker(self):
+        src = (REPO / "examples" / "generate.py").read_text()
+        assert 'metavar="SOURCE[:FILE][@SCALE][#lcm]"' in src

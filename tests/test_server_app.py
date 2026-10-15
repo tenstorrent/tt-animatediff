@@ -900,6 +900,7 @@ def test_a_failed_variant_load_closes_the_device():
     ttnn_mock = MagicMock()
     env = {"ANIMATEDIFF_LORAS": json.dumps({"pixel": "org/p:p.safetensors"})}
     with patch.dict(sys.modules, {"ttnn": ttnn_mock}), patch.dict("os.environ", env), \
+         patch.object(mod, "check_lora_catalog"), \
          patch.object(mod, "_open_device_and_models", return_value=("dev", ("u", "vae", "c", "t"))), \
          patch.object(mod, "_load_lora_variants", side_effect=ValueError("SDXL LoRA")):
         with pytest.raises(ValueError, match="SDXL"):
@@ -1496,4 +1497,79 @@ def test_the_preview_endpoint_reports_whose_generation_it_is_showing():
         assert body["request_id"] == "abc" and body["running"] is True
     finally:
         del app.state.engine
+        store.close()
+
+
+def _lora_file(path, metadata=None):
+    import torch
+    from safetensors.torch import save_file
+
+    keys = {
+        "lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q.lora_down.weight": (4, 8),
+        "lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q.lora_up.weight": (8, 4),
+    }
+    save_file({k: torch.zeros(*v) for k, v in keys.items()}, str(path), metadata=metadata)
+    return str(path)
+
+
+def test_the_lora_catalog_header_check_accepts_a_good_file_and_names_a_bad_entry(tmp_path):
+    from animatediff_ttnn.lora import LoraSpec
+    from animatediff_ttnn.server.app import check_lora_catalog
+
+    good = _lora_file(tmp_path / "good.safetensors")
+    check_lora_catalog({"ok": [LoraSpec(good, None, 1.0)]})
+
+    sdxl = _lora_file(tmp_path / "xl.safetensors", {"ss_base_model_version": "sdxl_base_v1-0"})
+    with pytest.raises(ValueError, match=r"ANIMATEDIFF_LORAS: 'big'.*SDXL"):
+        check_lora_catalog({"ok": [LoraSpec(good, None, 1.0)], "big": [LoraSpec(sdxl, None, 1.0)]})
+    with pytest.raises(ValueError, match="'gone'"):
+        check_lora_catalog({"gone": [LoraSpec(str(tmp_path / "nope.safetensors"), None, 1.0)]})
+    with pytest.raises(ValueError, match="'bin'.*safetensors"):
+        check_lora_catalog({"bin": [LoraSpec("org/repo", "weights.bin", 1.0)]})
+
+
+def test_the_lifespan_checks_the_catalog_before_it_opens_the_device(tmp_path):
+    """The check is only useful where it runs: a bad file must fail with no chip claimed.
+
+    Drives the real lifespan with the device open stubbed. A catalog naming an SDXL file has to
+    raise without _open_device_and_models ever being called.
+    """
+    import json
+
+    from animatediff_ttnn.server import app as mod
+
+    sdxl = _lora_file(tmp_path / "xl.safetensors", {"ss_base_model_version": "sdxl_base_v1-0"})
+    env = {"ANIMATEDIFF_LORAS": json.dumps({"big": sdxl})}
+
+    async def run():
+        async with mod.lifespan(mod.app):
+            pass
+
+    with patch.dict(os.environ, env), patch.object(mod, "_open_device_and_models") as opened:
+        with pytest.raises(ValueError, match="SDXL"):
+            asyncio.run(run())
+    assert not opened.called, "the device was opened before the catalog was header-checked"
+
+
+def test_using_a_chain_keeps_it_from_being_the_one_pruned():
+    """Eviction is by use: a chain a client keeps continuing from outlives newer one-off saves.
+
+    c0 is the oldest file. Continuing from it must refresh it, so the next prune drops c1.
+    """
+    import os
+
+    from animatediff_ttnn.server.app import ChainStore
+
+    store = ChainStore()
+    store.MAX_CHAINS = 3
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None, "chains": store}
+    try:
+        for i in range(4):
+            with open(store.path(f"c{i}"), "wb") as fh:
+                fh.write(b"x")
+            os.utime(store.path(f"c{i}"), (1000 + i, 1000 + i))
+        _run_generate(eng, chain_from="c0")
+        store.prune()
+        assert [store.has(f"c{i}") for i in range(4)] == [True, False, True, True]
+    finally:
         store.close()

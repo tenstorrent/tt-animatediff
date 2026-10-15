@@ -27,7 +27,7 @@ hardware through TTNN, with cross-frame temporal attention for motion coherence.
 weights it needs — SD 1.4 and the AnimateDiff MotionAdapter — are resolved from their
 upstream repositories, at pinned revisions, the first time you generate.
 
-Version 0.13.1 · [GitHub](https://github.com/tenstorrent/tt-animatediff) ·
+Version 0.13.2 · [GitHub](https://github.com/tenstorrent/tt-animatediff) ·
 [Docs](https://docs.tenstorrent.com/tt-animatediff/)
 
 ## Usage

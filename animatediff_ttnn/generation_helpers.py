@@ -126,11 +126,23 @@ def load_sd14_variant(device, loras, vae):
     torch_unet = UNet2DConditionModel.from_pretrained(
         SD14_REPO, subfolder="unet", revision=revision_for(SD14_REPO)
     )
-    tokenizer = _get_clip()[0]
-    text_encoder = CLIPTextModel.from_pretrained(
-        SD14_REPO, subfolder="text_encoder", revision=revision_for(SD14_REPO)
-    ).eval()
-    for spec, n_unet, n_te in merge_loras(torch_unet, text_encoder, loras):
+    tokenizer, shared_encoder = _get_clip()
+    # A UNet-only stack (the LCM-LoRA, most style LoRAs) leaves the text encoder as the plain
+    # model has it, so the variant can use the shared one: no second ~0.5 GB fp32 copy in host RAM
+    # and no extra load at startup. The shared encoder is never merged into, so merge_loras gets
+    # None for it. A stack with any lora_te_* key, or a shared encoder that already carries a
+    # merged LoRA, gets its own freshly loaded copy.
+    from animatediff_ttnn.lora import _resolve_file, inspect_lora
+
+    touches_encoder = any(inspect_lora(_resolve_file(spec)).n_text_encoder_modules for spec in loras)
+    if touches_encoder or _clip_has_lora:
+        text_encoder = CLIPTextModel.from_pretrained(
+            SD14_REPO, subfolder="text_encoder", revision=revision_for(SD14_REPO)
+        ).eval()
+        merge_target = text_encoder
+    else:
+        text_encoder, merge_target = shared_encoder, None
+    for spec, n_unet, n_te in merge_loras(torch_unet, merge_target, loras):
         print(f"  LoRA {spec.source} @ {spec.scale}: {n_unet} UNet + {n_te} text-encoder tensors merged")
     models = (_build_ttnn_unet(device, torch_unet), vae, torch_unet.config, torch_unet.time_proj)
     from animatediff_ttnn.lora import variant_is_lcm

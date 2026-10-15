@@ -554,6 +554,21 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.13.2 — unreleased (review fixes on PR #15, round 3)
+- **CLI honours an LCM `--lora`.** `--lora latent-consistency/lcm-lora-sdv1-5:...` or `--lora ./x.safetensors#lcm` now
+  samples with LCM at 4 steps and guidance 1.5, the same decision the server makes (`variant_is_lcm`). Before, only
+  `--lcm-lora` did, so the file merged and the run used PNDM at 25 steps. `--lora` help documents `#lcm`.
+- **Catalog files are checked before the device opens.** The server reads each `ANIMATEDIFF_LORAS` file's header
+  (SDXL, LoHa, DoRA, missing path, wrong extension) in the lifespan before it claims the mesh. Before, a bad file failed
+  minutes into startup, after the plain UNet was built.
+- **LCM no longer blends latents after each step.** LCM's `prev_sample` carries fresh per-frame noise, and the post-step
+  cross-frame blend averaged it away. On one chip, three seeds, 8 frames, 4 steps: detail (Laplacian variance) rose in two
+  of three seeds (488 to 878, 455 to 748, 620 to 610) and frame-to-frame change rose 30 to 60%.
+- **A UNet-only variant shares the plain text encoder.** A catalog entry whose files carry no `lora_te_*` keys no longer
+  loads its own ~0.5 GB CLIP copy.
+- **Chains are evicted by use.** Continuing from a chain refreshes it, so a chain clients keep using survives newer saves.
+- **Doc comment on `preview` is back on the `preview` field** in `VideoGenerationRequest`.
+
 ### v0.13.1 — unreleased (review fixes on PR #15)
 - **Full-clip LoRA examples.** `docs/LORA.md` and `docs/features.html` now show complete 16-frame GIFs, with and without the
   pixel art LoRA, for two seeds of "the suspension bridge at iguazu falls". Before, only JPG contact sheets were there.

@@ -267,12 +267,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--lora",
         action="append",
         default=None,
-        metavar="SOURCE[:FILE][@SCALE]",
+        metavar="SOURCE[:FILE][@SCALE][#lcm]",
         help=(
             "Merge a Stable Diffusion style LoRA (kohya format) into the UNet and "
             "text encoder at load time; repeat to stack. SOURCE is a Hub repo id or a "
             "local path, FILE names the .safetensors inside it, SCALE defaults to 1.0. "
-            "Example: --lora org/style:style.safetensors@0.8. Costs nothing per step "
+            "Example: --lora org/style:style.safetensors@0.8. A trailing #lcm marks the file "
+            "as an LCM-LoRA (the run then samples with LCM at 4 steps and guidance 1.5, "
+            "as --lcm-lora does; the published latent-consistency repo is recognised "
+            "without it). Costs nothing per step "
             "(the weights are merged before the device sees them). blackhole/sim "
             "modes only. See docs/LORA.md."
         ),
@@ -281,15 +284,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 args = _build_parser().parse_args()
 
-if args.lcm_lora:
-    if args.mode == "cpu":
-        sys.exit("--lcm-lora is supported in blackhole/sim modes only")
-    if args.lightning:
-        sys.exit("--lcm-lora and --lightning are different samplers; pick one")
-    if args.motion_adapter is not None:
-        sys.exit("--lcm-lora is not supported with --motion-adapter (the Phase 3 loop has no LCM sampler)")
-
 # Validate --lora up front: a typo should fail before a chip is claimed, not after.
+_lora_specs = []
 if args.lora:
     if args.mode == "cpu":
         sys.exit("--lora is supported in blackhole/sim modes only")
@@ -298,15 +294,31 @@ if args.lora:
     )
     for _t in args.lora:
         try:
-            _info = inspect_lora(_resolve_file(parse_lora_spec(_t)))
+            _spec = parse_lora_spec(_t)
+            _info = inspect_lora(_resolve_file(_spec))
             check_lora_compatible(_info)
         except (ValueError, FileNotFoundError) as _e:
             sys.exit(f"--lora {_t!r}: {_e}")
+        _lora_specs.append(_spec)
         # Trigger words are a hint read from the file's training metadata, not a requirement.
         if _info.trigger_words:
             print(f"  LoRA {_t}: common training tags: {', '.join(_info.trigger_words)}")
         if _info.has_conv:
             print(f"  LoRA {_t}: also targets conv layers (LoCon); merged only if diffusers matches them")
+
+# One decision for "this run samples with LCM", shared with the server: --lcm-lora, or any --lora
+# that is the published LCM-LoRA or carries the #lcm marker. Without it a --lora LCM file merges
+# into the UNet but the run would still use PNDM, 25 steps and guidance 7.5.
+from animatediff_ttnn.lora import variant_is_lcm
+use_lcm = bool(args.lcm_lora) or variant_is_lcm(_lora_specs)
+if use_lcm:
+    _lcm_flag = "--lcm-lora" if args.lcm_lora else "--lora with an LCM-LoRA"
+    if args.mode == "cpu":
+        sys.exit("--lcm-lora is supported in blackhole/sim modes only")
+    if args.lightning:
+        sys.exit(f"{_lcm_flag} and --lightning are different samplers; pick one")
+    if args.motion_adapter is not None:
+        sys.exit(f"{_lcm_flag} is not supported with --motion-adapter (the Phase 3 loop has no LCM sampler)")
 
 # Apply mode-specific defaults now that we know the mode
 if args.frames is None:
@@ -319,7 +331,7 @@ if args.steps is None:
         # checkpoint (2, 4, or 8). Blackhole/sim Lightning uses base TTNN UNet;
         # 25 steps is correct there (no distillation constraint).
         args.steps = args.lightning_steps
-    elif args.lcm_lora:
+    elif use_lcm:
         args.steps = 4  # the LCM-LoRA is a 2-8 step model; 4 is the usual quality/speed point
     elif args.lcm_unet:
         # LCM distilled UNet — default to 8 steps (balanced quality/speed).
@@ -537,7 +549,7 @@ def run_ttnn():
     if args.lightning:
         print(f"  Scheduler      : EulerDiscrete (trailing, linear)")
         print(f"  CFG            : 7.5 (TTNN path uses base SD 1.4 UNet, not distilled adapter)")
-    elif args.lcm_lora:
+    elif use_lcm:
         print(f"  Scheduler      : LCM (scaled_linear, 50 original steps) + LCM-LoRA")
         print(f"  CFG            : 1.5 (the LCM-LoRA is distilled for low guidance)")
     else:
@@ -551,7 +563,7 @@ def run_ttnn():
     print()
 
     # LCM is distilled for low guidance; 7.5 over-saturates it.
-    guidance = 1.5 if args.lcm_lora else 7.5
+    guidance = 1.5 if use_lcm else 7.5
 
     print(f"Opening {'simulated ' if args.mode == 'sim' else ''}Blackhole device...")
     device = _open_device()
@@ -560,9 +572,9 @@ def run_ttnn():
     try:
         print("Loading SD 1.4 models...")
         t0 = time.time()
-        from animatediff_ttnn.lora import lcm_lora_spec, parse_lora_spec
-        lora_specs = [parse_lora_spec(t) for t in (args.lora or [])]
-        if args.lcm_lora:
+        from animatediff_ttnn.lora import lcm_lora_spec
+        lora_specs = list(_lora_specs)
+        if args.lcm_lora and not variant_is_lcm(lora_specs):
             lora_specs.append(lcm_lora_spec())
         ttnn_model, ttnn_vae, config, torch_time_proj = load_sd14_ttnn(device, loras=lora_specs)
         print(f"  Loaded in {time.time() - t0:.1f}s\n")
@@ -640,7 +652,7 @@ def run_ttnn():
                 seed=args.seed,
                 temporal_alpha=args.temporal_alpha,
                 use_lightning=args.lightning,
-                use_lcm=args.lcm_lora,
+                use_lcm=use_lcm,
                 chain_from=args.chain_from,
                 chain_save=args.chain_save,
                 chain_alpha=args.chain_alpha,

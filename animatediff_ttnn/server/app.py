@@ -185,7 +185,8 @@ class ChainStore:
     The CLI takes file paths for ``--chain-save`` / ``--chain-from``. A server cannot take a
     caller's path, so a request names a chain instead, and this store maps the name to a file in
     a directory the server created. The file name is a hash of the name, so no name can point
-    outside it. At most ``MAX_CHAINS`` are kept (oldest evicted), and all of them are lost when the
+    outside it. At most ``MAX_CHAINS`` are kept (least recently used evicted: a save or a use
+    through ``touch`` counts), and all of them are lost when the
     server stops: a chain is a convenience for the next request, not a store of record.
     """
 
@@ -200,8 +201,15 @@ class ChainStore:
     def has(self, name: str) -> bool:
         return os.path.isfile(self.path(name))
 
+    def touch(self, name: str) -> None:
+        """Mark a chain as just used, so ``prune`` evicts by use and not only by save time."""
+        try:
+            os.utime(self.path(name))
+        except OSError:
+            pass
+
     def prune(self) -> None:
-        """Drop the oldest chains beyond ``MAX_CHAINS``."""
+        """Drop the least recently used chains beyond ``MAX_CHAINS`` (by file mtime)."""
         try:
             files = sorted(
                 (os.path.join(self._dir, f) for f in os.listdir(self._dir)),
@@ -242,10 +250,6 @@ class VideoGenerationRequest(BaseModel):
     #: the plain model. A name, never a repo id or a path: the operator decides which files
     #: this server will load, so a caller cannot make it fetch or open one.
     lora: Optional[str] = Field(default=None, min_length=1, max_length=64)
-    #: Render a rolling preview GIF of the in-flight latents, readable from
-    #: ``GET /v1/videos/preview`` while this request runs. Off by default: the step counter
-    #: there is always kept (it is free), but each GIF is a CPU render and export between
-    #: denoise steps, which is time the device spends waiting.
     #: Sampler for the plain model: ``pndm`` (default) or ``euler`` (what the CLI calls
     #: ``--lightning``; the base UNet with an Euler schedule, no distilled weights). An LCM
     #: variant always samples with LCM, so naming a sampler with one is refused.
@@ -262,6 +266,10 @@ class VideoGenerationRequest(BaseModel):
     motion_adapter: bool = False
     motion_adapter_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
     motion_adapter_skip: List[MotionKey] = Field(default_factory=list)
+    #: Render a rolling preview GIF of the in-flight latents, readable from
+    #: ``GET /v1/videos/preview`` while this request runs. Off by default: the step counter
+    #: there is always kept (it is free), but each GIF is a CPU render and export between
+    #: denoise steps, which is time the device spends waiting.
     preview: bool = False
     #: The caller's name for this request, echoed by ``GET /v1/videos/preview`` while the request
     #: runs, so a client sharing the server with others can tell whose preview it is looking at.
@@ -396,6 +404,26 @@ def lora_catalog_from_env(env: Optional[dict] = None) -> dict:
             raise ValueError(f"{LORAS_ENV}: {name!r} must be a spec string or a non-empty list of them")
         catalog[name] = [parse_lora_spec(t) for t in texts]
     return catalog
+
+
+def check_lora_catalog(catalog: dict) -> None:
+    """Header-check every file in the catalog. Blocking; run it BEFORE the device opens.
+
+    ``lora_catalog_from_env`` only validates spec syntax. This resolves each file (a Hub
+    download or a local path), reads its safetensors header and refuses what cannot merge into
+    SD 1.x: an SDXL, LoHa or DoRA file, a missing path, a name that is not ``.safetensors``.
+    The same checks ran inside ``_load_lora_variants``, but only after the mesh was open and
+    the plain UNet built (minutes on a cold cache); here a bad catalog fails in milliseconds
+    and the error names the catalog entry.
+    """
+    from animatediff_ttnn.lora import _resolve_file, check_lora_compatible, inspect_lora
+
+    for name, specs in catalog.items():
+        for spec in specs:
+            try:
+                check_lora_compatible(inspect_lora(_resolve_file(spec)))
+            except (ValueError, FileNotFoundError) as exc:
+                raise ValueError(f"{LORAS_ENV}: {name!r}: {exc}") from exc
 
 
 def _load_lora_variants(device, models: tuple, catalog: dict) -> dict:
@@ -574,6 +602,9 @@ def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
     if preview is not None:
         preview.begin(steps, req.request_id)
     chains = state.get("chains")
+    if chains is not None and req.chain_from:
+        # A chain that clients keep using must not be evicted for being old: pruning goes by mtime.
+        chains.touch(req.chain_from)
     common = dict(
         device=state["device"],
         ttnn_model=ttnn_model,
@@ -623,8 +654,9 @@ async def lifespan(app: FastAPI):
     would answer /health cheerfully and fail every generation.
     """
     shape = mesh_shape_from_env()
-    # Parsed before the device opens: a malformed catalog should cost nothing.
+    # Parsed and header-checked before the device opens: a bad catalog should cost nothing.
     catalog = lora_catalog_from_env()
+    await asyncio.to_thread(check_lora_catalog, catalog)
     device, models = await asyncio.to_thread(_open_device_and_models, shape)
     motion_spec = motion_adapter_from_env()
     try:

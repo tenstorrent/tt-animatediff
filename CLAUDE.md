@@ -369,188 +369,69 @@ with ttnn import-blocked.
 **Repackage from here needs the `animatediff_ttnn-0.11.2` wheel**, not 0.11.1 (the 0.11.1 section
 above is the release already published). Everything else in that repackage list is unchanged.
 
-## LoRA support (2026-10-07, v0.12.0)
+## LoRA support and served features (v0.12 to v0.13, PR #15)
 
-**Prompt.** "Commit the LoRA changes into a new branch, open a PR, then test the LoRAs on TT
-hardware and put the results in the docs. Use extra spooky and mysterious prompts." Then, mid-run:
-"do a code review too".
+Numbers, request fields and how-to are in `docs/LORA.md`, `docs/features.html` and the README
+changelog. This section keeps only what a new session would trip over.
 
-**What changed my mind.** The first commit (PR #15, draft) was a PEFT-on-MotionAdapter design and
-its notes marked three LoRAs "Verified". Looking at the repos showed none is a PEFT adapter: all are
-single kohya-format `.safetensors` UNet LoRAs for SD 1.5, and one (Krea-2) targets another base model.
-That design could not load any of them. The PR was reworked on the same branch rather than closed.
+**Design.** `animatediff_ttnn/lora.py` merges kohya-format `.safetensors` UNet LoRAs (SD 1.x) into the
+CPU UNet before `preprocess_model_parameters`, so a LoRA costs nothing per step. The UNet half goes through
+diffusers (`load_lora_into_unet`, `fuse_lora`, `unload_lora`); the text-encoder half is merged by hand
+(`_merge_text_encoder`) because diffusers' loader finds no modules on the transformers 5.x CLIP layout.
+`inspect_lora` + `check_lora_compatible` read the header first and refuse SDXL, LoHa, LoKr and DoRA files
+before any chip is claimed (CLI and the server lifespan both call them before the device opens).
 
-**Design.** `animatediff_ttnn/lora.py` merges into the CPU UNet before `preprocess_model_parameters`.
-UNet half: diffusers `load_lora_into_unet` + `fuse_lora` + `unload_lora`. Text-encoder half: merged by
-hand, since diffusers' text-encoder loader finds no modules on the transformers 5.x CLIP layout
-(IndexError on an empty rank map). `merge_loras` raises if a LoRA changes no UNet weight.
+**The LCM decision lives in one place.** `variant_is_lcm()` in `lora.py` (a spec marked `#lcm`, or the
+published LCM-LoRA repo id) is used by the server, by `load_sd14_variant` and by `examples/generate.py`. Do not
+re-derive it from a flag or a repo name. LCM steps are capped at `LCM_ORIGINAL_STEPS` (50, in `weights_pins.py`),
+which is also the scheduler's `original_inference_steps`. The post-step latent blend is skipped for LCM
+because its `prev_sample` carries per-frame noise that blending averages away (on-chip A/B, 2026-10-14:
+sharper, but 30 to 60% more frame-to-frame change).
 
-**Environment trap.** `~/.tenstorrent-venv` has diffusers 0.32.1 with transformers 5.x and cannot import
-`diffusers.loaders`. Use the repo's `.venv` (diffusers 0.39, peft 0.21, ttnn).
+**Served path** (`animatediff_ttnn/server/app.py`). Request fields: `lora`, `sampler`, `preview`,
+`preview_every`, `request_id`, `chain_save`/`chain_from`/`chain_alpha`, `prompt_schedule`, `motion_adapter*`.
+Checks that can fail run before the device lock (`request_conflicts`, `chain_conflict`) and `chain_conflict`
+runs again under the lock. The preview store is one global slot; `request_id` is how a client tells whose
+preview it is looking at, so the generator and this server release together with no compatibility path.
 
-**Hardware trap.** Opening three devices at once (three processes, `--device-id 0/1/2`) failed in
-`risc_firmware_initializer` and left the chips unable to open even singly. `gozer release` reset them.
-Run one device-opening process at a time. Also: `pkill -f` killed my own shell.
+**Environment.** Use the repo `.venv` (diffusers 0.39+, peft, ttnn). `~/.tenstorrent-venv` has diffusers 0.32.1
+and cannot import `diffusers.loaders`. `peft` must stay in `tt_model_package.yaml` and its lock: diffusers
+imports it lazily, so the image build passes without it and every LoRA request then fails.
 
-**Review fixes.** `hf_hub_download` without `revision=` failed `tests/test_weights_pins.py`; the module-level
-CLIP cache would carry a merged LoRA into later loads (now reset in `load_sd14_ttnn`); `peft` was undeclared.
+**Hardware.**
+* One device-opening process at a time. Three at once left the chips unable to open, even singly.
+* Never run `tt-smi -r` by hand on a leased board. Doing so on a leased board wedged it until a host reboot;
+  `gozer release` does the reset. `gozer run` holds the lease about 30 s after the command exits while it
+  resets, so wait for FREE before the next run.
+* A reboot clears `/tmp`. Keep builds in `~/tt-model-builds-*` and logs in `~/tt-serve-logs/`.
+* Every server run ends with a tt-metal `UmdException` abort after shutdown. It predates this work.
+* `pkill -f` matches its own shell. Use a pid file.
 
-### 2026-10-13 — Copilot review on PR #15 (v0.12.1)
-Four findings, all fixed in `animatediff_ttnn/lora.py`. Bumped to 0.12.1 (VERSION, model card, README changelog).
-- **Non-finite scale.** `@1e999` matched the scale regex and `float()` gave inf, which fuse would write into every
-  targeted weight. `LoraSpec.__post_init__` now rejects inf and nan, so specs built in code are covered too.
-- **`~` paths.** `os.path.isfile` does not expand `~`, so an existing `~/x.safetensors` was reported missing.
-  `_resolve_file` expands the source first.
-- **Memory.** `merge_loras` cloned the whole UNet state dict per LoRA to count changed tensors. It now snapshots only the
-  layers the loader just wrapped (`_lora_targets`, peft `base_layer` of modules holding the adapter). Checked against real
-  peft on a tiny UNet: 24 of 24 targets found and changed, none left wrapped after unload.
-- **Tests.** `TestMergeLoras` runs the UNet path on a fake UNet with a stubbed diffusers loader: fuse scaling, stacking,
-  cleanup order, the zero-match error, scale 0, and that `state_dict()` is never called. 8 of the new tests fail on the old
-  `lora.py` (scale, tilde and snapshot ones) and pass now. The fake mirrors peft's `base_layer` / `lora_A` shape, so the
-  real-peft check above is the guard if peft changes it.
-Full suite: 400 passed, 1 failed. The failure is `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing`, which
-compares the package tree with `main`'s; it fails for any branch that changes `animatediff_ttnn/` and is resolved by the
-release repin in `docs/RELEASING.md`.
+**Packaging and releasing.**
+* The container package is its own Hub repo, `episod/tt-animatediff-container-v5.1`.
+  `scripts/publish_to_hub.py` targets the thin bundle `episod/tt-animatediff` and would replace its README and
+  root code, so it is not run for container work.
+* `tt_model_package.yaml`'s `extra_code.ref` must stay at the tag `main` ships while a PR is open:
+  `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing` compares trees and fails in CI
+  otherwise (a commit pin on the branch did exactly that). Package from a copy of the manifest with the commit
+  pin (`docs/RELEASING.md`), and repin to the release tag after the squash.
+* `tt-model serve` takes Hub repo ids only (no local path, no `--env`; env goes through serve profiles in the
+  manifest). `tt-model stop` takes the repo id. A `tt-model push` of a rebuilt package printed "no files have been
+  modified" for a changed tree, so check what the Hub holds after a push.
+* The generated card says "Runs on p150 or p150" when two profiles share hardware. It is a tt-model-manager
+  quirk and cannot be fixed from this manifest.
+* Release in lockstep with tt-local-generator and update `docs/LORA.md`, the README changelog and
+  `docs/features.html` with each served feature.
 
-### 2026-10-13 — LoRA features for the first release (v0.13.0)
-**Prompt.** After the review fixes: "work on some of these useful and faster items so our shipped version starts
-on the best foot", then "how do we make our full feature set available when served via tt-model?".
-
-**What was built.** Header pre-check (`inspect_lora`, `check_lora_compatible`), `scripts/lora_device_check.py`,
-served LoRA variants (`ANIMATEDIFF_LORAS` catalog, `"lora"` request field, resident per variant, shared VAE),
-`--lcm-lora` plus `use_lcm` in `generate_frames_temporal`, `prompt_schedule` in the served request, and `peft`
-in the container manifest and lock. Details and numbers are in `docs/LORA.md`.
-
-**Things that were wrong until checked.**
-* The container lock had no `peft`. diffusers imports it lazily, so the build-time verify passed and every
-  LoRA request in the image would have failed. Added to `tt_model_package.yaml`; the lock was recompiled from
-  its own top-level requirements plus peft, and the diff is only peft and its `# via` lines. The LoRA tests and a
-  real three-LoRA merge then ran in a bare venv built from the lock (diffusers 0.40, not the 0.39 used before).
-* I assumed the LCM-LoRA was diffusers-format and would be refused by the new pre-check. Reading its header showed
-  kohya keys with conv targets (a LoCon). The assumption was wrong, and the header read is why it was caught.
-* The LCM-only run showed grid lines. Alpha 0 and 8 steps did not remove them; a neutral prompt did. The
-  "Pixel Art" in the prompt asked for the grid. Without that control it would have been logged as an LCM bug.
-* A port the box already used (8765) failed the first serve attempt; pick a free port.
-
-**Hardware traps.** `gozer run` leaves the lease held for ~30 s after the server exits while it resets chips;
-`gozer status` reports unreadable serials during that window. Wait for FREE before the next run.
-
-**Not done.** Nothing was run through `tt-model serve` itself, only uvicorn on the chip. `tt_model_package.yaml`'s
-`extra_code.ref` still points at v0.10.0 and must move to a tag that contains this release. The
-`test_the_pinned_extra_code_ref_ships_the_package_we_are_developing` failure is that repin. A LoRA catalog needs
-the files in the container's HF cache or network access at startup.
-
-### 2026-10-13 — served previews, sampler, chaining, Phase 3 (v0.13.0, same branch)
-**Prompt.** The tt-local-generator session asked for served previews; the user then said the two projects
-release together ("code as if we are in lock step"), to keep docs and the site current per feature, and to notify
-that agent per feature. Notes for later sessions: update `docs/LORA.md`, the README changelog and
-`docs/features.html` (matrix row, section, request reference) with each served feature, then message the peer.
-
-**Served request additions** (all in `animatediff_ttnn/server/app.py`): `preview` / `preview_every` plus
-`GET /v1/videos/preview`; `sampler: euler`; `chain_save` / `chain_from` / `chain_alpha` backed by `ChainStore`;
-`motion_adapter` (+ `_alpha`, `_skip`) enabled by `ANIMATEDIFF_MOTION_ADAPTER`; `request_conflicts()` returns the
-400 reasons before the device lock; `/v1/models` reports `loras` and `motion_adapter`.
-
-**Measured, not assumed.**
-* Preview GIF rendering costs ~0.4 s per render on one chip (13.5-13.9 s -> 17.8-20.2 s for 8 frames x 20 steps),
-  which is why the GIF is opt-in per request while the step counter is always on.
-* The first chaining check used the same seed for source, control and chained runs, so the control already shared the
-  source's noise; and a pixel-difference metric scored the chained runs as *less* similar even though the tower and
-  cliff visibly carried over (colour dominates the metric). The check was redone with a different seed and judged by
-  eye. The instrument, not the feature, was wrong both times.
-* `tt-model`-level serving is still untested; everything was run through uvicorn on one chip.
-* Every server run ends with a tt-metal `UmdException` abort after "Application shutdown complete" (exit non-zero);
-  it predates this work.
-
-### 2026-10-14 — container serve check and all-mode benchmark (v0.13.0, same branch)
-**Prompt.** "go ahead and test the package serving after a tt-smi -r. benchmark all the modes again", then, after a
-reboot, "fix docs error. continue".
-
-**What happened.**
-* `tt-smi -r 0 1` on the two chips of a leased board failed (`Reset failed`, warm_reset.cpp:337) and left the board
-  unreadable: `tt_serial` returned "No data available", `tt-smi` found no device 0, and `gozer` refused every command
-  for all four chips, including the healthy board. Only a host reboot recovered it. Next time let `gozer release`
-  do the reset; a hand-run reset on a leased board is what broke it.
-* The reboot cleared `/tmp`, including the scratchpad with the staged package. Keep builds out of `/tmp`.
-* `tt-model serve` has no `--env`. It forwards only `HF_TOKEN`. My docs said `tt-model serve --env ANIMATEDIFF_LORAS=...`.
-  The catalog goes in `serve.env` or a serve profile in the manifest; docs corrected.
-* `tt-model serve <path>` does not take a local package directory, so the real `tt-model serve` run of this branch is
-  still untested. The image itself was run with the `docker run` that `tt-model serve --print` composes.
-* The image has `peft` and imports `animatediff_ttnn.lora` and the server module: the lock fix holds in a real image.
-* The benchmark script first read `loras` from the wrong level of `/v1/models` and reported the LoRA and adapter modes as
-  skipped. The server was right and the instrument was wrong.
-* A 5.6 s motion-adapter figure from 2026-10-13 was a first request. Steady state is 3.4 s with `up1`,`up2` skipped, and
-  about 24 s with nothing skipped, at alpha 0 as well.
-
-### 2026-10-14 (later) — container package published, verified through `tt-model serve`
-**Prompt.** "yes push both commits, and let's go ahead and publish the model on HF even before we review and approve
-those PRs", then, after I explained that `publish_to_hub.py` would overwrite the thin bundle's README and root code,
-"let's do option 2, episod/tt-animatediff-container-v5.1 ?".
-* The v5.1 manifest's `repo:` is now `episod/tt-animatediff-container-v5.1`, with a `card:` block (numbers from the
-  mode benchmark) and `extra_code.ref` pinned to `fb9ef60` (tree `ce376a9`, identical to the branch head's). That ref is
-  not reachable from main until PR #15 merges and is squashed: repin to the tag or squash commit afterwards
-  (docs/RELEASING.md step 5), or the next `tt-model package` fails once the branch is deleted.
-* Pushed private, run through `tt-model serve episod/tt-animatediff-container-v5.1 --device-id 0` under a gozer lease
-  (benchmark within 0.3 s of the docker-run numbers, frames byte-identical), then made public with
-  `update_repo_settings(private=False)` and read back anonymously.
-* The generated card says "Runs on **p150** or **p150**" when two profiles share hardware. That is a
-  tt-model-manager card-generator quirk, not fixable from this manifest.
-* `tt-model stop` takes the repo id (`episod/tt-animatediff-container-v5.1`), not the package name.
-* A monitor that tested `pgrep -x gozer` reported "exited" while the serve was running (the process is python3). Wait on a
-  pid you recorded.
-* `scripts/publish_to_hub.py` (the diffusers pipeline repo `episod/tt-animatediff`) was NOT run. It would replace the live
-  README with the generic model card and the root `animatediff_ttnn/` that the thin bundle's `run.sh` loads.
-* `tt-model serve` is now the primary run path on the site's top page. `docs/index.html` has a `#run` section after the hero
-  (the hero's main button points at it), `docs/usage.html` has `#install-tt-model` first, and the README Quick Start leads
-  with it. User's instruction: "tt-model should now be presented as the primary way to deploy/run the model on the
-  top-level part of the website". Docs only, so VERSION is unchanged. `docs/index.html`, `usage.html` and `benchmarks.html`
-  still carry the older ~12.5 s/frame and ~100 s Phase 2.5 figures, while the README says ~1.94 s/frame and the measured
-  served runs say 15.3 s per 8 frames; the CLI path has not been re-timed to settle which is right.
-* **Phase 2.5 timing settled (2026-10-14).** User question: how do the new numbers compare to the spooky-loops blog post
-  (~100 s per clip)? Under a gozer lease, `generate.py` (one chip, 8 frames, 512x512, 25 steps, seed 42) printed "Done in"
-  21.2 s x3 (PNDM) and 20.6 s x3 (`--lightning`, Euler). Four `generate_animation` calls in one process took 28.3 s, then
-  15.7 s, 15.8 s, 15.6 s. So 21 s is a first call, 15.5 s is warm (matches the model card and `tt-model serve`), and ~100 s
-  was stale. My first blog edits assumed the blog's table was CLI-timed and nearly used 2.7 s/frame; the one-process run is
-  what showed the CLI figure carries first-call warmup. The blog's sharding rows (16 frames ~86 s, 4 clips ~105 s) and
-  `benchmarks.html`'s sharding text still rest on the stale single-chip baseline and are not re-measured. The Google Doc
-  edits were made as suggestions (`writeMode: SUGGEST`); the doc's JSON marks them with `suggestedInsertionIds`.
-
-
-### 2026-10-14 — second Copilot review on PR #15 (v0.13.1)
-**Prompt.** "watch for another batch of reviews on this PR and tt-local-generator's please", then "GO AHEAD FOR BOTH 15 AND 29".
-Four findings, each checked against the code before fixing, each with a test seen failing first.
-* **Local LCM-LoRA** was only recognised by repo id. `LoraSpec.lcm` and the `#lcm` catalog marker add an explicit designation;
-  `variant_is_lcm()` is the one decision, and a wiring test fails if `load_sd14_variant` compares repo names itself.
-* **LCM steps above 50** were a 500 inside the loop. I ran `LCMScheduler.set_timesteps(51)` with `original_inference_steps=50`
-  to confirm it raises, then made the limit one constant (`LCM_ORIGINAL_STEPS`) shared by the scheduler and `request_conflicts`.
-* **Chain pruned while queued**: `chain_conflict()` runs before the lock and again under it. The test replaces the lock with one that
-  deletes the chain on acquire, which is when a pruning generation would have finished. That test first failed by reaching generation.
-* **Benchmark script** no longer guesses LCM from the name; it sends no step count for any variant.
-Not repackaged: the published container package is still built from `fb9ef60` (0.13.0).
-* **Preview ownership (from the tt-local-generator #29 review).** One global preview plus a queue on the device lock let a waiting
-  client show another client's step-20 frame. The fix is in both repos, released together: `request_id` on the request,
-  `PreviewStore.begin(total, request_id)`, echoed in `GET /v1/videos/preview`; the generator sends a fresh id and ignores previews
-  with another one. No compatibility path: a server without the field gives the generator no previews, which it already treats as
-  "no preview endpoint".
-
-### 2026-10-14 — CI: the Serving contract job (v0.13.1)
-**Prompt.** "CI issue it looks like".
-* `Serving contract` failed on `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing`. I had been reading that
-  failure as "resolves after merge", and had been seeing it locally since the manifest repin (`2895b66`), but I never checked
-  what CI did with it. CI runs it with full history, so it fails there. The suite reported "1 failed" at every step after that
-  commit and I carried it as known. A failure that has a stated reason is not the same as a failure that is understood.
-* The test's docstring says what the pin is for: during a PR it must match main's tree, so a pin to the branch head is wrong by
-  design. The fix restores `ref: v0.11.2` (tree `cd75b0c`, equal to main's) and moves the commit pin to a scratch manifest outside
-  the repo (`~/tt-model-builds-ad513/manifest-branch-pin-7b4772f.yaml`). `docs/RELEASING.md` now says how to package before a merge.
-* Suite after the fix: 488 passed, 0 failed. Not changed: the published packages were built from the commit pins and are unaffected.
-
-### 2026-10-14 — full-clip LoRA GIFs for the docs
-**Prompt.** "we don't have any examples ... of the full animated GIF of a LoRA production, just the jpg contact sheets. Make one for:
-'the suspension bridge at iguazu falls'", then "these are great ... these will go well in the repo and on the site".
-* Rendered through the staged v0.13.1 container image (`full` profile, `pixel` variant), 16 frames, 25 steps, seeds 11/22/33, each
-  with a no-LoRA twin. The user kept 11 and 33 and dropped 22 before the push. Seed 11 shows a bridge; seed 33 shows the falls with no
-  clear bridge, which the captions say.
-* A shared-palette re-encode saved about 10% and moved pixels by a mean of 3.6-5.3 of 255, and lossless optimisation saved nothing, so
-  the GIFs are the server's bytes. Four files, about 12 MB, in git history once pushed (the commit was rewritten before the push so seed 22 never entered it).
-* Process slips: my launcher waited for all four chips to be free while another agent held two, so the render sat for several minutes;
-  `gozer run` queued with exit 10 although board 0 was free, and `gozer wait <ticket>` granted it. `git add` was by explicit path.
+**Measuring.**
+* Phase 2.5, 8 frames, 512x512, 25 steps, one chip: about 15.5 s warm (1.94 s/frame). A fresh `generate.py`
+  process takes about 21 s because the first call warms up. The older ~100 s figure was stale. The sharding
+  timings (16 frames ~86 s and others) rest on that stale baseline and were not re-measured.
+* A timing taken while other agents load the box is not evidence. A 38 s plain run against a 15.3 s baseline
+  was machine load (load average 7 to 10). Compare under equal load, alternating A and B, and record the load.
+* `benchmark_modes.py` reads `loras` and `motion_adapter` beside `data`, at the top level of `/v1/models`.
+  Its first request is a compile and is excluded from every statistic.
+* A chaining check with the same seed for source, control and chained runs proves nothing, and a pixel
+  difference metric scored the chained runs as less similar while the composition visibly carried over. Use a
+  different seed and look at the frames.
+* The "Pixel Art" words in a prompt ask for a grid. An LCM run with grid lines was the prompt, not the LoRA.

@@ -580,11 +580,20 @@ def generate_frames_temporal(
                     schedulers[i].step(blended_preds[i], t, frame_latents[i], **step_kw).prev_sample
                 )
 
-            # Point 2: latent-space blend after stepping (gentler — 0.4× alpha)
-            stacked_lat = torch.cat(next_latents, dim=0)
-            attended_lat = cross_frame_attention(stacked_lat, alpha=step_alpha * 0.4)
-            for i in range(num_frames):
-                frame_latents[i] = attended_lat[i : i + 1]
+            # Point 2: latent-space blend after stepping (gentler — 0.4× alpha).
+            # Skipped for LCM: its prev_sample carries fresh noise drawn independently per
+            # frame (the _lcm_gens generators), and the next timestep assumes that noise has
+            # unit variance. Pulling frames toward each other averages it, so its std falls
+            # below what the model expects. Point 1 still aligns the frames through the noise
+            # predictions, which carry no injected noise.
+            if use_lcm:
+                for i in range(num_frames):
+                    frame_latents[i] = next_latents[i]
+            else:
+                stacked_lat = torch.cat(next_latents, dim=0)
+                attended_lat = cross_frame_attention(stacked_lat, alpha=step_alpha * 0.4)
+                for i in range(num_frames):
+                    frame_latents[i] = attended_lat[i : i + 1]
         else:
             # PNDM: attend on noise_preds before stepping. PNDM uses a multi-step
             # error accumulation buffer (ets) that would desync if we modified
