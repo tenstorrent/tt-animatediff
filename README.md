@@ -554,7 +554,7 @@ application plugin, or Python library — see
 
 ## Changelog
 
-### v0.13.2 — unreleased (review fixes on PR #15, round 3)
+### v0.13.2 — 2026-10-15 (review fixes on PR #15, round 3)
 - **CLI honours an LCM `--lora`.** `--lora latent-consistency/lcm-lora-sdv1-5:...` or `--lora ./x.safetensors#lcm` now
   samples with LCM at 4 steps and guidance 1.5, the same decision the server makes (`variant_is_lcm`). Before, only
   `--lcm-lora` did, so the file merged and the run used PNDM at 25 steps. `--lora` help documents `#lcm`.
@@ -569,7 +569,7 @@ application plugin, or Python library — see
 - **Chains are evicted by use.** Continuing from a chain refreshes it, so a chain clients keep using survives newer saves.
 - **Doc comment on `preview` is back on the `preview` field** in `VideoGenerationRequest`.
 
-### v0.13.1 — unreleased (review fixes on PR #15)
+### v0.13.1 — 2026-10-15 (review fixes on PR #15)
 - **Full-clip LoRA examples.** `docs/LORA.md` and `docs/features.html` now show complete 16-frame GIFs, with and without the
   pixel art LoRA, for two seeds of "the suspension bridge at iguazu falls". Before, only JPG contact sheets were there.
 - **Manifest pin back at the release tag.** `tt_model_package.yaml` carried a branch commit as `extra_code.ref`, which
@@ -591,7 +591,7 @@ application plugin, or Python library — see
 - The published container package `episod/tt-animatediff-container-v5.1` is built from `fb9ef60` (0.13.0) and has none
   of these fixes until it is repackaged.
 
-### v0.13.0 — unreleased
+### v0.13.0 — 2026-10-15
 - **Phase 2.5 timings on the site match the model card.** `docs/index.html`, `usage.html` and `benchmarks.html` still
   showed ~12.5 s/frame and ~100 s per 8-frame clip, which the model card had already marked 6.4x too slow. They now
   say ~1.94 s/frame (~15.5 s warm) and ~0.82 s/frame at 8 steps. One process measured on 2026-10-14: the first
@@ -630,13 +630,13 @@ application plugin, or Python library — see
 - **The container image now installs `peft`.** It was in `requirements.txt` but not in
   `tt_model_package.yaml` or its lock, so every LoRA request in a container would have failed.
 
-### v0.12.1 — unreleased
+### v0.12.1 — 2026-10-15
 - Review fixes for `--lora` (PR #15). A LoRA scale of `inf` or `nan` (for example `@1e999`) is
   rejected instead of being fused into every targeted weight. `~` in a local LoRA path is
   expanded. Counting changed tensors snapshots only the layers a LoRA targets, not the whole
   UNet. `merge_loras` now has unit tests for its UNet path.
 
-### v0.12.0 — unreleased
+### v0.12.0 — 2026-10-15
 - **Style LoRA support** (`--lora SOURCE[:FILE][@SCALE]`). Stable Diffusion 1.x kohya-format LoRAs
   are merged into the CPU UNet and CLIP text encoder before TTNN preprocessing, so the device runs
   ordinary weights: under a second at load, nothing per frame (2.3 s/frame warm, with and without).
@@ -644,7 +644,7 @@ application plugin, or Python library — see
   LoRAs for other base models raise `ValueError`; the guoyww motion LoRAs are not supported.
   See [docs/LORA.md](docs/LORA.md). Adds `peft` to the requirements.
 
-### v0.11.2 — unreleased
+### v0.11.2 — 2026-10-15
 - `load_motion_modules()` (the Phase 3 CLI path) takes its default adapter repo from
   `weights_pins.MOTION_ADAPTER_REPO` instead of a copied string, so the default and the pin
   table cannot drift apart. `tests/test_weights_pins.py` checks the wiring. Served output is
@@ -664,7 +664,7 @@ application plugin, or Python library — see
   server loaded. `tests/test_weights_pins.py` sweeps the package source and fails on any
   hub load without a `revision=`.
 
-### v0.11.0 — unreleased
+### v0.11.0 — 2026-10-15
 - **Servable by tt-model-manager** — new `animatediff_ttnn/server/app.py` (FastAPI/uvicorn)
   and a `tt_model_package.yaml` manifest for the `tt-dit-server` kind. `POST
   /v1/videos/generations` mirrors tt-media-server's shape, plus `GET /v1/models` and two
