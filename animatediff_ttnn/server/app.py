@@ -28,7 +28,17 @@ ENVIRONMENT, set by the launcher
 ``ANIMATEDIFF_MESH_SHAPE`` the resolved shape, e.g. ``1x4`` (the manifest points
                            ``runtime.mesh_shape_env`` at this name; the kind's default is
                            FLUX.2's, which means nothing to this model)
+``ANIMATEDIFF_MOTION_ADAPTER`` optional: ``default`` or a MotionAdapter repo id / local path. When
+                           set, the adapter is loaded at startup and requests may use
+                           ``"motion_adapter": true`` (Phase 3 temporal attention). Unset means such
+                           requests are refused with a 400.
 ``HF_MODEL``               the weights repo id, reported by ``/v1/models``
+``ANIMATEDIFF_LORAS``      optional JSON object ``{"name": "SOURCE[:FILE][@SCALE][#lcm]", ...}``; each
+                           entry becomes a resident LoRA variant a request can select with
+                           ``"lora": "name"``. A value may also be a list of specs, which
+                           are stacked. ``#lcm`` marks a local copy of an LCM-LoRA so the variant
+                           samples with LCM (the published repo is recognised without it). Unset
+                           means no variants. See ``lora_catalog_from_env``.
 
 ONE REQUEST AT A TIME
 ---------------------
@@ -45,17 +55,37 @@ import asyncio
 import base64
 import io
 import os
+import hashlib
+import re
+import shutil
+import tempfile
+import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from animatediff_ttnn.weights_pins import LCM_ORIGINAL_STEPS
 
 #: The env var carrying the resolved mesh shape. Named for THIS model: the kind's default
 #: is ``FLUX2_MESH_SHAPE``, which is the default only because FLUX.2 is what it was built
 #: for. A manifest serving this app sets ``runtime.mesh_shape_env`` to the name below.
 MESH_SHAPE_ENV = "ANIMATEDIFF_MESH_SHAPE"
+
+#: The env var carrying the LoRA catalog: the only way a LoRA reaches this server.
+LORAS_ENV = "ANIMATEDIFF_LORAS"
+
+#: The env var that turns on Phase 3 (MotionAdapter) requests. Loaded at startup only.
+MOTION_ADAPTER_ENV = "ANIMATEDIFF_MOTION_ADAPTER"
+
+#: Injection points a request may skip (see motion_weights.py).
+MotionKey = Literal["down0", "down1", "down2", "mid", "up0", "up1", "up2"]
+
+#: What an LCM variant uses when the request leaves steps / guidance_scale out.
+LCM_DEFAULT_STEPS = 4
+LCM_DEFAULT_GUIDANCE = 1.5
 
 #: Frames per second baked into the returned GIF.
 DEFAULT_FPS = 8
@@ -65,6 +95,140 @@ DEFAULT_FPS = 8
 #: 64x64 latent, and 64 * 8 = 512. Named rather than repeated so the request model, the
 #: error message and any future widening all move together.
 SERVABLE_SIZE = 512
+
+
+class PreviewStore:
+    """Progress and the latest preview frame of the generation in flight.
+
+    Written from the worker thread that runs the denoise loop and read from the event loop by
+    ``GET /v1/videos/preview``. It holds only plain values behind its own small lock, never
+    the device lock: the endpoint must answer while a generation holds the device, the same
+    rule ``/tt-liveness`` follows. A reader that waited on the device would show a frozen
+    preview for exactly as long as the work it is meant to show.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._dir = tempfile.mkdtemp(prefix="tt-animatediff-preview-")
+        #: Where ``make_step_callback`` writes the rolling GIF (atomically, so a read never
+        #: sees half a file).
+        self.path = os.path.join(self._dir, "preview.gif")
+        self._state = {"step": 0, "total": 0, "gif_b64": None, "running": False, "request_id": None}
+
+    def begin(self, total: int, request_id: Optional[str] = None) -> None:
+        """Reset for a new request: a stale frame from the last one must not show.
+
+        ``request_id`` is the caller's own name for the request. The store holds one preview, and
+        requests queue on the device lock, so without it a client cannot tell its generation's
+        preview from another client's. It is replaced, not kept, when the next request begins.
+        """
+        with self._lock:
+            self._state = {"step": 0, "total": total, "gif_b64": None, "running": True,
+                           "request_id": request_id}
+
+    def step(self, step: int, total: int) -> None:
+        with self._lock:
+            self._state.update(step=step, total=total)
+
+    def publish(self, line: str) -> None:
+        """``emit`` for ``make_step_callback``: read the GIF it just wrote and keep it.
+
+        Reading here, in the worker thread, keeps the endpoint a pure memory read. Any failure
+        leaves the previous frame in place: a lost preview must not fail the generation.
+        """
+        from animatediff_ttnn.preview import parse_preview_line
+
+        parsed = parse_preview_line(line)
+        if parsed is None:
+            return
+        step, total, path = parsed
+        try:
+            with open(path, "rb") as fh:
+                gif = base64.b64encode(fh.read()).decode("ascii")
+        except OSError:
+            return
+        with self._lock:
+            self._state.update(step=step, total=total, gif_b64=gif)
+
+    def end(self) -> None:
+        with self._lock:
+            self._state["running"] = False
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return dict(self._state)
+
+    def close(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+
+def _step_callback(preview: "PreviewStore", req: "VideoGenerationRequest", steps: int):
+    """The ``on_step`` hook for one request: always count steps, render GIFs only if asked."""
+    render = None
+    if req.preview:
+        from animatediff_ttnn.preview import make_step_callback
+
+        render = make_step_callback(preview.path, steps, every=req.preview_every, emit=preview.publish)
+
+    def on_step(step_idx: int, total: int, frame_latents) -> None:
+        # 1-based, to match the PREVIEW line and what a progress bar shows.
+        preview.step(step_idx + 1, total)
+        if render is not None:
+            render(step_idx, total, frame_latents)
+
+    return on_step
+
+
+class ChainStore:
+    """Server-owned storage for chained generations ("continue from the last result").
+
+    The CLI takes file paths for ``--chain-save`` / ``--chain-from``. A server cannot take a
+    caller's path, so a request names a chain instead, and this store maps the name to a file in
+    a directory the server created. The file name is a hash of the name, so no name can point
+    outside it. At most ``MAX_CHAINS`` are kept (least recently used evicted: a save or a use
+    through ``touch`` counts), and all of them are lost when the
+    server stops: a chain is a convenience for the next request, not a store of record.
+    """
+
+    MAX_CHAINS = 32
+
+    def __init__(self):
+        self._dir = tempfile.mkdtemp(prefix="tt-animatediff-chains-")
+
+    def path(self, name: str) -> str:
+        return os.path.join(self._dir, hashlib.sha256(name.encode()).hexdigest()[:32] + ".pt")
+
+    def has(self, name: str) -> bool:
+        return os.path.isfile(self.path(name))
+
+    def touch(self, name: str) -> None:
+        """Mark a chain as just used, so ``prune`` evicts by use and not only by save time."""
+        try:
+            os.utime(self.path(name))
+        except OSError:
+            pass
+
+    def prune(self) -> None:
+        """Drop the least recently used chains beyond ``MAX_CHAINS`` (by file mtime)."""
+        try:
+            files = sorted(
+                (os.path.join(self._dir, f) for f in os.listdir(self._dir)),
+                key=os.path.getmtime,
+            )
+            for stale in files[: max(0, len(files) - self.MAX_CHAINS)]:
+                os.unlink(stale)
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+
+class PromptKeyframe(BaseModel):
+    """One keyframe of a prompt schedule ("prompt travel"): frame index and the prompt there."""
+
+    frame: int = Field(ge=0)
+    prompt: str = Field(min_length=1)
 
 
 class VideoGenerationRequest(BaseModel):
@@ -82,6 +246,44 @@ class VideoGenerationRequest(BaseModel):
     num_inference_steps: int = Field(default=25, ge=1, le=100)
     guidance_scale: float = Field(default=7.5, ge=0.0, le=20.0)
     seed: int = 42
+    #: Name of a LoRA variant from the operator's catalog (``ANIMATEDIFF_LORAS``). Omit for
+    #: the plain model. A name, never a repo id or a path: the operator decides which files
+    #: this server will load, so a caller cannot make it fetch or open one.
+    lora: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    #: Sampler for the plain model: ``pndm`` (default) or ``euler`` (what the CLI calls
+    #: ``--lightning``; the base UNet with an Euler schedule, no distilled weights). An LCM
+    #: variant always samples with LCM, so naming a sampler with one is refused.
+    sampler: Optional[Literal["pndm", "euler"]] = None
+    #: Chaining: ``chain_save`` stores this run's final latents under a name; a later request's
+    #: ``chain_from`` blends them into its starting noise at ``chain_alpha``, so the new prompt
+    #: inherits the old composition. Names, never paths; see ChainStore.
+    chain_save: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    chain_from: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    chain_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    #: Phase 3: inject the MotionAdapter's temporal attention (needs the operator to set
+    #: ANIMATEDIFF_MOTION_ADAPTER). Far slower than the default: about 52 s per frame measured
+    #: on a 4-chip box, so an 8-frame request takes several minutes.
+    motion_adapter: bool = False
+    motion_adapter_alpha: float = Field(default=1.0, ge=0.0, le=1.0)
+    motion_adapter_skip: List[MotionKey] = Field(default_factory=list)
+    #: Render a rolling preview GIF of the in-flight latents, readable from
+    #: ``GET /v1/videos/preview`` while this request runs. Off by default: the step counter
+    #: there is always kept (it is free), but each GIF is a CPU render and export between
+    #: denoise steps, which is time the device spends waiting.
+    preview: bool = False
+    #: The caller's name for this request, echoed by ``GET /v1/videos/preview`` while the request
+    #: runs, so a client sharing the server with others can tell whose preview it is looking at.
+    #: Opaque to the server; any unique string works.
+    request_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    #: Render a preview every Nth step (the last step always renders). Omit for the library
+    #: default: every step on a run of 10 steps or fewer, every other step beyond that. Each
+    #: render added about 0.4 s on one Blackhole chip, so a larger value trades preview
+    #: smoothness for generation time.
+    preview_every: Optional[int] = Field(default=None, ge=1, le=100)
+    #: Keyframe prompts interpolated across the frames ("prompt travel"). ``prompt`` stays
+    #: required and is what the schedule falls back to for a frame between none; at least
+    #: two keyframes are needed for anything to travel.
+    prompt_schedule: Optional[List[PromptKeyframe]] = Field(default=None, min_length=1, max_length=16)
     # 0.35, because that is what the rest of the project calibrated: generate_animation(),
     # hf/pipeline.py AND generate_frames_temporal -- the function this server calls -- all
     # use it. This said 0.5, which matched none of them, so an HTTP client omitting the
@@ -107,6 +309,17 @@ class VideoGenerationRequest(BaseModel):
     #: no store for, and a bundle that returns links to a path the consumer cannot read is
     #: worse than one that returns bytes.
     response_format: str = "b64_json"
+
+    @model_validator(mode="after")
+    def _keyframes_fall_inside_the_clip(self):
+        # A keyframe past the last frame would be silently ignored by the interpolator;
+        # refuse it where the caller can see why.
+        for kf in self.prompt_schedule or ():
+            if kf.frame >= self.num_frames:
+                raise ValueError(
+                    f"prompt_schedule frame {kf.frame} is outside the clip (num_frames={self.num_frames})"
+                )
+        return self
 
 
 class VideoData(BaseModel):
@@ -152,6 +365,96 @@ def mesh_shape_from_env(env: Optional[dict] = None) -> tuple:
             f"would claim every chip on the box and still fail in the lifespan."
         )
     return (rows, cols)
+
+
+_LORA_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def lora_catalog_from_env(env: Optional[dict] = None) -> dict:
+    """Parse ``ANIMATEDIFF_LORAS`` into ``{name: [LoraSpec, ...]}``.
+
+    Unset or empty is an empty catalog. Anything malformed RAISES, for the same reason
+    ``mesh_shape_from_env`` does: a server that quietly dropped a LoRA would come up healthy
+    and then answer a request for it with the plain model's pictures. Raising happens
+    before the device is opened, so a typo costs nothing.
+
+    The value is a JSON object. Each value is one spec string or a list of them (stacked, in
+    order), in the CLI form ``SOURCE[:FILE][@SCALE][#lcm]``. ``base`` is refused as a name only
+    because it reads like the plain model; omit ``lora`` to get that.
+    """
+    import json
+
+    from animatediff_ttnn.lora import parse_lora_spec
+
+    raw = (env if env is not None else os.environ).get(LORAS_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"{LORAS_ENV} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f'{LORAS_ENV} must be a JSON object like {{"name": "repo:file.safetensors@0.8"}}')
+    catalog = {}
+    for name, value in data.items():
+        if not _LORA_NAME.match(name) or name == "base":
+            raise ValueError(f"{LORAS_ENV}: {name!r} is not a usable LoRA name (letters, digits, . _ -; not 'base')")
+        texts = [value] if isinstance(value, str) else value
+        if not isinstance(texts, list) or not texts or not all(isinstance(t, str) for t in texts):
+            raise ValueError(f"{LORAS_ENV}: {name!r} must be a spec string or a non-empty list of them")
+        catalog[name] = [parse_lora_spec(t) for t in texts]
+    return catalog
+
+
+def check_lora_catalog(catalog: dict) -> None:
+    """Header-check every file in the catalog. Blocking; run it BEFORE the device opens.
+
+    ``lora_catalog_from_env`` only validates spec syntax. This resolves each file (a Hub
+    download or a local path), reads its safetensors header and refuses what cannot merge into
+    SD 1.x: an SDXL, LoHa or DoRA file, a missing path, a name that is not ``.safetensors``.
+    The same checks ran inside ``_load_lora_variants``, but only after the mesh was open and
+    the plain UNet built (minutes on a cold cache); here a bad catalog fails in milliseconds
+    and the error names the catalog entry.
+    """
+    from animatediff_ttnn.lora import _resolve_file, check_lora_compatible, inspect_lora
+
+    for name, specs in catalog.items():
+        for spec in specs:
+            try:
+                check_lora_compatible(inspect_lora(_resolve_file(spec)))
+            except (ValueError, FileNotFoundError) as exc:
+                raise ValueError(f"{LORAS_ENV}: {name!r}: {exc}") from exc
+
+
+def _load_lora_variants(device, models: tuple, catalog: dict) -> dict:
+    """Build one resident model set per catalog entry, next to the plain ``models``.
+
+    Blocking, hardware, lifespan-only. Each variant costs a UNet's weights on the device
+    (the VAE is shared), and no more compile time than the plain model, because the kernels
+    are keyed on shapes. A bad file raises here, at startup, which is where a readiness
+    probe wants the failure: ``merge_loras`` rejects wrong-base and unsupported files before
+    it loads anything.
+    """
+    from animatediff_ttnn.generation_helpers import load_sd14_variant
+
+    vae = models[1]
+    return {name: load_sd14_variant(device, specs, vae) for name, specs in catalog.items()}
+
+
+def motion_adapter_from_env(env: Optional[dict] = None) -> Optional[str]:
+    """``ANIMATEDIFF_MOTION_ADAPTER`` as a repo id or path, or None when unset.
+
+    ``default`` means the pinned adapter this package already names. Anything else is the
+    operator's own choice of repo or directory, the same trust as the LoRA catalog.
+    """
+    raw = (env if env is not None else os.environ).get(MOTION_ADAPTER_ENV, "").strip()
+    if not raw:
+        return None
+    if raw.lower() in ("default", "1", "true"):
+        from animatediff_ttnn.weights_pins import MOTION_ADAPTER_REPO
+
+        return MOTION_ADAPTER_REPO
+    return raw
 
 
 def _open_device_and_models(shape: tuple) -> tuple:
@@ -219,27 +522,126 @@ def _frames_to_gif_b64(frames: List[Any], fps: int = DEFAULT_FPS) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def request_conflicts(req: VideoGenerationRequest, engine: dict) -> Optional[str]:
+    """The reason ``req`` cannot run on this server, or None. Checked before the device lock.
+
+    These are combinations the pydantic model cannot see because they depend on what the
+    operator configured. Refusing here costs nothing; finding out inside the denoise loop would
+    hold the one device to fail.
+    """
+    variants = engine.get("variants", {})
+    if req.lora is not None and req.lora not in variants:
+        available = sorted(variants)
+        return (f"unknown lora {req.lora!r}; this server offers "
+                f"{available if available else 'none (ANIMATEDIFF_LORAS is not set)'}")
+    lcm = bool(req.lora and variants[req.lora].lcm)
+    if lcm and req.sampler is not None:
+        return f"lora {req.lora!r} includes the LCM-LoRA and always samples with LCM; omit sampler"
+    if req.motion_adapter:
+        if engine.get("motion_kernels") is None:
+            return f"motion_adapter is not enabled on this server ({MOTION_ADAPTER_ENV} is not set)"
+        if lcm:
+            return "motion_adapter cannot be combined with an LCM variant (the Phase 3 loop has no LCM sampler)"
+    elif req.motion_adapter_skip or "motion_adapter_alpha" in req.model_fields_set:
+        return "motion_adapter_alpha / motion_adapter_skip need motion_adapter: true"
+    if lcm:
+        # The scheduler refuses more steps than the schedule the LoRA was distilled on, and it does
+        # so inside the denoise loop, after the request has taken the device lock. A request that
+        # sends no step count gets LCM_DEFAULT_STEPS instead of the model default.
+        steps = req.num_inference_steps if "num_inference_steps" in req.model_fields_set else LCM_DEFAULT_STEPS
+        if steps > LCM_ORIGINAL_STEPS:
+            return (f"lora {req.lora!r} samples with LCM, which allows at most {LCM_ORIGINAL_STEPS} "
+                    f"steps; got {steps}")
+    return chain_conflict(req, engine)
+
+
+def chain_conflict(req: VideoGenerationRequest, engine: dict) -> Optional[str]:
+    """The reason ``req.chain_from`` cannot be used, or None.
+
+    Checked twice: early, so a refusal never queues, and again under the device lock, because a
+    generation running ahead of this request can save another chain and prune this one's source
+    while it waits. ``chain_blend_seed`` ignores a missing file, so without the second check the
+    request would return 200 without the continuity it asked for.
+    """
+    if req.chain_from is not None:
+        chains = engine.get("chains")
+        if chains is None or not chains.has(req.chain_from):
+            return f"unknown chain {req.chain_from!r}; save one first with chain_save"
+    return None
+
+
 def _generate(state: dict, req: VideoGenerationRequest) -> List[Any]:
     """Run the denoise loop. Blocking; called in a worker thread under the device lock."""
     from animatediff_ttnn.generation_helpers import encode_prompt
     from animatediff_ttnn.temporal_attention import generate_frames_temporal
 
-    ttnn_model, ttnn_vae, config, torch_time_proj = state["models"]
-    return generate_frames_temporal(
+    variant = state.get("variants", {}).get(req.lora) if req.lora else None
+    # A variant brings its own text encoder: its UNet and encoder were merged together.
+    models, clip = (variant.models, variant.clip) if variant else (state["models"], None)
+    ttnn_model, ttnn_vae, config, torch_time_proj = models
+    use_lcm = bool(variant and variant.lcm)
+    steps, guidance = req.num_inference_steps, req.guidance_scale
+    if use_lcm:
+        # An LCM variant is a 2-8 step, low-guidance model; the request defaults (25, 7.5)
+        # would waste time and oversaturate it. Only fields the caller did not send change.
+        if "num_inference_steps" not in req.model_fields_set:
+            steps = LCM_DEFAULT_STEPS
+        if "guidance_scale" not in req.model_fields_set:
+            guidance = LCM_DEFAULT_GUIDANCE
+
+    embeddings = encode_prompt(req.prompt, req.negative_prompt, clip=clip)
+    per_frame = None
+    if req.prompt_schedule:
+        per_frame = encode_prompt(
+            req.prompt, req.negative_prompt, clip=clip,
+            prompt_schedule=[(kf.frame, kf.prompt) for kf in req.prompt_schedule],
+            num_frames=req.num_frames,
+        )
+    preview = state.get("preview")
+    on_step = _step_callback(preview, req, steps) if preview is not None else None
+    if preview is not None:
+        preview.begin(steps, req.request_id)
+    chains = state.get("chains")
+    if chains is not None and req.chain_from:
+        # A chain that clients keep using must not be evicted for being old: pruning goes by mtime.
+        chains.touch(req.chain_from)
+    common = dict(
         device=state["device"],
         ttnn_model=ttnn_model,
         ttnn_vae=ttnn_vae,
         config=config,
         torch_time_proj=torch_time_proj,
-        text_embeddings=encode_prompt(req.prompt, req.negative_prompt),
+        text_embeddings=embeddings,
+        text_embeddings_per_frame=per_frame,
         num_frames=req.num_frames,
-        num_steps=req.num_inference_steps,
-        guidance_scale=req.guidance_scale,
+        num_steps=steps,
+        guidance_scale=guidance,
         seed=req.seed,
         temporal_alpha=req.temporal_alpha,
+        use_lightning=req.sampler == "euler",
+        chain_from=chains.path(req.chain_from) if chains and req.chain_from else None,
+        chain_save=chains.path(req.chain_save) if chains and req.chain_save else None,
+        chain_alpha=req.chain_alpha,
+        on_step=on_step,
         height=req.height,
         width=req.width,
     )
+    try:
+        if req.motion_adapter:
+            from animatediff_ttnn.temporal_attention import generate_frames_motion
+
+            return generate_frames_motion(
+                temporal_kernels=state["motion_kernels"],
+                injection_alpha=req.motion_adapter_alpha,
+                skip_keys=set(req.motion_adapter_skip),
+                **common,
+            )
+        return generate_frames_temporal(use_lcm=use_lcm, **common)
+    finally:
+        if chains is not None and req.chain_save:
+            chains.prune()
+        if preview is not None:
+            preview.end()
 
 
 @asynccontextmanager
@@ -252,9 +654,27 @@ async def lifespan(app: FastAPI):
     would answer /health cheerfully and fail every generation.
     """
     shape = mesh_shape_from_env()
+    # Parsed and header-checked before the device opens: a bad catalog should cost nothing.
+    catalog = lora_catalog_from_env()
+    await asyncio.to_thread(check_lora_catalog, catalog)
     device, models = await asyncio.to_thread(_open_device_and_models, shape)
+    motion_spec = motion_adapter_from_env()
+    try:
+        variants = await asyncio.to_thread(_load_lora_variants, device, models, catalog) if catalog else {}
+        motion_kernels = None
+        if motion_spec:
+            from animatediff_ttnn.motion_weights import load_motion_modules
+
+            motion_kernels = await asyncio.to_thread(load_motion_modules, motion_spec)
+    except BaseException:
+        # Same rollback _open_device_and_models does: a failed start must not keep a chip.
+        _close_device(device)
+        raise
+    preview = PreviewStore()
+    chains = ChainStore()
     app.state.engine = {
-        "device": device, "models": models, "mesh_shape": shape,
+        "device": device, "models": models, "variants": variants, "mesh_shape": shape,
+        "preview": preview, "chains": chains, "motion_kernels": motion_kernels,
         "hf_model": os.environ.get("HF_MODEL", "unknown"),
         "mesh_device": os.environ.get("MESH_DEVICE", "unknown"),
     }
@@ -262,6 +682,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        preview.close()
+        chains.close()
         # Let ttnn close the mesh itself. Bypassing its teardown is what triggers an abort
         # in MetalContext::destroy_all_instances.
         try:
@@ -326,12 +748,35 @@ async def health() -> dict:
     return {}
 
 
+@app.get("/v1/videos/preview")
+async def videos_preview() -> dict:
+    """Progress and latest preview frame of the generation in flight.
+
+    ``{"step": n, "total": N, "gif_b64": "<base64 GIF>" | null, "running": bool,
+    "request_id": str | null}``. ``request_id`` is the one the running (or last finished)
+    request sent, so a client that shares the server can ignore previews that are not its own.
+    ``step`` is 1-based. ``gif_b64`` is null until a request sent ``"preview": true`` has produced a
+    frame, and is reset at the start of each request. Never blocks on the device lock, so it
+    answers while a generation holds the device; it is a memory read behind a tiny lock.
+    Always 200, including before the model is ready (all zeros, not running): a poller
+    should not need to tell "starting" from "idle".
+    """
+    preview = (getattr(app.state, "engine", None) or {}).get("preview")
+    if preview is None:
+        return {"step": 0, "total": 0, "gif_b64": None, "running": False, "request_id": None}
+    return preview.snapshot()
+
+
 @app.get("/v1/models")
 async def models() -> dict:
     engine = getattr(app.state, "engine", None)
     name = (engine or {}).get("hf_model", "unknown")
     return {"object": "list", "data": [{"id": name, "object": "model",
-                                        "owned_by": "tenstorrent"}]}
+                                        "owned_by": "tenstorrent"}],
+            # The names a request may pass as "lora"; empty when the operator set none.
+            "loras": sorted((engine or {}).get("variants", {})),
+            # What a client may ask for beyond the always-on features.
+            "motion_adapter": (engine or {}).get("motion_kernels") is not None}
 
 
 @app.post("/v1/videos/generations", response_model=VideoGenerationResponse)
@@ -339,6 +784,10 @@ async def videos_generations(req: VideoGenerationRequest) -> VideoGenerationResp
     engine = getattr(app.state, "engine", None)
     if engine is None:
         raise HTTPException(status_code=503, detail="model is still starting")
+    conflict = request_conflicts(req, engine)
+    if conflict is not None:
+        # 400, and before the device lock: a refusal must not queue behind a generation.
+        raise HTTPException(status_code=400, detail=conflict)
     if req.response_format != "b64_json":
         raise HTTPException(
             status_code=400,
@@ -347,6 +796,9 @@ async def videos_generations(req: VideoGenerationRequest) -> VideoGenerationResp
         )
     # One denoise loop at a time: the pipeline owns the device.
     async with app.state.device_lock:
+        gone = chain_conflict(req, engine)
+        if gone is not None:
+            raise HTTPException(status_code=400, detail=gone)
         frames = await asyncio.to_thread(_generate, engine, req)
     # Off the loop as well, and NOT because it is slow in absolute terms: PIL's GIF
     # palette quantization plus base64 of a multi-MB payload is seconds of pure CPU, and

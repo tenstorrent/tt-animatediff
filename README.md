@@ -39,6 +39,18 @@ See the [full 10-prompt gallery](https://tenstorrent.github.io/tt-animatediff/ga
 
 ## Quick Start
 
+The recommended way to run the model on Blackhole is `tt-model serve`. It needs no tt-metal build on the host:
+
+```bash
+tt-model serve episod/tt-animatediff-container-v5.1             # full profile: LoRA catalog + motion adapter
+tt-model serve episod/tt-animatediff-container-v5.1 --profile plain
+curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+  -d '{"prompt": "ocean waves at sunset, cinematic", "num_frames": 8}'
+```
+
+An 8-frame 512x512 clip at 25 steps takes about 15 s warm. See `docs/features.html` for every request field.
+The scripts below are for development and for the CPU and simulator modes.
+
 ```bash
 pip install -r requirements.txt
 hf download CompVis/stable-diffusion-v1-4
@@ -125,6 +137,21 @@ Rebuild and republish with `scripts/build_hf_artifact.py` (model artifact),
 on the Hub.
 
 ---
+
+## LoRA styles
+
+Merge a Stable Diffusion style LoRA into the model at load time, with no per-frame cost:
+
+```bash
+python examples/generate.py \
+  --prompt "storybook anime illustration, a moonlit crypt beneath a drowned chapel, ghostly mist" \
+  --lora "neonforestmist/sd15-storybook-anime-lora:storybook_anime_lora.safetensors@0.85"
+```
+
+![Crypt: no LoRA, pixel art, storybook anime, both stacked](docs/assets/lora/crypt-base-pixel-anime-stacked.jpg)
+
+Rows: no LoRA, pixel art, storybook anime, both stacked. Same prompt and seed throughout.
+What loads, what does not, and the measurements are in [docs/LORA.md](docs/LORA.md).
 
 ## Lightning Mode
 
@@ -527,7 +554,97 @@ application plugin, or Python library — see
 
 ## Changelog
 
-### v0.11.2 — unreleased
+### v0.13.2 — 2026-10-15 (review fixes on PR #15, round 3)
+- **CLI honours an LCM `--lora`.** `--lora latent-consistency/lcm-lora-sdv1-5:...` or `--lora ./x.safetensors#lcm` now
+  samples with LCM at 4 steps and guidance 1.5, the same decision the server makes (`variant_is_lcm`). Before, only
+  `--lcm-lora` did, so the file merged and the run used PNDM at 25 steps. `--lora` help documents `#lcm`.
+- **Catalog files are checked before the device opens.** The server reads each `ANIMATEDIFF_LORAS` file's header
+  (SDXL, LoHa, DoRA, missing path, wrong extension) in the lifespan before it claims the mesh. Before, a bad file failed
+  minutes into startup, after the plain UNet was built.
+- **LCM no longer blends latents after each step.** LCM's `prev_sample` carries fresh per-frame noise, and the post-step
+  cross-frame blend averaged it away. On one chip, three seeds, 8 frames, 4 steps: detail (Laplacian variance) rose in two
+  of three seeds (488 to 878, 455 to 748, 620 to 610) and frame-to-frame change rose 30 to 60%.
+- **A UNet-only variant shares the plain text encoder.** A catalog entry whose files carry no `lora_te_*` keys no longer
+  loads its own ~0.5 GB CLIP copy.
+- **Chains are evicted by use.** Continuing from a chain refreshes it, so a chain clients keep using survives newer saves.
+- **Doc comment on `preview` is back on the `preview` field** in `VideoGenerationRequest`.
+
+### v0.13.1 — 2026-10-15 (review fixes on PR #15)
+- **Full-clip LoRA examples.** `docs/LORA.md` and `docs/features.html` now show complete 16-frame GIFs, with and without the
+  pixel art LoRA, for two seeds of "the suspension bridge at iguazu falls". Before, only JPG contact sheets were there.
+- **Manifest pin back at the release tag.** `tt_model_package.yaml` carried a branch commit as `extra_code.ref`, which
+  made the `Serving contract` CI job fail: that job compares the pin's tree with main's. The repo's manifest is at
+  `v0.11.2` again; a package built before the merge uses a copy of the manifest with the commit pin (`docs/RELEASING.md`).
+- **Explicit LCM designation.** A catalog entry can end in `#lcm` to mark a local copy of an LCM-LoRA. Before, only the
+  published repo id counted, so a local copy sampled with PNDM at 25 steps and guidance 7.5.
+- **LCM step limit.** An LCM variant with more than 50 steps is a 400 before the device lock. Before, 51-100 passed
+  validation and the scheduler failed inside the loop as a 500. The limit and the scheduler's `original_inference_steps`
+  are one constant, `LCM_ORIGINAL_STEPS`.
+- **Chain recheck under the lock.** A request whose `chain_from` source was pruned while it waited for the device is a
+  400. Before, it returned 200 without the continuity it asked for.
+- **Preview ownership.** `request_id` on the request, echoed as `request_id` by `GET /v1/videos/preview`. The server keeps
+  one preview and requests queue on the device lock, so a client waiting its turn used to be able to show another
+  client's frame as its own (tt-local-generator #29 review). A client now sends a unique id and shows only previews that
+  carry it.
+- **Benchmark script** sends no step count for any LoRA variant, so the server's own defaults decide (25 for a style,
+  4 for LCM) whatever the catalog names are. Results in `docs/LORA.md` are unchanged: they used those defaults.
+- The published container package `episod/tt-animatediff-container-v5.1` is built from `fb9ef60` (0.13.0) and has none
+  of these fixes until it is repackaged.
+
+### v0.13.0 — 2026-10-15
+- **Phase 2.5 timings on the site match the model card.** `docs/index.html`, `usage.html` and `benchmarks.html` still
+  showed ~12.5 s/frame and ~100 s per 8-frame clip, which the model card had already marked 6.4x too slow. They now
+  say ~1.94 s/frame (~15.5 s warm) and ~0.82 s/frame at 8 steps. One process measured on 2026-10-14: the first
+  `generate_animation` call took 28.3 s including model setup, and the next three took 15.6-15.8 s. `generate.py`
+  prints "Done in" of 21-25 s for its one clip because that clip is the first call. The `benchmarks.html` claim that
+  Lightning 8-step and PNDM 25-step take the same time is withdrawn: Phase 2.5 time follows the step count. The
+  16-frame sharding figures there are marked as not re-measured.
+- **tt-model is the primary way to run the model.** The site's top page (`docs/index.html`) now opens with a
+  `tt-model serve episod/tt-animatediff-container-v5.1` section, the usage guide lists it first under Installation,
+  and the README Quick Start leads with it. The command-line scripts are described as the development path.
+- **LoRAs in the served path.** `ANIMATEDIFF_LORAS` defines named variants; a request picks one with
+  `"lora": "name"` at no per-request cost. Variants are resident on the chip and share the VAE. An unknown
+  name is a 400. `GET /v1/models` lists them. `prompt_schedule` is accepted in requests.
+- **The served request now covers the CLI's remaining features:** `sampler` (`euler`), `chain_save` /
+  `chain_from` / `chain_alpha` (named chains held by the server), and `motion_adapter` with
+  `motion_adapter_alpha` / `motion_adapter_skip` (Phase 3; enabled by `ANIMATEDIFF_MOTION_ADAPTER`).
+  Combinations the server cannot honour are a 400 before the device lock. `GET /v1/models` reports
+  `motion_adapter`.
+- **The container package is published** as `episod/tt-animatediff-container-v5.1` (its own repo: the v5.1
+  manifest named `episod/tt-animatediff`, which holds the v6 thin bundle, and a push there would have replaced the
+  thin bundle's manifest and card). Serve it with `tt-model serve episod/tt-animatediff-container-v5.1`. It was run
+  through `tt-model serve` from the Hub copy, and its timings match the first image run.
+- **Every served mode is timed** in `docs/LORA.md` ("Every served mode, timed"), measured through the container
+  image on one chip with `scripts/benchmark_modes.py`. The docs no longer say `tt-model serve --env`: that
+  option does not exist, and the LoRA catalog and `ANIMATEDIFF_MOTION_ADAPTER` go in the package's serve profile. `tt_model_package.yaml` now
+  ships two: `full` (default, the `pixel`, `pixel-fast` and `lcm` catalog plus the motion adapter) and `plain`.
+- **Served previews.** `GET /v1/videos/preview` reports progress and the latest 256x256 preview GIF of the
+  generation in flight, without waiting on the device lock. Request `"preview": true` (and optionally
+  `"preview_every": n`) to render frames; each render costs about 0.4 s on one chip.
+- **`--lcm-lora`** merges `latent-consistency/lcm-lora-sdv1-5` and samples with `LCMScheduler`: 4 steps at
+  guidance 1.5 instead of 25 at 7.5. About 2x end to end on the CLI and 5x served warm (4.2 s against 21.6 s
+  for 8 frames). A served variant that includes it samples this way automatically.
+- **Header pre-check.** `inspect_lora` / `check_lora_compatible` refuse SDXL, LoHa, LoKr, DoRA and
+  unsupported files with a reason before any model loads, and report trigger-word hints.
+- **`scripts/lora_device_check.py`** compares a LoRA's effect on the device with the CPU.
+- **The container image now installs `peft`.** It was in `requirements.txt` but not in
+  `tt_model_package.yaml` or its lock, so every LoRA request in a container would have failed.
+
+### v0.12.1 — 2026-10-15
+- Review fixes for `--lora` (PR #15). A LoRA scale of `inf` or `nan` (for example `@1e999`) is
+  rejected instead of being fused into every targeted weight. `~` in a local LoRA path is
+  expanded. Counting changed tensors snapshots only the layers a LoRA targets, not the whole
+  UNet. `merge_loras` now has unit tests for its UNet path.
+
+### v0.12.0 — 2026-10-15
+- **Style LoRA support** (`--lora SOURCE[:FILE][@SCALE]`). Stable Diffusion 1.x kohya-format LoRAs
+  are merged into the CPU UNet and CLIP text encoder before TTNN preprocessing, so the device runs
+  ordinary weights: under a second at load, nothing per frame (2.3 s/frame warm, with and without).
+  Run on Blackhole with a pixel-art LoRA, a storybook-anime LoRA and both stacked.
+  LoRAs for other base models raise `ValueError`; the guoyww motion LoRAs are not supported.
+  See [docs/LORA.md](docs/LORA.md). Adds `peft` to the requirements.
+
+### v0.11.2 — 2026-10-15
 - `load_motion_modules()` (the Phase 3 CLI path) takes its default adapter repo from
   `weights_pins.MOTION_ADAPTER_REPO` instead of a copied string, so the default and the pin
   table cannot drift apart. `tests/test_weights_pins.py` checks the wiring. Served output is
@@ -547,7 +664,7 @@ application plugin, or Python library — see
   server loaded. `tests/test_weights_pins.py` sweeps the package source and fails on any
   hub load without a `revision=`.
 
-### v0.11.0 — unreleased
+### v0.11.0 — 2026-10-15
 - **Servable by tt-model-manager** — new `animatediff_ttnn/server/app.py` (FastAPI/uvicorn)
   and a `tt_model_package.yaml` manifest for the `tt-dit-server` kind. `POST
   /v1/videos/generations` mirrors tt-media-server's shape, plus `GET /v1/models` and two

@@ -210,6 +210,20 @@
     .alpha-table .hl { color: var(--text2); }
     .alpha-table .hl code { color: var(--teal); font-weight: 700; }
 
+
+    /* ── run with tt-model ── */
+    .run-section { padding: 3rem 2rem; border-bottom: 1px solid var(--border); background: var(--bg1); }
+    .run-inner { max-width: 820px; margin: 0 auto; }
+    .run-inner h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: .5rem; }
+    .run-inner h2 em { color: var(--teal); font-style: normal; }
+    .run-inner p { font-size: .92rem; color: var(--text2); margin-bottom: 1rem; }
+    .run-inner code { color: var(--teal); font-size: .85em; }
+    .run-code { background: var(--bg0); border: 1px solid var(--border); border-radius: 8px; padding: .9rem 1.1rem; font-family: Consolas, 'Courier New', monospace; font-size: .8rem; color: var(--teal); white-space: pre-wrap; overflow-x: auto; margin: .75rem 0 1.25rem; }
+    .run-code .c { color: var(--muted); }
+    .run-facts { display: flex; gap: 1.25rem; flex-wrap: wrap; margin: 0 0 1rem; padding: 0; list-style: none; }
+    .run-facts li { flex: 1 1 200px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .9rem; font-size: .8rem; color: var(--text2); }
+    .run-facts strong { display: block; color: var(--teal); font-size: 1.05rem; }
+
     /* ── footer ── */
     footer { padding: 1.5rem 2rem; text-align: center; border-top: 1px solid rgba(79,209,197,.08); font-size: .72rem; color: var(--muted); }
 
@@ -250,17 +264,42 @@
   <h1>A Cosmic <em>Quick Study</em></h1>
   <p>35 animated GIFs generated on a single Blackhole chip. Each cell in this grid is a Tensix compute node. The ones that glow ran the model.</p>
   <div class="hero-links">
-    <a class="btn btn-primary" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
+    <a class="btn btn-primary" href="#run">Run with tt-model →</a>
+    <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff">GitHub →</a>
     <a class="btn btn-ghost" href="gallery.html">Gallery →</a>
     <a class="btn btn-ghost" href="worlds-fair.html">World's Fair →</a>
     <a class="btn btn-ghost" href="mayan-glyphs.html">Maya Glyphs →</a>
     <a class="btn btn-ghost" href="#lightning">⚡ Lightning Mode</a>
     <a class="btn btn-ghost" href="https://github.com/tenstorrent/tt-animatediff#prompt-guide">Prompt Guide</a>
     <a class="btn btn-ghost" href="usage.html">Usage Guide →</a>
+    <a class="btn btn-ghost" href="features.html">Features →</a>
   </div>
   <div class="hero-related">
     <a href="https://docs.tenstorrent.com/tt-local-generator/">Generate art locally with AnimateDiff and tt-local-generator →</a>
     <a href="https://docs.tenstorrent.com/tt-vscode-toolkit/">Learn how to make models like AnimateDiff work on your hardware with tt-vscode-toolkit →</a>
+  </div>
+</section>
+
+<section class="run-section" id="run">
+  <div class="run-inner">
+    <span class="section-label">The way to run it</span>
+    <h2>Serve it with <em>tt-model</em></h2>
+    <p>The model is published as a container package. <code>tt-model serve</code> pulls the image and the code, downloads the weights, opens the chip and answers HTTP requests. There is no tt-metal build and no Python environment to set up.</p>
+    <div class="run-code"><span class="c"># start the server (default profile: LoRA catalog and motion adapter included)</span>
+tt-model serve episod/tt-animatediff-container-v5.1
+
+<span class="c"># ask for an 8-frame loop; the response holds a base64 GIF</span>
+curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+  -d '{"prompt": "a moonlit crypt beneath a drowned chapel, ghostly mist", "num_frames": 8}'
+
+<span class="c"># the same image without the LoRA catalog and motion adapter</span>
+tt-model serve episod/tt-animatediff-container-v5.1 --profile plain</div>
+    <ul class="run-facts">
+      <li><strong>15.3 s</strong>8 frames, 512&times;512, 25 steps, one chip, warm</li>
+      <li><strong>4.1 s</strong>the <code>lcm</code> LoRA variant at its own 4-step defaults</li>
+      <li><strong>8 s / 2 min</strong>first request with a warm / empty kernel cache</li>
+    </ul>
+    <p>The server also takes LoRA variants, sampler choice, prompt schedules, per-step previews, chaining and the Phase 3 motion adapter. <a href="features.html">Features</a> lists each one with its request fields. The <a href="usage.html#install-tt-model">usage guide</a> covers the setup. The command-line scripts below are for development and for modes the server does not offer yet.</p>
   </div>
 </section>
 
@@ -352,16 +391,16 @@
           <tr>
             <td><span class="tag tag-original">Phase 2.5</span> cross-frame</td>
             <td>25</td>
-            <td>~12.5 s</td>
-            <td>~100 s</td>
-            <td class="hl">8×</td>
+            <td>~1.94 s</td>
+            <td>~15.5 s</td>
+            <td class="hl">~52×</td>
           </tr>
           <tr>
             <td><span class="tag tag-lightning">Lightning</span> cross-frame</td>
             <td>8</td>
-            <td>~12 s</td>
-            <td>~96 s</td>
-            <td class="hl">~8.4×</td>
+            <td>~0.82 s</td>
+            <td>~6.5 s</td>
+            <td class="hl">~124×</td>
           </tr>
         </tbody>
       </table>
@@ -412,7 +451,7 @@
     <div class="what-cols">
       <div class="what-col">
         <h4>Hardware path</h4>
-        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~12.5 s/frame on P300C (Phase 2.5, 25-step) vs ~2 min/frame on CPU.</p>
+        <p>Replaced the diffusers CPU UNet with the SD 1.4 TTNN UNet running natively on Blackhole silicon. ~1.94 s/frame on P300C (Phase 2.5, 25-step, warm) vs ~2 min/frame on CPU.</p>
       </div>
       <div class="what-col">
         <h4>Temporal attention</h4>
@@ -452,7 +491,7 @@ flowchart TD
     CPU_VAE --> GIF([Output GIF])
 
     MODE -->|blackhole / sim| LOOP["Denoising loop — one scheduler per frame\nPNDM standard · Euler for Lightning"]
-    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~12.5 s / frame (Phase 2.5)"]
+    LOOP --> BH_UNET["SD 1.4 TTNN UNet2D\nBlackhole P300C · ~1.94 s / frame (Phase 2.5)"]
     BH_UNET --> CFA["cross_frame_attention\nnoise predictions blended\nacross all N frames — CPU"]
     CFA --> STEP["scheduler.step — one per frame"]
     STEP --> NEXT{more steps?}
@@ -504,7 +543,7 @@ function showDiagram(name, btn) {
       <div class="lightning-col">
         <h4>AnimateDiff-Lightning on Blackhole</h4>
         <p>Lightning mode is available across all three backends, but works differently per mode. On <strong>CPU</strong>: loads <a href="https://huggingface.co/ByteDance/AnimateDiff-Lightning" target="_blank" rel="noopener noreferrer">ByteDance's distilled motion adapter</a> (<a href="https://arxiv.org/abs/2403.12706" target="_blank" rel="noopener noreferrer">arXiv:2403.12706</a>) — genuine 4-step distillation, CFG=1.0 baked in. On <strong>Blackhole/sim</strong>: switches to <code>TtEulerScheduler</code> (Euler, trailing, linear) with the base SD 1.4 TTNN UNet — no distilled adapter, CFG=7.5 retained, any step count. Enable with:</p>
-        <pre class="lightning-code"># Blackhole hardware — ~12 s/frame (warm, Phase 2.5)
+        <pre class="lightning-code"># Blackhole hardware — ~1.9 s/frame (warm, Phase 2.5)
 python examples/generate.py --lightning
 
 # CPU — ~20 s/frame, no hardware required
@@ -521,7 +560,7 @@ python app.py
       </div>
     </div>
 
-    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~12 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
+    <div class="section-label" style="margin-top:2.5rem;margin-bottom:.75rem;">Lightning samples — Euler scheduler on Blackhole, 25 steps · CFG=7.5 · ~1.9 s/frame — <a href="gallery.html">full 10-prompt gallery →</a></div>
     <div class="lightning-gallery">
       <figure class="lgif">
         <img src="assets/study/lightning-mandala.gif" alt="supernova explosion in deep space, purple and orange nebula" loading="lazy">
@@ -641,6 +680,7 @@ python examples/generate.py \
 <footer>
   <a href="index.html">tt-animatediff</a> ·
   <a href="usage.html">Usage Guide</a> ·
+  <a href="features.html">Features</a> ·
   <a href="gallery.html">Gallery</a> ·
   <a href="worlds-fair.html">World's Fair</a> ·
   <a href="mayan-glyphs.html">Maya Glyphs</a> ·

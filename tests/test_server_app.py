@@ -17,6 +17,7 @@ The lifespan is deliberately never entered: ``TestClient(app)`` as a plain objec
 run it, and entering it would open a device.
 """
 import asyncio
+import os
 import subprocess
 import sys
 import textwrap
@@ -59,7 +60,7 @@ def test_the_asgi_attribute_is_what_uvicorn_will_load():
 def test_the_routes_are_the_ones_the_manifest_promises():
     paths = {r.path for r in app.routes}
     assert {"/health", "/tt-liveness", "/v1/models",
-            "/v1/videos/generations"} <= paths
+            "/v1/videos/generations", "/v1/videos/preview"} <= paths
 
 
 # ---- mesh shape ------------------------------------------------------------------------
@@ -726,7 +727,10 @@ def test_the_manifest_declares_the_weights_the_served_path_actually_loads():
     )
     # Every load names the constant, and no hardcoded repo literal is left behind.
     # tests/test_weights_pins.py checks the revision= half.
-    assert loader.count("from_pretrained(") == loader.count("SD14_REPO, subfolder=") == 4
+    # (Counted as equal, not as a fixed number: adding a load is fine, adding one that does
+    # not name the constant is the thing to catch.)
+    n_loads = loader.count("from_pretrained(")
+    assert n_loads == loader.count("SD14_REPO, subfolder=") >= 4
     assert '"CompVis/' not in loader
 
 
@@ -802,3 +806,770 @@ def test_the_lock_ships_pytest_only_while_tt_metal_needs_it():
         "lock.in, regenerate the lock, and delete this test -- the workaround is no longer "
         "needed. If it does not carry the fix, extend this list."
     )
+
+
+# ---- LoRA variants ----------------------------------------------------------------------
+
+
+def test_the_lora_catalog_is_empty_when_unset():
+    from animatediff_ttnn.server.app import lora_catalog_from_env
+
+    assert lora_catalog_from_env({}) == {}
+    assert lora_catalog_from_env({"ANIMATEDIFF_LORAS": "  "}) == {}
+
+
+def test_the_lora_catalog_parses_names_specs_and_stacks():
+    import json
+
+    from animatediff_ttnn.lora import LoraSpec
+    from animatediff_ttnn.server.app import lora_catalog_from_env
+
+    raw = json.dumps({"pixel": "org/p:p.safetensors@0.8", "both": ["org/a:a.safetensors", "org/b:b.safetensors@0.5"]})
+    cat = lora_catalog_from_env({"ANIMATEDIFF_LORAS": raw})
+    assert cat["pixel"] == [LoraSpec("org/p", "p.safetensors", 0.8)]
+    assert cat["both"] == [LoraSpec("org/a", "a.safetensors", 1.0), LoraSpec("org/b", "b.safetensors", 0.5)]
+
+
+@pytest.mark.parametrize("raw", [
+    "{not json", "[]", '{"x": 3}', '{"x": []}', '{"": "a/b:f.safetensors"}', '{"base": "a/b:f.safetensors"}',
+    '{"../etc": "a/b:f.safetensors"}', '{"x": "a/b:f.safetensors@1e999"}',
+])
+def test_a_malformed_lora_catalog_raises_rather_than_dropping_entries(raw):
+    from animatediff_ttnn.server.app import lora_catalog_from_env
+
+    with pytest.raises(ValueError):
+        lora_catalog_from_env({"ANIMATEDIFF_LORAS": raw})
+
+
+def test_an_unknown_lora_is_refused_before_the_device_lock():
+    """400 names what IS offered; a refusal must not wait behind a running generation."""
+    app.state.engine = {"hf_model": "x", "mesh_shape": (1, 1), "variants": {"pixel": object()}}
+    app.state.device_lock = asyncio.Lock()
+    try:
+        with patch("animatediff_ttnn.server.app._generate") as gen:
+            r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat", "lora": "nope"})
+        assert r.status_code == 400
+        assert "pixel" in r.json()["detail"]
+        gen.assert_not_called()
+    finally:
+        del app.state.engine
+
+
+def test_a_lora_request_without_any_catalog_says_so():
+    app.state.engine = {"hf_model": "x", "mesh_shape": (1, 1), "variants": {}}
+    try:
+        r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat", "lora": "pixel"})
+        assert r.status_code == 400 and "ANIMATEDIFF_LORAS" in r.json()["detail"]
+    finally:
+        del app.state.engine
+
+
+def test_the_request_picks_the_variants_models_and_text_encoder():
+    """The wiring: a named LoRA must run on ITS UNet and encode with ITS text encoder.
+
+    Using the plain UNet with a merged encoder (or the reverse) would still produce a
+    picture, just not the one asked for, so assert on what _generate hands the pipeline.
+    """
+    from animatediff_ttnn.generation_helpers import Sd14Variant
+    from animatediff_ttnn.server import app as mod
+
+    plain = ("p_unet", "vae", "p_cfg", "p_proj")
+    variant = Sd14Variant(models=("v_unet", "vae", "v_cfg", "v_proj"), clip=("tok", "v_te"))
+    state = {"device": "dev", "models": plain, "variants": {"pixel": variant}}
+
+    def run(lora):
+        with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb") as enc, \
+             patch("animatediff_ttnn.temporal_attention.generate_frames_temporal", return_value=[]) as gen:
+            mod._generate(state, VideoGenerationRequest(prompt="a cat", lora=lora))
+        return enc.call_args.kwargs.get("clip"), gen.call_args.kwargs["ttnn_model"]
+
+    assert run("pixel") == (("tok", "v_te"), "v_unet")
+    assert run(None) == (None, "p_unet")  # plain model: the process-wide encoder, no override
+
+
+def test_a_failed_variant_load_closes_the_device():
+    """Same leak as a failed warm: a container that dies starting must release its chip."""
+    import json
+
+    from animatediff_ttnn.server import app as mod
+
+    async def start():
+        async with mod.lifespan(mod.app):
+            pass
+
+    ttnn_mock = MagicMock()
+    env = {"ANIMATEDIFF_LORAS": json.dumps({"pixel": "org/p:p.safetensors"})}
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), patch.dict("os.environ", env), \
+         patch.object(mod, "check_lora_catalog"), \
+         patch.object(mod, "_open_device_and_models", return_value=("dev", ("u", "vae", "c", "t"))), \
+         patch.object(mod, "_load_lora_variants", side_effect=ValueError("SDXL LoRA")):
+        with pytest.raises(ValueError, match="SDXL"):
+            asyncio.run(start())
+    ttnn_mock.close_mesh_device.assert_called_once_with("dev")
+
+
+def test_variants_share_the_plain_models_vae():
+    """The VAE has no LoRA-dependent weights; a second copy would waste device memory."""
+    from animatediff_ttnn.lora import LoraSpec
+    from animatediff_ttnn.server import app as mod
+
+    with patch("animatediff_ttnn.generation_helpers.load_sd14_variant", return_value="v") as load:
+        out = mod._load_lora_variants("dev", ("u", "THE_VAE", "c", "t"), {"pixel": [LoraSpec("a/b", "f.safetensors")]})
+    assert out == {"pixel": "v"}
+    assert load.call_args.args[2] == "THE_VAE"
+
+
+def _run_generate(state, **fields):
+    """Call _generate with the model calls stubbed; return (encode calls, generate kwargs)."""
+    from animatediff_ttnn.server import app as mod
+
+    with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb") as enc, \
+         patch("animatediff_ttnn.temporal_attention.generate_frames_temporal", return_value=[]) as gen:
+        mod._generate(state, VideoGenerationRequest(prompt="a cat", **fields))
+    return enc.call_args_list, gen.call_args.kwargs
+
+
+def _state(lcm):
+    from animatediff_ttnn.generation_helpers import Sd14Variant
+
+    v = Sd14Variant(models=("u", "vae", "c", "t"), clip=("tok", "te"), lcm=lcm)
+    return {"device": "dev", "models": ("pu", "vae", "pc", "pt"), "variants": {"fast": v, "style": v._replace(lcm=False)}}
+
+
+def test_an_lcm_variant_samples_with_lcm_and_its_own_defaults():
+    """The sampler follows the LoRA: an LCM variant at 25 steps / cfg 7.5 would return noise."""
+    _, kw = _run_generate(_state(True), lora="fast")
+    assert kw["use_lcm"] is True
+    assert (kw["num_steps"], kw["guidance_scale"]) == (4, 1.5)
+
+
+def test_an_lcm_variant_honours_steps_and_guidance_the_caller_sent():
+    _, kw = _run_generate(_state(True), lora="fast", num_inference_steps=8, guidance_scale=2.0)
+    assert (kw["num_steps"], kw["guidance_scale"], kw["use_lcm"]) == (8, 2.0, True)
+
+
+def test_a_sent_default_value_still_counts_as_sent():
+    # model_fields_set, not a comparison with the default: a caller who asks for 25 gets 25.
+    _, kw = _run_generate(_state(True), lora="fast", num_inference_steps=25)
+    assert kw["num_steps"] == 25
+
+
+def test_a_style_variant_and_the_plain_model_keep_the_normal_sampler_and_defaults():
+    for lora in ("style", None):
+        _, kw = _run_generate(_state(True), lora=lora)
+        assert kw["use_lcm"] is False
+        assert (kw["num_steps"], kw["guidance_scale"]) == (25, 7.5)
+
+
+def test_a_prompt_schedule_is_encoded_per_frame_with_the_variants_encoder():
+    calls, kw = _run_generate(
+        _state(False), lora="style", num_frames=8,
+        prompt_schedule=[{"frame": 0, "prompt": "dawn"}, {"frame": 7, "prompt": "dusk"}],
+    )
+    sched = [c for c in calls if "prompt_schedule" in c.kwargs]
+    assert len(sched) == 1
+    assert sched[0].kwargs["prompt_schedule"] == [(0, "dawn"), (7, "dusk")]
+    assert sched[0].kwargs["num_frames"] == 8 and sched[0].kwargs["clip"] == ("tok", "te")
+    assert kw["text_embeddings_per_frame"] == "emb"
+
+
+def test_without_a_schedule_no_per_frame_embeddings_are_passed():
+    _, kw = _run_generate(_state(False))
+    assert kw["text_embeddings_per_frame"] is None
+
+
+def test_a_keyframe_outside_the_clip_is_refused_at_the_edge():
+    r = TestClient(app).post("/v1/videos/generations", json={
+        "prompt": "a cat", "num_frames": 4, "prompt_schedule": [{"frame": 4, "prompt": "x"}]})
+    assert r.status_code == 422 and "outside the clip" in r.text
+
+
+def test_the_image_ships_peft_so_a_lora_request_cannot_fail_on_a_missing_import():
+    """diffusers imports peft lazily, so a missing peft passes the build-time verify and
+    fails on the first LoRA load. Assert the declaration AND the lock the image installs."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    assert any(p.startswith("peft") for p in _manifest()["runtime"]["packages"])
+    assert "peft" in _lock_pins(), "tt_model_package.lock does not pin peft; the image would lack it"
+
+
+# ---- per-step previews ------------------------------------------------------------------
+
+
+def test_the_preview_endpoint_answers_before_the_model_is_ready():
+    """A poller should not have to tell "starting" from "idle": always 200, all zeros."""
+    r = TestClient(app).get("/v1/videos/preview")
+    assert r.status_code == 200
+    assert r.json() == {"step": 0, "total": 0, "gif_b64": None, "running": False, "request_id": None}
+
+
+def test_the_preview_store_resets_per_request_and_publishes_what_the_callback_wrote(tmp_path):
+    import base64
+
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    try:
+        store.begin(4)
+        assert store.snapshot() == {"step": 0, "total": 4, "gif_b64": None, "running": True, "request_id": None}
+        with open(store.path, "wb") as fh:
+            fh.write(b"GIF89a-one")
+        store.publish(f"PREVIEW: 2/4 {store.path}")
+        snap = store.snapshot()
+        assert (snap["step"], snap["total"]) == (2, 4)
+        assert base64.b64decode(snap["gif_b64"]) == b"GIF89a-one"
+        store.end()
+        assert store.snapshot()["running"] is False
+        assert store.snapshot()["gif_b64"], "the last frame stays readable after the run ends"
+        store.begin(8)  # next request: the previous request's frame must not leak into it
+        assert store.snapshot() == {"step": 0, "total": 8, "gif_b64": None, "running": True, "request_id": None}
+    finally:
+        store.close()
+
+
+def test_a_lost_preview_frame_keeps_the_previous_one_and_never_raises():
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    try:
+        store.begin(4)
+        with open(store.path, "wb") as fh:
+            fh.write(b"first")
+        store.publish(f"PREVIEW: 1/4 {store.path}")
+        before = store.snapshot()["gif_b64"]
+        store.publish("PREVIEW: 2/4 /no/such/file.gif")  # unreadable
+        store.publish("some other log line")  # not an announcement
+        assert store.snapshot()["gif_b64"] == before
+    finally:
+        store.close()
+
+
+def test_the_step_counter_runs_without_the_flag_but_no_gif_is_rendered():
+    """The counter is free; the GIF render is what costs device time, so it is opt-in."""
+    from animatediff_ttnn.server import app as mod
+
+    store = mod.PreviewStore()
+    try:
+        with patch("animatediff_ttnn.preview.make_step_callback") as make:
+            cb = mod._step_callback(store, VideoGenerationRequest(prompt="x"), 4)
+            cb(0, 4, [object()])
+            cb(1, 4, [object()])
+        make.assert_not_called()
+        assert store.snapshot()["step"] == 2
+        assert store.snapshot()["gif_b64"] is None
+    finally:
+        store.close()
+
+
+def test_the_preview_endpoint_answers_while_the_device_lock_is_held():
+    """The requirement: previews are only useful if they can be read DURING the work.
+
+    A real POST holds the device lock inside a blocked fake denoise loop. While it is blocked
+    the endpoint must still answer promptly, report the step reached, and carry the frame the
+    loop published. The loop is the real _generate with only the model calls and the GIF
+    render stubbed, so the wiring from on_step to the endpoint is what is under test.
+    """
+    import base64
+    import threading
+    import time as _time
+
+    from animatediff_ttnn.generation_helpers import Sd14Variant  # noqa: F401  (import check)
+    from animatediff_ttnn.server import app as mod
+
+    started, release = threading.Event(), threading.Event()
+
+    def fake_loop(**kw):
+        for i in range(3):  # three steps; the callback is the real _step_callback
+            kw["on_step"](i, 3, [object()])
+        started.set()
+        assert release.wait(timeout=20), "test never released the fake loop"
+        return [object()]
+
+    def fake_export(frames, path):
+        with open(path, "wb") as fh:
+            fh.write(b"GIF89a-live")
+
+    store = mod.PreviewStore()
+    app.state.engine = {"device": "d", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": store,
+                        "hf_model": "x", "mesh_shape": (1, 1)}
+    app.state.device_lock = asyncio.Lock()
+    result = {}
+
+    def post():
+        with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb"), \
+             patch("animatediff_ttnn.temporal_attention.generate_frames_temporal", side_effect=lambda **kw: fake_loop(**kw)), \
+             patch("animatediff_ttnn.preview._latent_preview_fn", return_value=lambda *a, **k: ["f"]), \
+             patch("animatediff_ttnn.preview._export_gif_fn", return_value=fake_export), \
+             patch.object(mod, "_frames_to_gif_b64", return_value="Zm9v"):
+            result["r"] = TestClient(app).post("/v1/videos/generations", json={
+                "prompt": "a cat", "num_inference_steps": 3, "num_frames": 4, "preview": True})
+
+    t = threading.Thread(target=post)
+    try:
+        t.start()
+        assert started.wait(timeout=20), "the generation never reached the loop"
+        t0 = _time.monotonic()
+        r = TestClient(app).get("/v1/videos/preview")  # the device lock is held right now
+        elapsed = _time.monotonic() - t0
+        assert r.status_code == 200
+        body = r.json()
+        assert body["running"] is True and (body["step"], body["total"]) == (3, 3)
+        assert base64.b64decode(body["gif_b64"]) == b"GIF89a-live"
+        assert elapsed < 2.0, f"the preview endpoint waited {elapsed:.1f}s behind the generation"
+        assert app.state.device_lock.locked(), "the test is not holding the lock it claims to"
+    finally:
+        release.set()
+        t.join(timeout=30)
+        del app.state.engine
+        store.close()
+    assert result["r"].status_code == 200
+    assert store.snapshot()["running"] is False
+
+
+def test_preview_every_reaches_the_step_callback_builder():
+    from animatediff_ttnn.server import app as mod
+
+    store = mod.PreviewStore()
+    try:
+        with patch("animatediff_ttnn.preview.make_step_callback") as make:
+            mod._step_callback(store, VideoGenerationRequest(prompt="x", preview=True, preview_every=5), 20)
+            mod._step_callback(store, VideoGenerationRequest(prompt="x", preview=True), 20)
+        assert make.call_args_list[0].kwargs["every"] == 5
+        assert make.call_args_list[1].kwargs["every"] is None  # library default cadence
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("bad", [0, -1, 101])
+def test_a_preview_cadence_out_of_range_is_refused(bad):
+    r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "preview_every": bad})
+    assert r.status_code == 422
+
+
+# ---- chaining, sampler choice, Phase 3 -------------------------------------------------
+
+
+def _req(**kw):
+    return VideoGenerationRequest(prompt="a cat", **kw)
+
+
+def _engine(**kw):
+    from animatediff_ttnn.generation_helpers import Sd14Variant
+    from animatediff_ttnn.server.app import ChainStore
+
+    base = {"variants": {"style": Sd14Variant(("u", "v", "c", "t"), ("tok", "te"), lcm=False),
+                         "fast": Sd14Variant(("u", "v", "c", "t"), ("tok", "te"), lcm=True)},
+            "motion_kernels": None, "chains": ChainStore()}
+    base.update(kw)
+    return base
+
+
+def test_request_conflicts_accepts_a_plain_request_and_the_documented_combinations():
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine(motion_kernels={"mid": []})
+    try:
+        for kw in ({}, {"lora": "style", "sampler": "euler"}, {"lora": "fast"},
+                   {"motion_adapter": True, "sampler": "euler", "motion_adapter_skip": ["up1", "up2"]},
+                   {"motion_adapter": True, "lora": "style"}):
+            assert request_conflicts(_req(**kw), eng) is None, kw
+    finally:
+        eng["chains"].close()
+
+
+@pytest.mark.parametrize("kw,needle", [
+    ({"lora": "nope"}, "unknown lora"),
+    ({"lora": "fast", "sampler": "euler"}, "always samples with LCM"),
+    ({"motion_adapter": True}, "ANIMATEDIFF_MOTION_ADAPTER"),
+    ({"motion_adapter_skip": ["up1"]}, "need motion_adapter"),
+    ({"motion_adapter_alpha": 0.5}, "need motion_adapter"),
+    ({"chain_from": "nothing-saved-yet"}, "unknown chain"),
+    ({"lora": "fast", "num_inference_steps": 51}, "at most 50"),
+    ({"lora": "fast", "num_inference_steps": 100}, "at most 50"),
+])
+def test_request_conflicts_names_the_reason(kw, needle):
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine()
+    try:
+        assert needle in request_conflicts(_req(**kw), eng)
+    finally:
+        eng["chains"].close()
+
+
+def test_motion_adapter_cannot_ride_an_lcm_variant():
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine(motion_kernels={"mid": []})
+    try:
+        assert "LCM" in request_conflicts(_req(motion_adapter=True, lora="fast"), eng)
+    finally:
+        eng["chains"].close()
+
+
+def test_a_chain_name_cannot_point_outside_the_store():
+    """Names, never paths: the pattern refuses separators and dots-only names at the edge, and the
+    file name is a hash anyway."""
+    import os
+
+    from animatediff_ttnn.server.app import ChainStore
+
+    for bad in ("../x", "a/b", "/etc/passwd", ".hidden", ""):
+        r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "chain_save": bad})
+        assert r.status_code == 422, bad
+    store = ChainStore()
+    try:
+        p = store.path("../../etc/passwd")
+        assert os.path.dirname(p) == store._dir and p.endswith(".pt")
+    finally:
+        store.close()
+
+
+def test_the_chain_store_keeps_the_newest_and_forgets_on_close():
+    import os
+
+    from animatediff_ttnn.server.app import ChainStore
+
+    store = ChainStore()
+    store.MAX_CHAINS = 3
+    try:
+        for i in range(5):
+            with open(store.path(f"c{i}"), "wb") as fh:
+                fh.write(b"x")
+            os.utime(store.path(f"c{i}"), (1000 + i, 1000 + i))
+        store.prune()
+        assert [store.has(f"c{i}") for i in range(5)] == [False, False, True, True, True]
+    finally:
+        d = store._dir
+        store.close()
+    assert not os.path.exists(d)
+
+
+def test_the_sampler_and_chain_fields_reach_the_denoise_loop():
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None}
+    from animatediff_ttnn.server.app import ChainStore
+
+    eng["chains"] = ChainStore()
+    try:
+        _calls, kw = _run_generate(eng, sampler="euler", chain_from="a", chain_save="b", chain_alpha=0.4)
+        assert kw["use_lightning"] is True and kw["use_lcm"] is False
+        assert kw["chain_from"] == eng["chains"].path("a") and kw["chain_save"] == eng["chains"].path("b")
+        assert kw["chain_alpha"] == 0.4
+        _calls, kw = _run_generate(eng)
+        assert kw["use_lightning"] is False and kw["chain_from"] is None and kw["chain_save"] is None
+    finally:
+        eng["chains"].close()
+
+
+def test_a_motion_adapter_request_runs_the_phase_3_loop_with_the_operators_kernels():
+    from animatediff_ttnn.server import app as mod
+
+    kernels = {"mid": ["m"]}
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None,
+           "motion_kernels": kernels, "chains": None}
+    with patch("animatediff_ttnn.generation_helpers.encode_prompt", return_value="emb"), \
+         patch("animatediff_ttnn.temporal_attention.generate_frames_temporal") as plain, \
+         patch("animatediff_ttnn.temporal_attention.generate_frames_motion", return_value=[]) as motion:
+        mod._generate(eng, _req(motion_adapter=True, motion_adapter_alpha=0.5, motion_adapter_skip=["up1", "up2"]))
+    plain.assert_not_called()
+    kw = motion.call_args.kwargs
+    assert kw["temporal_kernels"] is kernels and kw["injection_alpha"] == 0.5
+    assert kw["skip_keys"] == {"up1", "up2"} and "use_lcm" not in kw
+
+
+def test_saving_a_chain_prunes_the_store_afterwards():
+    from animatediff_ttnn.server.app import ChainStore
+
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None,
+           "chains": ChainStore()}
+    try:
+        with patch.object(ChainStore, "prune") as prune:
+            _run_generate(eng, chain_save="keep")
+        prune.assert_called_once()
+    finally:
+        eng["chains"].close()
+
+
+def test_the_http_edge_refuses_unknown_chains_and_disabled_motion_before_the_lock():
+    from animatediff_ttnn.server.app import ChainStore
+
+    eng = _engine()
+    eng.update({"hf_model": "x", "mesh_shape": (1, 1), "preview": None})
+    app.state.engine = eng
+    app.state.device_lock = asyncio.Lock()
+    try:
+        with patch("animatediff_ttnn.server.app._generate") as gen:
+            c = TestClient(app)
+            r1 = c.post("/v1/videos/generations", json={"prompt": "x", "chain_from": "missing"})
+            r2 = c.post("/v1/videos/generations", json={"prompt": "x", "motion_adapter": True})
+        assert r1.status_code == 400 and "unknown chain" in r1.json()["detail"]
+        assert r2.status_code == 400 and "ANIMATEDIFF_MOTION_ADAPTER" in r2.json()["detail"]
+        gen.assert_not_called()
+    finally:
+        del app.state.engine
+        eng["chains"].close()
+
+
+def test_motion_adapter_env_parsing():
+    from animatediff_ttnn.server.app import motion_adapter_from_env
+    from animatediff_ttnn.weights_pins import MOTION_ADAPTER_REPO
+
+    assert motion_adapter_from_env({}) is None
+    assert motion_adapter_from_env({"ANIMATEDIFF_MOTION_ADAPTER": "  "}) is None
+    assert motion_adapter_from_env({"ANIMATEDIFF_MOTION_ADAPTER": "default"}) == MOTION_ADAPTER_REPO
+    assert motion_adapter_from_env({"ANIMATEDIFF_MOTION_ADAPTER": "me/adapter"}) == "me/adapter"
+
+
+def test_models_advertises_whether_motion_adapter_requests_are_accepted():
+    app.state.engine = {"hf_model": "x", "variants": {}, "motion_kernels": {"mid": []}}
+    try:
+        assert TestClient(app).get("/v1/models").json()["motion_adapter"] is True
+        app.state.engine["motion_kernels"] = None
+        assert TestClient(app).get("/v1/models").json()["motion_adapter"] is False
+    finally:
+        del app.state.engine
+
+
+def test_a_failed_motion_adapter_load_closes_the_device():
+    from animatediff_ttnn.server import app as mod
+
+    async def start():
+        async with mod.lifespan(mod.app):
+            pass
+
+    ttnn_mock = MagicMock()
+    with patch.dict(sys.modules, {"ttnn": ttnn_mock}), \
+         patch.dict("os.environ", {"ANIMATEDIFF_MOTION_ADAPTER": "default"}), \
+         patch.object(mod, "_open_device_and_models", return_value=("dev", ("u", "vae", "c", "t"))), \
+         patch("animatediff_ttnn.motion_weights.load_motion_modules", side_effect=OSError("no such repo")):
+        with pytest.raises(OSError, match="no such repo"):
+            asyncio.run(start())
+    ttnn_mock.close_mesh_device.assert_called_once_with("dev")
+
+
+def test_the_serve_profiles_carry_a_catalog_the_server_can_parse():
+    """`tt-model serve` has no --env, so the manifest's serve profiles are the only way an
+    operator's LoRA catalog and motion-adapter switch reach the container. Parse each
+    profile's env with the server's own parser: a typo here would otherwise surface as a
+    lifespan failure inside a published image."""
+    from animatediff_ttnn.server.app import LORAS_ENV, lora_catalog_from_env
+
+    m = _manifest()
+    profiles = {p["name"]: p for p in m.get("serve_profiles", [])}
+    assert profiles, "no serve_profiles: the catalog has no way into the container"
+    assert m["default_profile"] in profiles
+    with_catalog = 0
+    for name, p in profiles.items():
+        env = {k: str(v) for k, v in (p.get("env") or {}).items()}
+        catalog = lora_catalog_from_env(env)  # raises on a malformed catalog
+        if catalog:
+            with_catalog += 1
+            assert "base" not in catalog
+        if "ANIMATEDIFF_MOTION_ADAPTER" in env:
+            assert env["ANIMATEDIFF_MOTION_ADAPTER"] in ("default", "repo") or "/" in env["ANIMATEDIFF_MOTION_ADAPTER"]
+    assert with_catalog >= 1, f"no profile sets {LORAS_ENV}"
+    assert "plain" in profiles and not (profiles["plain"].get("env") or {}), "plain must stay catalog-free"
+
+
+def test_lcm_accepts_fifty_steps_and_a_style_variant_accepts_a_hundred():
+    from animatediff_ttnn.server.app import request_conflicts
+
+    eng = _engine()
+    try:
+        assert request_conflicts(_req(lora="fast", num_inference_steps=50), eng) is None
+        assert request_conflicts(_req(lora="fast"), eng) is None  # the 4-step default
+        assert request_conflicts(_req(lora="style", num_inference_steps=100), eng) is None
+    finally:
+        eng["chains"].close()
+
+
+def test_the_lcm_step_limit_is_the_one_the_scheduler_is_built_with():
+    # Review finding: 51-100 steps passed validation and then failed inside the scheduler as
+    # an HTTP 500 after taking the device lock. The server's limit and the scheduler's
+    # original_inference_steps must be the same number, and the scheduler must really refuse
+    # one step more.
+    import inspect
+
+    from diffusers import LCMScheduler
+
+    from animatediff_ttnn import temporal_attention
+    from animatediff_ttnn.weights_pins import LCM_ORIGINAL_STEPS
+
+    assert f"original_inference_steps={'LCM_ORIGINAL_STEPS'}" in inspect.getsource(
+        temporal_attention.generate_frames_temporal).replace(" ", "")
+    sched = LCMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear",
+                         original_inference_steps=LCM_ORIGINAL_STEPS)
+    sched.set_timesteps(LCM_ORIGINAL_STEPS)
+    with pytest.raises(ValueError):
+        sched.set_timesteps(LCM_ORIGINAL_STEPS + 1)
+
+
+def test_a_chain_evicted_while_the_request_waits_for_the_device_is_a_400():
+    """The early check passes, the request queues, and a running generation prunes the source.
+
+    Review finding: chain_blend_seed ignores a missing file, so the queued request used to
+    return 200 with no continuity. The lock below deletes the chain at the moment it is
+    granted, which is when a pruning generation would have finished.
+    """
+    import animatediff_ttnn.server.app as mod
+    from animatediff_ttnn.server.app import ChainStore
+
+    chains = ChainStore()
+    open(chains.path("src"), "wb").write(b"x")
+
+    class _EvictOnAcquire:
+        async def __aenter__(self):
+            os.unlink(chains.path("src"))
+
+        async def __aexit__(self, *exc):
+            return False
+
+    app.state.engine = {"device": object(), "models": object(), "ready": True, "variants": {},
+                        "chains": chains, "model": "m", "mesh_device": "P150", "mesh_shape": "1x1"}
+    app.state.device_lock = _EvictOnAcquire()
+    try:
+        with patch.object(mod, "_generate", return_value=[object()]) as gen:
+            r = TestClient(app).post("/v1/videos/generations", json={"prompt": "a cat", "chain_from": "src"})
+        assert r.status_code == 400, r.text
+        assert "unknown chain" in r.json()["detail"]
+        gen.assert_not_called()
+    finally:
+        del app.state.engine
+        chains.close()
+
+
+# ---- preview ownership ---------------------------------------------------------------------
+
+def test_the_preview_store_tags_each_generation_with_the_callers_request_id():
+    """Review finding (tt-local-generator #29): the preview was one global value, so a client whose
+    request was still queued could show another client's step-20 frame as its own. A caller names
+    its request, and the store says whose generation the preview belongs to."""
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    try:
+        store.begin(4, request_id="mine-1")
+        assert store.snapshot()["request_id"] == "mine-1"
+        store.end()
+        assert store.snapshot()["request_id"] == "mine-1", "the finished run's frame still belongs to it"
+        store.begin(4)  # a caller that sends no id must not inherit the previous caller's
+        assert store.snapshot()["request_id"] is None
+    finally:
+        store.close()
+
+
+def test_the_request_id_reaches_the_preview_store():
+    # Wiring: the store can tag correctly while _generate never passes the id.
+    calls = []
+
+    class _Store:
+        path = "unused"
+
+        def begin(self, total, request_id=None):
+            calls.append((total, request_id))
+
+        def step(self, *a):
+            pass
+
+        def end(self):
+            pass
+
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": _Store()}
+    _run_generate(eng, request_id="r-7", num_inference_steps=9)
+    assert calls == [(9, "r-7")]
+
+
+@pytest.mark.parametrize("bad", ["", "has space", "a/b", "x" * 65])
+def test_a_malformed_request_id_is_refused(bad):
+    r = TestClient(app).post("/v1/videos/generations", json={"prompt": "x", "request_id": bad})
+    assert r.status_code == 422
+
+
+def test_the_preview_endpoint_reports_whose_generation_it_is_showing():
+    from animatediff_ttnn.server.app import PreviewStore
+
+    store = PreviewStore()
+    app.state.engine = {"preview": store}
+    try:
+        store.begin(3, request_id="abc")
+        body = TestClient(app).get("/v1/videos/preview").json()
+        assert body["request_id"] == "abc" and body["running"] is True
+    finally:
+        del app.state.engine
+        store.close()
+
+
+def _lora_file(path, metadata=None):
+    import torch
+    from safetensors.torch import save_file
+
+    keys = {
+        "lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q.lora_down.weight": (4, 8),
+        "lora_unet_down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q.lora_up.weight": (8, 4),
+    }
+    save_file({k: torch.zeros(*v) for k, v in keys.items()}, str(path), metadata=metadata)
+    return str(path)
+
+
+def test_the_lora_catalog_header_check_accepts_a_good_file_and_names_a_bad_entry(tmp_path):
+    from animatediff_ttnn.lora import LoraSpec
+    from animatediff_ttnn.server.app import check_lora_catalog
+
+    good = _lora_file(tmp_path / "good.safetensors")
+    check_lora_catalog({"ok": [LoraSpec(good, None, 1.0)]})
+
+    sdxl = _lora_file(tmp_path / "xl.safetensors", {"ss_base_model_version": "sdxl_base_v1-0"})
+    with pytest.raises(ValueError, match=r"ANIMATEDIFF_LORAS: 'big'.*SDXL"):
+        check_lora_catalog({"ok": [LoraSpec(good, None, 1.0)], "big": [LoraSpec(sdxl, None, 1.0)]})
+    with pytest.raises(ValueError, match="'gone'"):
+        check_lora_catalog({"gone": [LoraSpec(str(tmp_path / "nope.safetensors"), None, 1.0)]})
+    with pytest.raises(ValueError, match="'bin'.*safetensors"):
+        check_lora_catalog({"bin": [LoraSpec("org/repo", "weights.bin", 1.0)]})
+
+
+def test_the_lifespan_checks_the_catalog_before_it_opens_the_device(tmp_path):
+    """The check is only useful where it runs: a bad file must fail with no chip claimed.
+
+    Drives the real lifespan with the device open stubbed. A catalog naming an SDXL file has to
+    raise without _open_device_and_models ever being called.
+    """
+    import json
+
+    from animatediff_ttnn.server import app as mod
+
+    sdxl = _lora_file(tmp_path / "xl.safetensors", {"ss_base_model_version": "sdxl_base_v1-0"})
+    env = {"ANIMATEDIFF_LORAS": json.dumps({"big": sdxl})}
+
+    async def run():
+        async with mod.lifespan(mod.app):
+            pass
+
+    with patch.dict(os.environ, env), patch.object(mod, "_open_device_and_models") as opened:
+        with pytest.raises(ValueError, match="SDXL"):
+            asyncio.run(run())
+    assert not opened.called, "the device was opened before the catalog was header-checked"
+
+
+def test_using_a_chain_keeps_it_from_being_the_one_pruned():
+    """Eviction is by use: a chain a client keeps continuing from outlives newer one-off saves.
+
+    c0 is the oldest file. Continuing from it must refresh it, so the next prune drops c1.
+    """
+    import os
+
+    from animatediff_ttnn.server.app import ChainStore
+
+    store = ChainStore()
+    store.MAX_CHAINS = 3
+    eng = {"device": "dev", "models": ("u", "vae", "c", "t"), "variants": {}, "preview": None, "chains": store}
+    try:
+        for i in range(4):
+            with open(store.path(f"c{i}"), "wb") as fh:
+                fh.write(b"x")
+            os.utime(store.path(f"c{i}"), (1000 + i, 1000 + i))
+        _run_generate(eng, chain_from="c0")
+        store.prune()
+        assert [store.has(f"c{i}") for i in range(4)] == [True, False, True, True]
+    finally:
+        store.close()

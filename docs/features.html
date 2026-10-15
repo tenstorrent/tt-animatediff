@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Features and abilities — tt-animatediff</title>
+  <meta name="description" content="What tt-animatediff can do, from the CLI and from the served HTTP API: style LoRAs, LCM fast sampling, prompt travel, live previews, and how each is requested.">
+  <style>
+    :root {
+      --bg0: #080f14; --bg1: #0d1b24; --bg2: #122130;
+      --teal: #4fd1c5; --teal-dim: rgba(79,209,197,.13); --teal-border: rgba(79,209,197,.28);
+      --teal2: #81e6d9;
+      --pink: #ec96b8; --pink-dim: rgba(236,150,184,.12); --pink-border: rgba(236,150,184,.3);
+      --gold: #f4c471; --gold-dim: rgba(244,196,113,.12); --gold-border: rgba(244,196,113,.28);
+      --gray-dim: rgba(96,125,139,.15); --gray-border: rgba(96,125,139,.3);
+      --green: #4ade80; --green-dim: rgba(74,222,128,.1); --green-border: rgba(74,222,128,.3);
+      --text: #e8f0f2; --text2: #b0c4d0; --muted: #607d8b;
+      --border: rgba(79,209,197,.1); --radius: 8px;
+      --sidebar-w: 220px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg0); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+           font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1, h2, h3, h4 { line-height: 1.25; font-weight: 700; }
+    code { font-family: Consolas, 'Courier New', monospace; font-size: .88em;
+           background: rgba(79,209,197,.08); color: var(--teal2); padding: .1em .35em;
+           border-radius: 3px; border: 1px solid rgba(79,209,197,.15); }
+    p { color: var(--text2); margin-bottom: .9rem; }
+    p:last-child { margin-bottom: 0; }
+
+    /* ── top bar ── */
+    .topbar { position: sticky; top: 0; z-index: 100; background: rgba(8,15,20,.94);
+              backdrop-filter: blur(8px); border-bottom: 1px solid var(--border);
+              display: flex; align-items: center; gap: 1.5rem; padding: 0 1.5rem; height: 48px; }
+    .topbar-logo { font-size: .82rem; font-weight: 700; color: var(--teal); letter-spacing: .03em; white-space: nowrap; }
+    .topbar-nav { display: flex; gap: 1.25rem; overflow-x: auto; scrollbar-width: none; }
+    .topbar-nav::-webkit-scrollbar { display: none; }
+    .topbar-nav a { font-size: .75rem; color: var(--muted); white-space: nowrap; transition: color .15s; padding: .25rem 0; }
+    .topbar-nav a:hover { color: var(--teal); text-decoration: none; }
+    .topbar-home { margin-left: auto; font-size: .75rem; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+    .topbar-home:hover { color: var(--teal); }
+
+    /* ── layout ── */
+    .layout { display: flex; min-height: calc(100vh - 48px); }
+
+    /* ── sidebar ── */
+    .sidebar { width: var(--sidebar-w); flex-shrink: 0; position: sticky; top: 48px; height: calc(100vh - 48px);
+               overflow-y: auto; padding: 2rem 0 2rem 1.25rem; border-right: 1px solid var(--border);
+               scrollbar-width: thin; scrollbar-color: var(--teal-border) transparent; }
+    .sidebar::-webkit-scrollbar { width: 4px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--teal-border); border-radius: 2px; }
+    .toc-label { font-size: .62rem; font-weight: 700; letter-spacing: .15em; text-transform: uppercase;
+                 color: var(--muted); margin-bottom: .75rem; margin-top: 1.5rem; display: block; }
+    .toc-label:first-child { margin-top: 0; }
+    .toc-list { list-style: none; display: flex; flex-direction: column; gap: .15rem; }
+    .toc-list a { font-size: .78rem; color: var(--text2); padding: .25rem .5rem; border-radius: 4px;
+                  display: block; transition: all .15s; border-left: 2px solid transparent; }
+    .toc-list a:hover { color: var(--teal); background: var(--teal-dim); border-left-color: var(--teal); text-decoration: none; }
+    .toc-list a.active { color: var(--teal); background: var(--teal-dim); border-left-color: var(--teal); }
+    .toc-sub a { padding-left: 1.25rem; font-size: .73rem; color: var(--muted); }
+
+    /* ── main ── */
+    .main { flex: 1; min-width: 0; padding: 3rem 2.5rem 5rem; }
+    .main-inner { max-width: 860px; }
+
+    /* ── hero ── */
+    .hero { padding-bottom: 2.5rem; border-bottom: 1px solid var(--border); margin-bottom: 3rem; }
+    .hero-badge { display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .14em;
+                  text-transform: uppercase; color: var(--teal); border: 1px solid var(--teal-border);
+                  border-radius: 20px; padding: .2rem .65rem; margin-bottom: 1rem; }
+    .hero h1 { font-size: clamp(1.6rem, 3vw, 2.4rem); margin-bottom: .6rem; }
+    .hero h1 em { color: var(--teal); font-style: normal; }
+    .hero p { font-size: 1rem; max-width: 620px; }
+
+    /* ── section ── */
+    .section { margin-bottom: 4rem; }
+    .section-head { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.5rem; padding-bottom: .75rem; border-bottom: 1px solid var(--border); }
+    .section-num { font-size: .62rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+    .section-head h2 { font-size: 1.35rem; }
+    h3 { font-size: 1rem; color: var(--text); margin: 1.75rem 0 .65rem; }
+    h4 { font-size: .82rem; color: var(--teal); letter-spacing: .04em; text-transform: uppercase; margin: 1.25rem 0 .5rem; }
+
+    /* ── mode chips ── */
+    .chip { display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+            padding: .18rem .5rem; border-radius: 3px; vertical-align: middle; margin-left: .35rem; }
+    .chip-bh  { background: var(--teal-dim);  color: var(--teal);  border: 1px solid var(--teal-border); }
+    .chip-cpu { background: var(--gray-dim);  color: var(--muted); border: 1px solid var(--gray-border); }
+    .chip-sim { background: var(--gold-dim);  color: var(--gold);  border: 1px solid var(--gold-border); }
+    .chip-ai  { background: var(--pink-dim);  color: var(--pink);  border: 1px solid var(--pink-border); }
+
+    /* ── code blocks ── */
+    .code-block { position: relative; background: #060d12; border: 1px solid var(--border);
+                  border-left: 3px solid var(--teal-border); border-radius: 0 var(--radius) var(--radius) 0;
+                  margin: 1rem 0 1.5rem; overflow-x: auto; }
+    .code-block pre { padding: 1.1rem 1.25rem; font-family: Consolas, 'Courier New', monospace;
+                      font-size: .8rem; line-height: 1.7; color: #c5dde8; white-space: pre; }
+    .code-block .cb-label { position: absolute; top: .5rem; right: .75rem; font-size: .6rem; font-weight: 700;
+                             letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+    .code-block .c  { color: var(--muted); }
+    .code-block .kw { color: var(--teal); }
+    .code-block .str{ color: #a8d8a8; }
+    .code-block .num{ color: var(--gold); }
+    .code-block .fn { color: #81cbda; }
+    .code-block .cm { color: #4a6875; font-style: italic; }
+    .code-block pre.bash .prompt { color: var(--muted); user-select: none; }
+    .code-block.pink  { border-left-color: var(--pink-border); }
+    .code-block.gold  { border-left-color: var(--gold-border); }
+    .code-block.gray  { border-left-color: var(--gray-border); }
+
+    /* ── param table ── */
+    .param-table-wrap { overflow-x: auto; margin: 1rem 0 1.5rem; }
+    .param-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .param-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: .68rem;
+                      text-transform: uppercase; letter-spacing: .1em; padding: .4rem .75rem .55rem;
+                      border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .param-table td { padding: .5rem .75rem; color: var(--text2); border-bottom: 1px solid rgba(79,209,197,.05); vertical-align: top; }
+    .param-table tr:last-child td { border-bottom: none; }
+    .param-table td:first-child { font-family: Consolas, 'Courier New', monospace; font-size: .78rem; color: var(--teal2); white-space: nowrap; }
+    .param-table td:nth-child(2) { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+    .param-table tr:hover td { background: rgba(79,209,197,.03); }
+
+    /* ── callout boxes ── */
+    .callout { border-radius: var(--radius); padding: .9rem 1.1rem; margin: 1rem 0 1.5rem;
+               border-left: 3px solid; font-size: .83rem; }
+    .callout p { font-size: .83rem; margin: 0; }
+    .callout-note { background: var(--teal-dim); border-color: var(--teal); }
+    .callout-note .callout-title { color: var(--teal); }
+    .callout-warn { background: var(--gold-dim); border-color: var(--gold); }
+    .callout-warn .callout-title { color: var(--gold); }
+    .callout-tip  { background: var(--green-dim); border-color: var(--green-border); }
+    .callout-tip .callout-title { color: var(--green); }
+    .callout-title { font-size: .65rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+                     display: block; margin-bottom: .3rem; }
+
+    /* ── step list ── */
+    .steps { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 1.1rem; margin: 1rem 0 1.5rem; }
+    .steps li { counter-increment: step; display: flex; gap: 1rem; align-items: flex-start; }
+    .steps li::before { content: counter(step); flex-shrink: 0; width: 26px; height: 26px; background: var(--teal-dim);
+                         border: 1px solid var(--teal-border); border-radius: 50%; display: flex; align-items: center;
+                         justify-content: center; font-size: .72rem; font-weight: 700; color: var(--teal);
+                         margin-top: .15rem; }
+    .steps li > div { flex: 1; }
+    .steps li p { font-size: .85rem; }
+
+    /* ── grid cards ── */
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .85rem; margin: 1rem 0 1.5rem; }
+    .feature-card { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
+    .feature-card h4 { margin-top: 0; font-size: .78rem; color: var(--text); text-transform: none; letter-spacing: 0; margin-bottom: .3rem; }
+    .feature-card p { font-size: .73rem; color: var(--muted); margin: 0; }
+
+    /* ── install tabs ── */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+    .tab { font-size: .75rem; font-weight: 600; padding: .55rem 1.1rem; color: var(--muted); cursor: pointer;
+           border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .15s; user-select: none; }
+    .tab:hover { color: var(--text2); }
+    .tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .tab-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin: 1rem 0 1.5rem; }
+    .tab-wrap .tabs { padding: 0 1rem; background: var(--bg1); border-bottom: 1px solid var(--border); border-radius: 0; margin: 0; }
+    .tab-wrap .tab-body { padding: 1.25rem; background: var(--bg0); }
+    .tab-wrap .tab-body .code-block { margin: .5rem 0 0; }
+
+    /* ── alpha guide ── */
+    .alpha-row { display: flex; align-items: center; gap: .75rem; padding: .45rem 0; border-bottom: 1px solid rgba(79,209,197,.06); }
+    .alpha-row:last-child { border-bottom: none; }
+    .alpha-val { font-family: Consolas, 'Courier New', monospace; font-size: .78rem; color: var(--teal2);
+                 min-width: 90px; flex-shrink: 0; }
+    .alpha-bar-wrap { flex: 1; height: 4px; background: rgba(79,209,197,.08); border-radius: 2px; }
+    .alpha-bar { height: 100%; background: var(--teal); border-radius: 2px; }
+    .alpha-desc { font-size: .78rem; color: var(--text2); min-width: 220px; }
+
+    /* ── footer ── */
+    footer { background: var(--bg1); border-top: 1px solid var(--border); padding: 2rem; text-align: center;
+             font-size: .78rem; color: var(--muted); }
+    footer a { color: var(--teal2); }
+
+    /* ── responsive ── */
+    @media (max-width: 720px) {
+      .sidebar { display: none; }
+      .main { padding: 2rem 1.25rem 4rem; }
+    }
+      /* features page: the matrix has four columns of prose, so let cells wrap and the table scroll */
+    .param-table-wrap { overflow-x: auto; }
+    .param-table td { white-space: normal; vertical-align: top; }
+    .param-table td:first-child { font-family: inherit; color: var(--text); min-width: 11rem; }
+    .param-table td:nth-child(2), .param-table td:nth-child(3) { min-width: 10rem; }
+  </style>
+</head>
+<body>
+
+<nav class="topbar">
+  <span class="topbar-logo">tt-animatediff</span>
+  <div class="topbar-nav">
+    <a href="#matrix">Feature matrix</a>
+    <a href="#loras">LoRAs</a>
+    <a href="#lcm">LCM</a>
+    <a href="#serving">Serving</a>
+    <a href="#previews">Previews</a>
+    <a href="#chaining">Chaining</a>
+    <a href="#sampler">Sampler</a>
+    <a href="#motion">Motion adapter</a>
+    <a href="#api">Request reference</a>
+  </div>
+  <a class="topbar-home" href="index.html">&#8592; Home</a>
+</nav>
+
+<div class="layout">
+
+  <aside class="sidebar">
+    <span class="toc-label">Features</span>
+    <ul class="toc-list">
+      <li><a href="#matrix">Feature matrix</a></li>
+      <li><a href="#loras">Style LoRAs</a></li>
+      <li><a href="#lcm">LCM fast sampling</a></li>
+    </ul>
+    <span class="toc-label">Serving</span>
+    <ul class="toc-list">
+      <li><a href="#serving">LoRA variants</a></li>
+      <li><a href="#previews">Live previews</a></li>
+      <li><a href="#chaining">Chaining</a></li>
+      <li><a href="#sampler">Sampler</a></li>
+      <li><a href="#motion">Motion adapter</a></li>
+      <li><a href="#api">Request reference</a></li>
+    </ul>
+  </aside>
+
+  <main class="main">
+  <div class="main-inner">
+
+    <div class="hero">
+      <span class="hero-badge">v0.13.2 &middot; 2026-10-15</span>
+      <h1>Features and <em>abilities</em></h1>
+      <p>Every feature, how to ask for it on the command line, and how to ask for it from the served HTTP API (<code>tt-model serve</code>). This page is updated as each served feature lands.</p>
+    </div>
+
+    <div class="section" id="matrix">
+      <div class="section-head"><span class="section-num">01</span><h2>Feature matrix</h2></div>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Feature</th><th>CLI (<code>examples/generate.py</code>)</th><th>Served (<code>tt-model serve</code>)</th></tr></thead>
+          <tbody>
+            <tr><td>Prompt, negative prompt, frames, steps, guidance, seed, temporal alpha</td><td><code>--prompt</code> &hellip; <code>--temporal-alpha</code></td><td>same names, <code>num_inference_steps</code>, <code>num_frames</code></td></tr>
+            <tr><td>Style LoRAs (SD 1.x, kohya format), stackable</td><td><code>--lora SOURCE[:FILE][@SCALE]</code></td><td><code>lora</code> (a name from the operator's catalog)</td></tr>
+            <tr><td>LCM fast sampling (4 steps)</td><td><code>--lcm-lora</code></td><td>automatic for a catalog variant that includes the LCM-LoRA</td></tr>
+            <tr><td>Prompt travel (keyframe prompts)</td><td><code>--prompt-schedule</code></td><td><code>prompt_schedule</code></td></tr>
+            <tr><td>Live previews while generating</td><td><code>--preview-path</code></td><td><code>preview</code>, <code>preview_every</code>, <code>GET /v1/videos/preview</code></td></tr>
+            <tr><td>Chaining (continuity across runs)</td><td><code>--chain-from</code>, <code>--chain-save</code>, <code>--chain-alpha</code></td><td><code>chain_save</code>, <code>chain_from</code>, <code>chain_alpha</code> (named chains)</td></tr>
+            <tr><td>Euler sampler (the CLI's Lightning)</td><td><code>--lightning</code></td><td><code>sampler: "euler"</code></td></tr>
+            <tr><td>MotionAdapter temporal attention (Phase 3)</td><td><code>--motion-adapter</code>, <code>--motion-adapter-alpha</code>, <code>--motion-adapter-skip</code></td><td><code>motion_adapter</code>, <code>motion_adapter_alpha</code>, <code>motion_adapter_skip</code> (operator enables it)</td></tr>
+            <tr><td>CPU and simulator modes</td><td><code>--mode cpu|sim</code></td><td>Not served (CLI only)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout callout-note">
+        <span class="callout-title">One chip</span>
+        <p>The served model runs on one Blackhole chip. Requests are handled one at a time.</p>
+      </div>
+    </div>
+
+    <div class="section" id="loras">
+      <div class="section-head"><span class="section-num">02</span><h2>Style LoRAs</h2></div>
+      <p>A LoRA is merged into the model's weights on the CPU before they are uploaded to the chip, so the device runs ordinary Stable Diffusion with different numbers in it. The merge takes under a second and nothing is added per frame: 2.3 s per frame warm, with or without a LoRA.</p>
+      <div class="code-block"><span class="cb-label">command line</span><pre class="bash"><span class="prompt">$ </span>python examples/generate.py --prompt "storybook anime illustration, a moonlit crypt" \
+    --lora "neonforestmist/sd15-storybook-anime-lora:storybook_anime_lora.safetensors@0.85"</pre></div>
+      <p>Stack LoRAs by repeating <code>--lora</code>; their deltas add. The file header is read before any model loads, and the run stops with a reason for an SDXL LoRA, a LoHa or LoKr file, a DoRA file, or a file without kohya <code>lora_down</code> / <code>lora_up</code> weights. The header's most common training tags are printed as trigger-word hints.</p>
+      <div class="callout callout-tip">
+        <span class="callout-title">Checked on the device</span>
+        <p><code>scripts/lora_device_check.py</code> compares a LoRA's effect on the chip with the CPU. The effect arrives for every LoRA tried (correlation 0.94 for pixel art, 0.69 for storybook anime at 0.85, 0.86 for the LCM-LoRA). A small effect is partly buried in bfloat16 noise. Details are in <a href="https://github.com/tenstorrent/tt-animatediff/blob/main/docs/LORA.md">docs/LORA.md</a>.</p>
+      </div>
+      <img src="assets/lora/crypt-base-pixel-anime-stacked.jpg" alt="The same crypt prompt with no LoRA, pixel art, storybook anime and both stacked" style="max-width:100%;border-radius:8px;margin:1rem 0" loading="lazy">
+      <p style="font-size:.8rem;color:var(--muted)">Crypt, seed 666, top to bottom: no LoRA, pixel art, storybook anime at 0.85, both stacked.</p>
+      <h3 style="margin-top:2rem">A full clip: the suspension bridge at Iguazu Falls</h3>
+      <p>The contact sheet shows three frames per clip. These are the complete 16-frame clips, a pair for each of two seeds, without a LoRA and with the pixel art LoRA. Prompt: <em>the suspension bridge at iguazu falls</em>, with <code>Pixel Art, </code> in front for the LoRA column. 25 steps, 512&times;512, guidance 7.5.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.75rem;margin:1rem 0">
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-base-seed11.gif" alt="The suspension bridge at Iguazu Falls, seed 11, no LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">No LoRA, seed 11</figcaption></figure>
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-pixel-seed11.gif" alt="The suspension bridge at Iguazu Falls, seed 11, pixel art LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">Pixel art, seed 11</figcaption></figure>
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-base-seed33.gif" alt="The suspension bridge at Iguazu Falls, seed 33, no LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">No LoRA, seed 33</figcaption></figure>
+        <figure style="margin:0"><img src="assets/lora/iguazu-bridge-pixel-seed33.gif" alt="The suspension bridge at Iguazu Falls, seed 33, pixel art LoRA" style="width:100%;border-radius:8px" loading="lazy"><figcaption style="font-size:.75rem;color:var(--muted)">Pixel art, seed 33</figcaption></figure>
+      </div>
+      <p style="font-size:.8rem;color:var(--muted)">The bridge is clear in seed 11 in both columns. Seed 33 drew the falls without a clear bridge, with or without the LoRA. Motion is slight, as with every clip from the default path. Made on 2026-10-14 through the v0.13.1 container image on one chip; each GIF is 2.5&ndash;3.9&nbsp;MB and is the server's output, which was not re-encoded.</p>
+    </div>
+
+    <div class="section" id="lcm">
+      <div class="section-head"><span class="section-num">03</span><h2>LCM fast sampling</h2></div>
+      <p><code>--lcm-lora</code> merges <code>latent-consistency/lcm-lora-sdv1-5</code> and samples with the LCM scheduler: 4 steps at guidance 1.5 instead of 25 steps at 7.5. It stacks with style LoRAs.</p>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Run (8 frames, seed 666, one chip)</th><th>Denoise</th><th>Per frame</th></tr></thead>
+          <tbody>
+            <tr><td>Pixel art, 20 steps, guidance 7.5</td><td>18.6 s</td><td>2.3 s</td></tr>
+            <tr><td>Pixel art + LCM, 4 steps, guidance 1.5</td><td>9.2 s</td><td>1.2 s</td></tr>
+            <tr><td>Pixel art + LCM, 8 steps</td><td>11.3 s</td><td>1.4 s</td></tr>
+            <tr><td>Served, warm: LCM variant, 4 steps / style variant, 25 steps</td><td>4.2 s / 21.6 s</td><td>0.5 s / 2.7 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <img src="assets/lora/lcm-comparison.jpg" alt="Pixel art at 20 steps, pixel art plus LCM at 4 and 8 steps, LCM only at 4 steps" style="max-width:100%;border-radius:8px;margin:1rem 0" loading="lazy">
+      <div class="callout callout-warn">
+        <span class="callout-title">Trade-offs</span>
+        <p>On the command line the speed-up is about 2x end to end, because VAE decode and the temporal blend do not shrink. Fewer steps also give less cross-frame blending: the first and last frames of a clip differed by 43.9 with LCM against 19.4 with 25 steps, so try 8 steps before using it for a loop. The grid lines in the LCM-only panel come from the prompt asking for "Pixel Art"; a neutral prompt gives a clean image.</p>
+      </div>
+    </div>
+
+    <div class="section" id="serving">
+      <div class="section-head"><span class="section-num">04</span><h2>Serving LoRAs</h2></div>
+      <p>The operator defines a catalog of named variants in <code>ANIMATEDIFF_LORAS</code>. Each variant is a full model set kept on the chip, so a request picks one at no cost. Variants share one VAE. A request names a variant and never a repo id or a path.</p>
+      <p><code>tt-model serve</code> has no option for the catalog. It forwards only <code>HF_TOKEN</code> from the host, so the catalog is part of the package. <code>tt_model_package.yaml</code> ships two serve profiles from one image: <code>full</code> (the default), with the <code>pixel</code>, <code>pixel-fast</code> and <code>lcm</code> catalog and the motion adapter, and <code>plain</code>, with neither.</p>
+      <div class="code-block"><span class="cb-label">server</span><pre class="bash"><span class="prompt">$ </span>tt-model serve episod/tt-animatediff-container-v5.1                    # full
+<span class="prompt">$ </span>tt-model serve episod/tt-animatediff-container-v5.1 --profile plain</pre></div>
+      <p>A different catalog means a repackage, because the values are part of the published manifest. <code>full</code> downloads the LoRA files and the adapter at startup and keeps three more UNets on the chip.</p>
+      <div class="code-block"><span class="cb-label">request</span><pre class="bash"><span class="prompt">$ </span>curl -s localhost:8000/v1/videos/generations -H 'content-type: application/json' \
+    -d '{"prompt": "a moonlit crypt", "lora": "pixel-fast", "num_frames": 8}'</pre></div>
+      <ul style="color:var(--text2);margin:0 0 1rem 1.2rem">
+        <li><code>GET /v1/models</code> lists the names under <code>loras</code>. An unknown name is a 400 that lists the valid ones.</li>
+        <li>A variant that includes the LCM-LoRA samples with LCM and defaults to 4 steps and guidance 1.5 when the request leaves them out. Values you send are used as sent, up to 50 steps: more is a 400, because the LoRA was distilled on a 50-step schedule.</li>
+        <li>The published LCM-LoRA is recognised by its repo id. Mark a local copy with <code>#lcm</code> after the scale, for example <code>"/data/loras/my-lcm.safetensors@0.8#lcm"</code>; without it the variant samples with PNDM at 25 steps.</li>
+        <li>A bad catalog or incompatible file stops the server at startup, before it reports ready.</li>
+        <li>LoRA files come from the Hugging Face cache or the network at startup, so a container with no network access needs them cached first.</li>
+      </ul>
+      <img src="assets/lora/served-variants.jpg" alt="The same prompt and seed served with no LoRA, pixel art and storybook anime" style="max-width:100%;border-radius:8px;margin:1rem 0" loading="lazy">
+    </div>
+
+    <div class="section" id="previews">
+      <div class="section-head"><span class="section-num">05</span><h2>Live previews</h2></div>
+      <p><code>GET /v1/videos/preview</code> reports the generation in flight: <code>{"step": n, "total": N, "gif_b64": "&hellip;"|null, "running": bool, "request_id": str|null}</code>. It never waits on the device, so it answers while a generation runs (about 140 ms measured). The step counter always runs. The 256&times;256 GIF is rendered only when the request sets <code>"preview": true</code>, because each render costs about 0.4 s: 8 frames at 20 steps took 13.5&ndash;13.9 s without previews and 17.8&ndash;20.2 s with them. <code>"preview_every": n</code> renders every nth step.</p>
+      <div class="callout callout-note">
+        <span class="callout-title">Reading it correctly</span>
+        <p><code>step</code> is 1-based and <code>total</code> is the loop's real step count (a 20-step request reports 21). The last frame stays readable after a run ends, until the next request begins, so check <code>running</code>.</p>
+      </div>
+    </div>
+
+    <div class="section" id="chaining">
+      <div class="section-head"><span class="section-num">06</span><h2>Chaining</h2></div>
+      <p>A request can save its final latents under a name (<code>"chain_save": "lh"</code>). A later request that sets <code>"chain_from": "lh"</code> blends them into its starting noise at <code>chain_alpha</code> (default 0.6), so the new prompt inherits the old composition. The names belong to the server: it stores them in its own directory under a hash of the name, keeps the newest 32, and forgets them when it stops. An unknown <code>chain_from</code> is a 400.</p>
+      <img src="assets/lora/served-chain.jpg" alt="A lighthouse source, then a meadow prompt with no chain and chained at 0.3, 0.6 and 0.9" style="max-width:100%;border-radius:8px;margin:1rem 0" loading="lazy">
+      <div class="callout callout-warn">
+        <span class="callout-title">Keep alpha low</span>
+        <p>At 0.6 and 0.9 the lighthouse's tower and cliff carry into the meadow prompt, and the prompt itself is mostly lost: no flowers or butterflies appear. The library advises 0.2 to 0.55. At 0.3 the effect is small.</p>
+      </div>
+    </div>
+
+    <div class="section" id="sampler">
+      <div class="section-head"><span class="section-num">07</span><h2>Sampler</h2></div>
+      <p>The plain model samples with PNDM. <code>"sampler": "euler"</code> uses an Euler schedule on the same weights (the CLI's <code>--lightning</code>; no distilled weights are involved). 4 frames at 25 steps took 7.7 s with Euler and 7.9 s with PNDM, and the pictures differ. An LCM variant always samples with LCM, so naming a sampler with one is a 400.</p>
+    </div>
+
+    <div class="section" id="motion">
+      <div class="section-head"><span class="section-num">08</span><h2>Motion adapter (Phase 3)</h2></div>
+      <p>The MotionAdapter's temporal attention can be injected into the UNet blocks. The operator enables it with <code>ANIMATEDIFF_MOTION_ADAPTER=default</code> (or a repo id or path) in the package's <code>serve.env</code> or a serve profile, which loads the adapter at startup; <code>GET /v1/models</code> then reports <code>"motion_adapter": true</code>. Requests set <code>"motion_adapter": true</code>, with <code>motion_adapter_alpha</code> (0 to 1) and <code>motion_adapter_skip</code> (any of <code>down0 down1 down2 mid up0 up1 up2</code>). It works with the Euler sampler, prompt schedules, chaining and style LoRA variants, and not with an LCM variant.</p>
+      <div class="callout callout-warn">
+        <span class="callout-title">Slow</span>
+        <p>With <code>up1</code> and <code>up2</code> skipped, 2 frames at 6 steps took 5.6 s on one chip. Without skipping it is far slower: about 52 s per frame at 25 steps measured earlier on a four-chip box, so an 8-frame request runs for minutes. Set client timeouts to match.</p>
+      </div>
+    </div>
+
+    <div class="section" id="api">
+      <div class="section-head"><span class="section-num">09</span><h2>Request reference</h2></div>
+      <p><code>POST /v1/videos/generations</code>. The response is <code>{"created": ts, "data": [{"b64_json": "&lt;GIF&gt;"}]}</code>.</p>
+      <div class="param-table-wrap">
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Default</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>prompt</td><td>(required)</td><td>Non-empty</td></tr>
+            <tr><td>negative_prompt</td><td>""</td><td></td></tr>
+            <tr><td>num_frames</td><td>16</td><td>1&ndash;64</td></tr>
+            <tr><td>num_inference_steps</td><td>25</td><td>1&ndash;100. 4 for an LCM variant when omitted</td></tr>
+            <tr><td>guidance_scale</td><td>7.5</td><td>0&ndash;20. 1.5 for an LCM variant when omitted</td></tr>
+            <tr><td>seed</td><td>42</td><td></td></tr>
+            <tr><td>temporal_alpha</td><td>0.35</td><td>0&ndash;1, cross-frame blend</td></tr>
+            <tr><td>height, width</td><td>512</td><td>Only 512 is accepted: the UNet is compiled at a fixed size</td></tr>
+            <tr><td>lora</td><td>none</td><td>A catalog name; 400 if unknown</td></tr>
+            <tr><td>prompt_schedule</td><td>none</td><td>Up to 16 <code>{"frame": n, "prompt": "&hellip;"}</code>; each frame must be below <code>num_frames</code></td></tr>
+            <tr><td>sampler</td><td>pndm</td><td><code>pndm</code> or <code>euler</code>; 400 with an LCM variant</td></tr>
+            <tr><td>chain_save, chain_from</td><td>none</td><td>Names (letters, digits, <code>.</code> <code>_</code> <code>-</code>; up to 64 characters). Unknown <code>chain_from</code> is a 400</td></tr>
+            <tr><td>chain_alpha</td><td>0.6</td><td>0&ndash;1; 0.2&ndash;0.55 keeps the prompt in charge</td></tr>
+            <tr><td>motion_adapter</td><td>false</td><td>400 unless the operator set <code>ANIMATEDIFF_MOTION_ADAPTER</code>; 400 with an LCM variant</td></tr>
+            <tr><td>motion_adapter_alpha, motion_adapter_skip</td><td>1.0, []</td><td>Only with <code>motion_adapter: true</code></td></tr>
+            <tr><td>preview</td><td>false</td><td>Render preview GIFs for <code>GET /v1/videos/preview</code></td></tr>
+            <tr><td>preview_every</td><td>library default</td><td>1&ndash;100</td></tr>
+            <tr><td>request_id</td><td>none</td><td>Your name for the request (letters, digits, <code>.</code> <code>_</code> <code>-</code>, up to 64). <code>GET /v1/videos/preview</code> echoes it, so a client sharing the server can ignore previews that belong to another request</td></tr>
+            <tr><td>response_format</td><td>b64_json</td><td>Only b64_json</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer style="text-align:center;padding:2rem 1rem;font-size:.78rem;color:var(--muted)">
+  <a href="index.html">tt-animatediff</a> &middot;
+  <a href="usage.html">Usage Guide</a> &middot;
+  <a href="features.html">Features</a> &middot;
+  <a href="gallery.html">Gallery</a> &middot;
+  <a href="benchmarks.html">Benchmarks</a> &middot; Apache 2.0
+</footer>
+
+</body>
+</html>

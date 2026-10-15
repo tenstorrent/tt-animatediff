@@ -368,3 +368,70 @@ with ttnn import-blocked.
 
 **Repackage from here needs the `animatediff_ttnn-0.11.2` wheel**, not 0.11.1 (the 0.11.1 section
 above is the release already published). Everything else in that repackage list is unchanged.
+
+## LoRA support and served features (v0.12 to v0.13, PR #15)
+
+Numbers, request fields and how-to are in `docs/LORA.md`, `docs/features.html` and the README
+changelog. This section keeps only what a new session would trip over.
+
+**Design.** `animatediff_ttnn/lora.py` merges kohya-format `.safetensors` UNet LoRAs (SD 1.x) into the
+CPU UNet before `preprocess_model_parameters`, so a LoRA costs nothing per step. The UNet half goes through
+diffusers (`load_lora_into_unet`, `fuse_lora`, `unload_lora`); the text-encoder half is merged by hand
+(`_merge_text_encoder`) because diffusers' loader finds no modules on the transformers 5.x CLIP layout.
+`inspect_lora` + `check_lora_compatible` read the header first and refuse SDXL, LoHa, LoKr and DoRA files
+before any chip is claimed (CLI and the server lifespan both call them before the device opens).
+
+**The LCM decision lives in one place.** `variant_is_lcm()` in `lora.py` (a spec marked `#lcm`, or the
+published LCM-LoRA repo id) is used by the server, by `load_sd14_variant` and by `examples/generate.py`. Do not
+re-derive it from a flag or a repo name. LCM steps are capped at `LCM_ORIGINAL_STEPS` (50, in `weights_pins.py`),
+which is also the scheduler's `original_inference_steps`. The post-step latent blend is skipped for LCM
+because its `prev_sample` carries per-frame noise that blending averages away (on-chip A/B, 2026-10-14:
+sharper, but 30 to 60% more frame-to-frame change).
+
+**Served path** (`animatediff_ttnn/server/app.py`). Request fields: `lora`, `sampler`, `preview`,
+`preview_every`, `request_id`, `chain_save`/`chain_from`/`chain_alpha`, `prompt_schedule`, `motion_adapter*`.
+Checks that can fail run before the device lock (`request_conflicts`, `chain_conflict`) and `chain_conflict`
+runs again under the lock. The preview store is one global slot; `request_id` is how a client tells whose
+preview it is looking at, so the generator and this server release together with no compatibility path.
+
+**Environment.** Use the repo `.venv` (diffusers 0.39+, peft, ttnn). `~/.tenstorrent-venv` has diffusers 0.32.1
+and cannot import `diffusers.loaders`. `peft` must stay in `tt_model_package.yaml` and its lock: diffusers
+imports it lazily, so the image build passes without it and every LoRA request then fails.
+
+**Hardware.**
+* One device-opening process at a time. Three at once left the chips unable to open, even singly.
+* Never run `tt-smi -r` by hand on a leased board. Doing so on a leased board wedged it until a host reboot;
+  `gozer release` does the reset. `gozer run` holds the lease about 30 s after the command exits while it
+  resets, so wait for FREE before the next run.
+* A reboot clears `/tmp`. Keep builds in `~/tt-model-builds-*` and logs in `~/tt-serve-logs/`.
+* Every server run ends with a tt-metal `UmdException` abort after shutdown. It predates this work.
+* `pkill -f` matches its own shell. Use a pid file.
+
+**Packaging and releasing.**
+* The container package is its own Hub repo, `episod/tt-animatediff-container-v5.1`.
+  `scripts/publish_to_hub.py` targets the thin bundle `episod/tt-animatediff` and would replace its README and
+  root code, so it is not run for container work.
+* `tt_model_package.yaml`'s `extra_code.ref` must stay at the tag `main` ships while a PR is open:
+  `test_the_pinned_extra_code_ref_ships_the_package_we_are_developing` compares trees and fails in CI
+  otherwise (a commit pin on the branch did exactly that). Package from a copy of the manifest with the commit
+  pin (`docs/RELEASING.md`), and repin to the release tag after the squash.
+* `tt-model serve` takes Hub repo ids only (no local path, no `--env`; env goes through serve profiles in the
+  manifest). `tt-model stop` takes the repo id. A `tt-model push` of a rebuilt package printed "no files have been
+  modified" for a changed tree, so check what the Hub holds after a push.
+* The generated card says "Runs on p150 or p150" when two profiles share hardware. It is a tt-model-manager
+  quirk and cannot be fixed from this manifest.
+* Release in lockstep with tt-local-generator and update `docs/LORA.md`, the README changelog and
+  `docs/features.html` with each served feature.
+
+**Measuring.**
+* Phase 2.5, 8 frames, 512x512, 25 steps, one chip: about 15.5 s warm (1.94 s/frame). A fresh `generate.py`
+  process takes about 21 s because the first call warms up. The older ~100 s figure was stale. The sharding
+  timings (16 frames ~86 s and others) rest on that stale baseline and were not re-measured.
+* A timing taken while other agents load the box is not evidence. A 38 s plain run against a 15.3 s baseline
+  was machine load (load average 7 to 10). Compare under equal load, alternating A and B, and record the load.
+* `benchmark_modes.py` reads `loras` and `motion_adapter` beside `data`, at the top level of `/v1/models`.
+  Its first request is a compile and is excluded from every statistic.
+* A chaining check with the same seed for source, control and chained runs proves nothing, and a pixel
+  difference metric scored the chained runs as less similar while the composition visibly carried over. Use a
+  different seed and look at the frames.
+* The "Pixel Art" words in a prompt ask for a grid. An LCM run with grid lines was the prompt, not the LoRA.
