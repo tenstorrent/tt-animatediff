@@ -1,0 +1,19 @@
+# Versions of the model libraries that the container image served on a Blackhole card, taken from
+# tt_model_package.lock at v0.13.2 (the build that ran the LoRA, preview and chaining checks).
+# `package-thin.sh --relock` passes this file as a constraint so the thin bundle resolves to the
+# same versions on the compute path and does not float to whatever is newest that day.
+#
+# Only the libraries whose behaviour could change a generated frame are listed. The rest of
+# constraints.txt (urllib3, certifi, fastapi and so on) resolves to current releases.
+#
+# accelerate is left out on purpose. The lock had 1.14.0, which GHSA-4j2p-28q2-5m79 covers
+# (<= 1.14.0). Release 1.15.0 is outside that range, and accelerate is not on the compute path
+# (diffusers uses it only for low_cpu_mem_usage).
+#
+# Keep these in step with tt_model_package.lock when it is regenerated. The container and the
+# bundle should serve the same library versions.
+diffusers==0.40.0
+transformers==5.16.1
+peft==0.21.2
+safetensors==0.8.0
+huggingface-hub==1.30.0

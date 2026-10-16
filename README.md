@@ -554,6 +554,22 @@ application plugin, or Python library — see
 
 ## Changelog
 
+### v0.13.3 — unreleased (v6 thin bundle recipe)
+- **The v6 thin bundle is now built by one script.** `packaging/package-thin.sh` stages the bundle with
+  `tt-model package-thin` (no repo id, so nothing is pushed) from this checkout and from pinned sources, then inspects it.
+  `--install-test` also runs `install.sh` in a copy and checks every import in the installed venv.
+- **Canonical shape.** Stock `ttnn==0.77.0` from PyPI. This package and the 32 tt-metal v0.77.0 files it imports ship as
+  `extra_code/` (`--extra-code`), replacing the `tt_animatediff_models_closure` wheel (about 150 files from `models/common`,
+  other models' code included) and the `animatediff-ttnn` wheel (which also carried `tests/` and `scripts/` as top-level
+  packages). The pip dependencies travel in a metadata-only wheel, `tt-animatediff-deps`, because `install.sh` step 1 resolves
+  against the PyTorch CPU index, which replaces `certifi`, `urllib3` and `requests` with 2022 releases.
+  `packaging/constraints.txt` pins every package.
+- **The weights pull is limited to what the server reads.** About 4.3 GB (fp32 safetensors for the UNet, VAE and text
+  encoder, plus the tokenizer) instead of the whole 22 GB repo. Checked by loading all four pieces offline from only those files.
+- **Install guards.** Five `--verify` checks fail `install.sh` if ttnn is not the stock release, model code is missing from
+  the bundle, `models` resolves anywhere but `extra_code/`, a runtime package is absent, or importing `model` loads `ttnn`.
+- No change to `animatediff_ttnn`. The version moves so the bundle's wheel and manifest get a new name.
+
 ### v0.13.2 — 2026-10-15 (review fixes on PR #15, round 3)
 - **CLI honours an LCM `--lora`.** `--lora latent-consistency/lcm-lora-sdv1-5:...` or `--lora ./x.safetensors#lcm` now
   samples with LCM at 4 steps and guidance 1.5, the same decision the server makes (`variant_is_lcm`). Before, only

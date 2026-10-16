@@ -1,0 +1,28 @@
+# Runtime pip dependencies of tt-animatediff, carried by the tt-animatediff-deps wheel.
+#
+# package-thin.sh turns this file into a wheel with these lines as Requires-Dist and no code, and
+# ships it with --ops-wheel. install.sh installs --ops-wheel wheels by path in step 3, from PyPI
+# only, with the constraints file applied. Listing these in requirements.txt instead would put
+# them in step 1, where the PyTorch CPU index replaces requests, certifi and urllib3 with 2022
+# releases (or, with constraints, fails the install).
+#
+# The wheel is a workaround for that tt-model issue. Delete the wheel, move these lines into
+# requirements.txt and drop --ops-wheel from package-thin.sh once step 1 scopes the CPU index to
+# the torch family.
+#
+# Ranges match tt_model_package.yaml (runtime.packages) so the container and the thin bundle
+# accept the same versions. constraints.txt pins the versions that were resolved.
+diffusers>=0.32.1,<0.41
+transformers>=4.30.0,<6
+accelerate>=0.20.0,<2
+safetensors>=0.4.0,<1
+huggingface_hub>=0.20.0,<2
+# LoRA merge (animatediff_ttnn.lora). diffusers imports peft lazily, so a bundle without it
+# installs and serves until the first LoRA request.
+peft>=0.15,<1
+# tt-metal v0.77.0's models/common/utility_functions.py has `import pytest` at module scope, and
+# the Stable Diffusion demo imports it. Same wart as the container lock. tt-metal fdcb5cf2ec6c
+# (#55079) moves the import inside its function, but no release tag carries it yet. Delete this
+# line when TT_METAL_REF in package-thin.sh moves to a tag that does.
+# tests/test_packaging_thin.py::test_pytest_is_shipped_only_while_tt_metal_needs_it checks this.
+pytest

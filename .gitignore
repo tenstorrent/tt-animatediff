@@ -27,3 +27,4 @@ build/space/
 
 # Local virtualenv (never committed; `git add -A` would otherwise stage it whole)
 .venv/
+build/thin/

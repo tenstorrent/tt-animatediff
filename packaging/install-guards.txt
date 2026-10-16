@@ -1,0 +1,28 @@
+# One `python -c` statement per line. package-thin.sh passes each to `tt-model package-thin --verify`,
+# and install.sh runs them with the bundle's venv python after the last install step. A failing
+# guard fails the install, so a bad bundle is rejected at pull time and not on the first request.
+# Blank lines and lines starting with `#` are skipped. @TTNN_VERSION@ is replaced by the script.
+#
+# install.sh does not export $HERE, so every guard finds the bundle from sys.prefix (the venv
+# lives at <bundle>/venv). install.sh sets PYTHONPATH to <bundle>/extra_code for these runs.
+#
+# Nothing here imports ttnn. find_spec on a top-level name locates a package without loading it,
+# and importlib.metadata reads its version from the dist-info.
+#
+# tests/test_packaging_thin.py runs each guard against a layout it must accept and one it must
+# reject.
+
+# 1. The engine is the stock ttnn release. A forked build carries a +local tag and fails here.
+import importlib.metadata as m; v = m.version('ttnn'); assert v == '@TTNN_VERSION@', 'ttnn is %s, not the stock @TTNN_VERSION@' % v
+
+# 2. The model's own code is inside the bundle.
+import sys, pathlib; b = pathlib.Path(sys.prefix).parent; need = ['model.py', 'extra_code/animatediff_ttnn/server/app.py', 'extra_code/models/demos/vision/generative/stable_diffusion/wormhole/common.py']; miss = [n for n in need if not (b / n).is_file()]; assert not miss, 'missing from the bundle: %s' % miss
+
+# 3. `models` is the slice shipped in extra_code/, and tt-transformers is absent (this model uses none of it).
+import importlib.util as u, sys, pathlib; b = pathlib.Path(sys.prefix).parent; s = u.find_spec('models'); assert s is not None and s.origin and pathlib.Path(s.origin).is_relative_to(b / 'extra_code'), 'models resolves to %s, not extra_code/' % (s and s.origin); assert u.find_spec('tt_transformers') is None, 'tt_transformers is installed, but this bundle ships its own models code'
+
+# 4. Every third-party package the model needs at run time was installed.
+import importlib.util as u; need = ['tt_lib', 'loguru', 'pytest', 'tqdm', 'torch', 'PIL', 'diffusers', 'transformers', 'peft', 'accelerate', 'safetensors', 'huggingface_hub', 'fastapi', 'uvicorn']; miss = [n for n in need if u.find_spec(n) is None]; assert not miss, 'not installed: %s' % miss
+
+# 5. The served module imports, and importing it does not load ttnn (which would open the device).
+import sys, pathlib; sys.path.insert(1, str(pathlib.Path(sys.prefix).parent)); import model; assert callable(model.app), 'model.app is not callable'; loaded = [n for n in ('ttnn', 'tt_lib') if n in sys.modules]; assert not loaded, 'importing model loaded %s' % loaded
