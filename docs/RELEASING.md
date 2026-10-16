@@ -75,6 +75,12 @@ from `main` at all if the PR is squash-merged, and nothing in CI would tell you.
    `create_repo(repo_type="space")` returns 402, because Gradio Spaces on free cpu-basic
    need PRO. See CLAUDE.md for the detail.
 
+7. **Thin bundle** (only when the bundle should follow the release). `packaging/package-thin.sh` stages it and
+   `--install-test` proves the install. It never pushes. Read the header of the script before publishing: the
+   bundle's `requirements.txt` collides with the pipeline's in `episod/tt-animatediff`. Regenerate
+   `packaging/constraints.txt` with `--relock` when `runtime-deps.txt`, `requirements.txt` or `validated-pins.txt`
+   change, and keep `validated-pins.txt` in step with `tt_model_package.lock`.
+
 ## What is already enforced, so you need not check it by hand
 
 - the manifest's `runtime.app` resolves, and the module imports with **no ttnn**

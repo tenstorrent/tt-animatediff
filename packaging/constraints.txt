@@ -1,0 +1,79 @@
+# Fully resolved pins for every install step of this bundle. Generated: do not hand-edit.
+# Regenerate with: packaging/package-thin.sh --relock   (uv 0.9.26, 2026-10-16, python 3.12, manylinux_2_34 x86_64)
+#
+# Two kinds of pin live here. install.sh step 1 ranks the PyTorch CPU index above PyPI, so the
+# packages that step reaches are pinned to what the CPU index offers. Some of those are old
+# (idna, packaging, and similar). Step 3 resolves from PyPI only, so everything else, including
+# certifi, urllib3 and requests, is pinned to current releases. See packaging/requirements.txt.
+#
+# pytest is pinned because tt-metal v0.77.0's models/common/utility_functions.py imports it at
+# module scope. See packaging/runtime-deps.txt.
+accelerate==1.15.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+charset-normalizer==3.5.2
+click==8.5.0
+contourpy==1.3.3
+cycler==0.12.1
+diffusers==0.40.0
+fastapi==0.143.3
+filelock==3.32.3
+fonttools==4.67.0
+fsspec==2026.7.0
+graphviz==0.21
+h11==0.16.0
+hf-xet==1.7.0
+httpcore==1.0.9
+httpx==0.28.1
+huggingface-hub==1.30.0
+idna==3.4
+importlib-metadata==9.0.1
+iniconfig==2.3.1
+jinja2==3.1.6
+kiwisolver==1.5.1
+loguru==0.7.3
+markdown-it-py==4.2.0
+markupsafe==3.0.3
+matplotlib==3.11.2
+mdurl==0.1.2
+ml-dtypes==0.5.4
+mpmath==1.3.0
+networkx==3.6.1
+numpy==1.26.4
+opentelemetry-api==1.45.1
+packaging==24.1
+pandas==3.0.6
+peft==0.21.2
+pillow==12.3.0
+pluggy==1.7.0
+psutil==7.2.2
+pydantic==2.14.1
+pydantic-core==2.50.1
+pygments==2.21.0
+pyparsing==3.3.3
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+pyyaml==6.0.3
+regex==2026.9.29
+requests==2.34.2
+rich==15.0.0
+safetensors==0.8.0
+seaborn==0.13.2
+setuptools==78.1.0
+shellingham==1.5.4
+six==1.17.0
+starlette==1.8.0
+sympy==1.14.0
+tokenizers==0.23.3
+torch==2.11.0+cpu
+tqdm==4.70.1
+transformers==5.16.1
+ttnn==0.77.0
+typer==0.27.3
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.8.0
+uvicorn==0.54.0
+zipp==4.1.1

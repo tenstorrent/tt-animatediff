@@ -1,0 +1,28 @@
+# Step 1 of install.sh: the engine, and only the engine.
+#
+# This file goes through uv with the PyTorch CPU index added, and uv ranks that index above PyPI
+# (see docs/thin_packages.md in tt-model-manager, "Known issue - index ranking"). Anything that
+# index carries is then taken only from it, at one old version. certifi, urllib3, requests and
+# idna are the ones that matter: a resolve that reaches them under a constraints file fails, and
+# one without a constraints file silently installs a 2022 CA bundle.
+#
+# So this file stays small. Everything with a wide dependency closure (diffusers, transformers,
+# huggingface_hub, which pull in requests) is carried by the tt-animatediff-deps wheel instead.
+# That wheel is installed by path in step 3, from PyPI only. See runtime-deps.txt and
+# packaging/package-thin.sh.
+#
+# No index options in this file. package-thin adds the CPU index itself.
+
+# Stock ttnn from PyPI. The same release the container image builds from tt-metal v0.77.0.
+ttnn==0.77.0
+
+# CPU torch, pinned to tt-metal v0.77.0's own pin. ttnn does not depend on torch; this model does.
+torch==2.11.0
+
+# The HTTP stack a tt-dit-server bundle needs. package-thin merges these four into
+# requirements.txt anyway when they are missing; listing them here keeps this file the full
+# truth about step 1. The pillow floor is a security floor (see hf/requirements.txt).
+fastapi
+uvicorn
+pydantic>=2
+pillow>=12.3.0,<13
