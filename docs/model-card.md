@@ -28,7 +28,8 @@ weights it needs — SD 1.4 and the AnimateDiff MotionAdapter — are resolved f
 upstream repositories, at pinned revisions, the first time you generate.
 
 Version 0.13.2 · [GitHub](https://github.com/tenstorrent/tt-animatediff) ·
-[Docs](https://docs.tenstorrent.com/tt-animatediff/)
+[Docs](https://docs.tenstorrent.com/tt-animatediff/) ·
+[How it was built](https://tenstorrent.com/developers/blog/generating-spooky-loops-with-animatediff-on-tenstorrent-blackhole)
 
 ## Usage
 

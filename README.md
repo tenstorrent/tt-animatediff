@@ -7,6 +7,10 @@ UNet. **Phase 3** injects AnimateDiff MotionAdapter temporal attention directly 
 the Blackhole denoising loop — no distillation required, weights loaded straight from
 `guoyww/animatediff-motion-adapter-v1-5-2`.
 
+**Read the story on the Tenstorrent developer blog:**
+[Generating Spooky Loops with AnimateDiff on Blackhole](https://tenstorrent.com/developers/blog/generating-spooky-loops-with-animatediff-on-tenstorrent-blackhole) — bringing the
+model up on Blackhole, what the hardware changed, and a quick start.
+
 ![tt-animatediff loop generation stages](docs/images/tt-animatediff-loop-generation-stages.svg)
 
 ---
